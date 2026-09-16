@@ -43,19 +43,26 @@ fica como próximo passo real se quiser esse nível de rigor. O que dá pra
 afirmar com segurança: overhead sub-microssegundo, mesma ordem de grandeza
 do concorrente de referência, não é gargalo prático pro caso de uso.
 
-### 2. Avaliar "multi hook no mesmo endereço" (recurso real do shadowhook)
-shadowhook tem modo MULTI que resolve vários hooks concorrentes no mesmo
-endereço sem conflito. bc-poc hoje assume 1 hook por PLANS[] slot. Gap real
-a avaliar — não confirmado se é necessidade prática do bepin-termux ainda
-(só 4 hooks fixos + mods dinâmicos que resolvem símbolo/pattern próprios).
+### 2. Avaliar "multi hook no mesmo endereço" (recurso real do shadowhook) — ✅ SEM GAP
+Verificado no código (`bc_hook_logic.h`, `HOOK_MAX_CALLBACKS=4`): já temos
+isso, arquitetura diferente, mesmo resultado. shadowhook resolve N hooks
+concorrentes instalando N trampolines no mesmo endereço (seu jeito de
+"multi"); bc-poc instala **1** `DobbyHook` real por endereço e o
+dispatcher interno (`HookCallbacks`) distribui pra até 4 `prefix` + 4
+`postfix` callbacks registrados no mesmo slot — inclusive já usado pelos
+mods `.so` dinâmicos via `bc_mod_api.register_prefix/postfix` (não fica
+restrito aos 4 hooks fixos do `PLANS[]`, qualquer mod pode se registrar no
+mesmo hook). Sem gap real, sem ação necessária.
 
-### 3. Confirmar posição de licença
+### 3. Confirmar posição de licença — ✅ JÁ CORRETO
 Já somos MIT (mais permissivo que SandHook/Anti-996, equivalente a shadowhook).
-Sem ação — já correto.
+Sem ação necessária.
 
-### 4. Publicar esta pesquisa como parte da documentação de arquitetura
-Registra a análise honesta de mercado pra não repetir a pesquisa do zero
-numa sessão futura.
+### 4. Publicar esta pesquisa como parte da documentação de arquitetura — ✅ FEITO
+Este arquivo, linkado em `README.md` § Ver também.
+
+## Status: 4/4 itens fechados
+Roadmap completo executado nesta sessão. Nenhum item pendente no momento.
 
 ## O que NÃO vamos fingir
 

@@ -305,6 +305,9 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 
 ## Ver também
 
+- `ROADMAP.md` — pesquisa de concorrentes reais (LSPatch, whale, VirtualXposed,
+  Riru, shadowhook etc.) via GitHub API/web search, prioridades daí derivadas,
+  benchmark de overhead medido ao vivo no device.
 - `RESILIENCE_ANALYSIS.md` — análise de resiliência a updates do APK alvo.
 - `INTEGRATION_CHECK.md` — verificação de integração build main+companion.
 - `COMPANION_TERMUX_ARCHITECTURE.md` — arquitetura completa da ponte
