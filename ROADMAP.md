@@ -1,3 +1,5 @@
+Ver também: [ROADMAP-COMPETITORS.md](ROADMAP-COMPETITORS.md) — pesquisa de concorrência (fechada, 4/4).
+
 # bepin-termux — Termux-centrico: Roadmap + TODOs
 
 Rumo: fazer do **Termux** a peça central (deploy de mods, controle, boot-watchdog,
