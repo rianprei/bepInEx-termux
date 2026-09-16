@@ -61,7 +61,7 @@ background na mesma sessão.
 - [x] **2.2** `bepin-console`: stream de log em background (`&`) + loop
       lendo stdin em foreground, cada linha digitada vira comando pro
       companion via `termux_client.py` — REPL na mesma janela do stream.
-- [ ] **2.3** Requisito documentado no README: `allow-external-apps=true`
+- [x] **2.3** Requisito documentado no README: `allow-external-apps=true`
       em `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
 
@@ -88,7 +88,7 @@ background na mesma sessão.
       stack trace de exceção (`ex.ToString()`, `LogLevel.Fatal` forçando
       console a abrir mesmo desabilitado) — não mapeia pra código nativo
       C/C++ sem exceções gerenciadas. Sem ação.
-- [ ] **3.5** Requisito documentado: `allow-external-apps=true` em
+- [x] **3.5** Requisito documentado: `allow-external-apps=true` em
       `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
 - [x] **3.6** enum `LogLevel` confirmado (hermes, `LogLevel.cs:5`,
