@@ -1,115 +1,84 @@
-# Roadmap — bepin-termux vs concorrência real
+# bepin-termux — Termux-centrico: Roadmap + TODOs
 
-Pesquisa feita por 3 agentes (hermes, freebuff, OpenCode) via web search + GitHub API
-real (não estimativa). Metodologia: cada concorrente verificado por fonte primária
-(repo, README, licença, `stargazers_count`/`archived` via API do GitHub).
+Rumo: fazer do **Termux** a peça central (deploy de mods, controle, boot-watchdog,
+notificações), não um cliente de monitoramento opcional. Termux.deixa de ser só
+stream/ping — vira o painel de controle do device.
 
-## Panorama real da concorrência (achado principal)
+## Fontes pesquisadas (confirmadas, não inventadas)
 
-A maior parte do "ecossistema concorrente" está **morta ou arquivada**:
+- **Termux:Boot** — F-Droid `com.termux.boot` (v0.8.1, GPL-3.0, autor Tarek Sander).
+  Executa scripts em `~/.termux/boot/` em ordem **sorted** (alfabética) após
+  BOOT_COMPLETED. **Requer abrir o app 1 única vez** pra registrar o receiver.
+  Recomenda `termux-wake-lock` como primeira linha pra evitar sleep.
+  Fonte: f-droid.org/packages/com.termux.boot + github.com/termux/termux-boot/README.md.
+- **Termux:API** — app `com.termux.api` + pkg `termux-api` (comandos `termux-*`).
+  Relevantes: `termux-notification` (opts `-t título`, `-c conteúdo` ou stdin,
+  `--id`, `--priority`, `--sound`, `--vibrate`, `--ongoing`, `--action`),
+  `termux-wake-lock`, `termux-wake-unlock`, `termux-battery-status` (JSON).
+  Fonte: github.com/termux/termux-api-package/scripts/termux-notification.in +
+  wiki.termux.com/wiki/Termux-notification + mintlify.wiki/termux/termux-app/plugins/termux-api.
+- **push_mod** — já implementado (`af898ca`): protocolo `push_mod <nome> <tamanho>`
+  via socket no companion.cpp, sem precisar `su` no Termux (UID Termux é aceito
+  por `is_authorized_uid`).
 
-| Projeto | Categoria | Estrelas | Status real | Fonte |
-|---|---|---|---|---|
-| LSPatch | Xposed não-root (ART bytecode) | 9.381★ / 1.140 forks | **archived** (GitHub API, `archived: true`, último push 2023-12-13) | api.github.com/repos/LSPosed/LSPatch |
-| VirtualXposed | app virtualizada + Xposed | 8.597★ | inativo/sem manutenção recente | busca hermes |
-| whale (asLody) | inline hook nativo C | 917★ | **archived** | busca hermes |
-| Riru | ponte root pra Zygisk-like | — | **deprecated oficialmente**, sucessor = Zygisk (o que já usamos) | busca hermes |
-| xhook (iqiyi) | hook nativo (PLT-only) | 4.348★ / 789 forks | ativo, push 2025-06-27, mas só PLT hooking (mais fraco que inline hook — não intercepta chamada direta/estática, só ponteiro de import) | api.github.com/repos/iqiyi/xhook (GitHub API direto, kilo/orquestrador) |
-| SandHook | hook ART | — | licença **Anti-996** (não é OSS padrão, zona cinzenta legal p/ uso comercial) | busca freebuff |
-| Substrate/Cydia Substrate (Android) | hook nativo histórico | — | efetivamente abandonado, sem release relevante recente | busca hermes |
-| **shadowhook (ByteDance)** | inline hook nativo C, **mesma categoria do Dobby que usamos** | — | **ATIVO**, licença MIT, "stably used in production apps", Android 4.1→17 QPR1 Beta 4, arm/arm64, 4 modos de hook, overhead medido **0,26µs** em runtime | busca freebuff |
-| **Frida** | framework geral de instrumentação dinâmica (não é "mod loader" no sentido BepInEx) | **21.944★ / 2.214 forks** | **ATIVO, massivamente maduro** — push HOJE (2026-09-16), o maior projeto de toda a comparação por larga margem | api.github.com/repos/frida/frida (GitHub API direto) |
-| TaiChi (太极) | virtual-app + Xposed | — | **sinal fraco/fragmentado** — sem repo canônico de peso encontrado em 2 buscas independentes (hermes + GitHub API direto); provável projeto descontinuado/nunca consolidado no GitHub | busca hermes + GitHub API |
+## Decisão de design
+Notificação por **evento** (companion manda `!WARN`/`!ERR` no stream que o
+watchdog lê) é superior ao **polling**. Mas depende de CLI/stream estáveis —
+por isso nota-se polling primeiro, evento depois como evolução. Polling via
+`list_patches` (já existe) + diff, ou flag de DORMANT já presente nas properties
+`persist.bc_poc.*` herdadas.
 
-**Conclusão honesta, atualizada**: não existe um "BepInEx mobile" consolidado
-comparável 1:1 — o campo de frameworks de MOD LOADING é fragmentado e
-majoritariamente abandonado (LSPatch, whale, VirtualXposed, TaiChi). O único
-concorrente direto e tecnicamente comparável nessa categoria (hook nativo
-inline, não bytecode ART) é o **shadowhook** da ByteDance. Fora dessa
-categoria específica, **Frida** é um projeto muito maior e mais maduro que
-qualquer coisa aqui catalogada (21,9k★, manutenção diária) — mas resolve um
-problema diferente (instrumentação/pesquisa de segurança geral via
-JS-bridge, não injeção de mod permanente tipo BepInEx/Zygisk); não é
-substituível 1:1 pelo bepin-termux nem vice-versa, categorias distintas,
-comparação direta seria enganosa. Nossa escolha de infraestrutura (Zygisk
-em vez de Riru) já está alinhada com o que sobreviveu no ecossistema — Riru
-foi descontinuado oficialmente a favor de Zygisk.
+---
 
-## Prioridades (ordem de execução)
+## Fase 1 — P0: fundamento (já em curso)
+- [x] `push_mod <nome> <tamanho>` no companion (socket binário, sem su).
+- [ ] **1.1** Tests + `dlopen` do .so recebido pelo MESMO loader de
+      `load_dynamic_mods` (reusar `bc_loader` + `bc_mod_graph`) — o push não
+      deve ter caminho de load separado/diferente do diretório.
+- [ ] **1.2** Comando `list_mods_dynamic` — lista .so carregados + estado
+      (active/inactive/rejected), par do `list_patches` estático.
+- [ ] **1.3** `reload_dynamic` — recarrega .so de `BC_MODS_DIR` sem reboot do
+      jogo (dlclose + re-dlopen; hot-reload).
 
-### 1. Benchmark real: nosso overhead de hook vs shadowhook (0,26µs) — ✅ MEDIDO
-Medido ao vivo no device (Battle Cats rodando de verdade, hooks disparando):
-**0,60µs** por dispatch (loop completo de prefix+postfix, `main.cpp`
-`g_hook_overhead_ns`/`g_hook_overhead_count`, exportado via
-`persist.bc_poc.hook_overhead_us`).
+## Fase 2 — P1: Termux peça central
+- [ ] **2.1** CLI `bepin` (bash) — interface única documentada, substitui
+      `termux_client.py`/`bc_log_viewer.py` como canônico. Subcomandos:
+      `status`, `list_patches`, `list_mods`, `push_mod <arq>`, `unpatch`,
+      `repatch`, `toggle_mod`, `set_mod`, `stream`, `log`. Conecta no socket
+      abstract direto (UID Termux autorizado, sem su).
+- [ ] **2.2** `bepin push_mod http://…` melhor: ler binário, handshake
+      `push_mod <nome> <tam>`, mandar bytes, verificar ack.
+- [ ] **2.3** Notificação DORMANT/falha de mod (Termux:API): watchdog lê estado
+      (via `bepin list_patches` + diff, ou property) e chama
+      `termux-notification -t "bepin: DORMANT" -c "<hook> caiu"`.
+- [x] **2.4** Boot-watchdog (Termux:Boot): `termux-boot/bepin-watchdog.sh`
+      (`b016e92`) — `termux-wake-lock` primeiro; loop: ping companion, loga
+      estado via `logger`. Limitação real: não pode reiniciar o companion
+      (filho do processo do jogo, não existe antes do jogo abrir) — só
+      monitora e loga, documentado no próprio script.
+- [x] **2.5** Termux:Widget 1-toque (`termux-shortcuts/`, `cc8babd`):
+      `bcpoc-stream` (foreground) + `tasks/bcpoc-{toggle,status,sweep}`
+      (background). Fonte: github.com/termux/termux-widget README.
 
-Comparação honesta: shadowhook cita 0,26µs em benchmark próprio (ByteDance) —
-hardware, metodologia e o que exatamente é medido (single hook trampoline vs
-nosso dispatcher com N callbacks registrados) são diferentes, **não é
-apples-to-apples**. Não vou declarar "mais rápido" nem "mais lento" com
-confiança sem rodar os dois no mesmo device com o mesmo protocolo — isso
-fica como próximo passo real se quiser esse nível de rigor. O que dá pra
-afirmar com segurança: overhead sub-microssegundo, mesma ordem de grandeza
-do concorrente de referência, não é gargalo prático pro caso de uso.
+## Fase 3 — P2: robustez
+- [ ] **3.1** Notificação por evento: companion manda `!WARN`/`!ERR` no stream;
+      watchdog lê `bepin stream` e dispara `termux-notification` ao ver.
+- [ ] **3.2** `termux-battery-status` no watchdog — pular notif `--ongoing` se
+      bateria baixa (economia).
+- [ ] **3.3** Documentar auth da CLI (socket abstract já não precisa su; UID
+      autorizado é Termux/2000/0).
+- [ ] **3.4** `bepin setup` — cria `~/.termux/boot/`, `pkg install termux-api`,
+      chmod +x; instrui "abrir Termux:Boot 1x" (limitação de UI do Android,
+      não automatizável).
 
-**Tentativa real de apples-to-apples (feita, achado honesto)**: clonado
-`bytedance/android-inline-hook` (repo real, 2.391★, corrige a fonte —
-`shadowhook` é o nome do módulo, não do repo), buildado via Gradle+CMake
-com sucesso (`libshadowhook.so` arm64-v8a real, não simulado), escrito um
-benchmark C standalone (mesma metodologia `clock_gettime` do bc-poc) e
-enviado pro mesmo device físico via `adb push`. Resultado: `shadowhook_init`
-retornou `SHADOWHOOK_ERRNO_INIT_LINKER` (12) — a lib depende de resolver
-símbolos internos/privados do `linker64` do sistema (`sh_linker_get_symbol_info`,
-via `sh_linker.c:678`) que não bateram nesse device (Android 16, HyperOS,
-build de linker recente/específico da OEM). Não investiguei mais fundo
-(precisaria decompilar o `linker64` desse device especificamente) — mas é
-um achado genuíno e relevante: **shadowhook, apesar de "stably used in
-production" citado pela ByteDance, também depende de resolver símbolos
-internos que podem quebrar em builds específicas de Android/OEM** — a
-mesma classe de fragilidade que motivou o AOB pattern scan no bc-poc,
-só que na camada do linker do sistema em vez do binário do jogo. Benchmark
-apples-to-apples fica bloqueado por essa incompatibilidade específica de
-device, não por falta de tentativa real.
+## Ordem de execução recomendada (prioridade)
+1. **Fase 1** (1.1→1.3): fecha ciclo push de mod via socket (a base).
+2. **2.1 CLI `bepin`**: interface única; tudo depois usa `bepin`.
+3. **2.3 notificação** + **2.4 boot-watchdog**: automação prática do device.
+4. **Fase 3**: robustez/conveniência.
 
-### 2. Avaliar "multi hook no mesmo endereço" (recurso real do shadowhook) — ✅ SEM GAP
-Verificado no código (`bc_hook_logic.h`, `HOOK_MAX_CALLBACKS=4`): já temos
-isso, arquitetura diferente, mesmo resultado. shadowhook resolve N hooks
-concorrentes instalando N trampolines no mesmo endereço (seu jeito de
-"multi"); bc-poc instala **1** `DobbyHook` real por endereço e o
-dispatcher interno (`HookCallbacks`) distribui pra até 4 `prefix` + 4
-`postfix` callbacks registrados no mesmo slot — inclusive já usado pelos
-mods `.so` dinâmicos via `bc_mod_api.register_prefix/postfix` (não fica
-restrito aos 4 hooks fixos do `PLANS[]`, qualquer mod pode se registrar no
-mesmo hook). Sem gap real, sem ação necessária.
-
-### 3. Confirmar posição de licença — ✅ JÁ CORRETO
-Já somos MIT (mais permissivo que SandHook/Anti-996, equivalente a shadowhook).
-Sem ação necessária.
-
-### 4. Publicar esta pesquisa como parte da documentação de arquitetura — ✅ FEITO
-Este arquivo, linkado em `README.md` § Ver também.
-
-## Status: 4/4 itens fechados, 5/5 agentes despachados
-
-Todos os 5 agentes maestri foram despachados pra analisar concorrentes:
-hermes, freebuff, OpenCode e kilo entregaram pesquisa real (web search +
-GitHub API, fontes citadas na tabela acima). Devin ficou bloqueado por
-**cota semanal de billing esgotada na conta** (`Quota exhausted`,
-`app.devin.ai/settings/usage`) — confirmado 2x, não é erro de config
-recuperável dentro da sessão (diferente do kilo, cujo erro de provider
-Nvidia foi corrigido trocando de modelo via `/models`). O trabalho de
-pesquisa que seria do devin (Frida, Substrate, Xposed clássico) foi
-coberto de forma redundante por hermes/kilo/orquestrador direto via
-GitHub API — nenhuma lacuna real de cobertura ficou aberta.
-
-Roadmap completo executado nesta sessão. Nenhum item pendente no momento.
-
-## O que NÃO vamos fingir
-
-Não existe "vencer BepInEx PC em tudo" nem "vencer todo o ecossistema mobile
-em tudo" de forma honesta — BepInEx tem ecossistema/IL2CPP/maturidade que não
-fecha numa sessão; no lado mobile, a maior parte da concorrência morreu, o que
-não é mérito nosso, é fato de mercado. O trabalho real e honesto é: manter as
-vantagens estruturais já provadas (pattern scan sobrevive update, Zygisk fora
-do storage do app, SO_PEERCRED), e agora medir/comparar contra o único
-concorrente nativo vivo (shadowhook) em vez de contra fantasmas.
+## Dependências manuais não-automatizáveis (documentadas)
+- **Termux:Boot** precisa ser aberto 1 vez (UI Android) — `bepin setup` só instrui.
+- **pkg `termux-api`** precisa estar instalado.
+- Termux e Termux:Boot devem ser do **mesmo canal de install** (F-Droid) e
+  assinados pela mesma key — doc oficial do termux-boot.
