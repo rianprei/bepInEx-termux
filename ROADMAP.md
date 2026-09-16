@@ -65,6 +65,47 @@ background na mesma sessão.
       em `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
 
+## Fase 3 — paridade total com o log/console do BepInEx (`literalmente tudo`)
+- [x] **3.1** Log em disco (`ab72ce2`) — equivalente ao `LogOutput.log`.
+      Confirmado no fonte real (`DiskLogListener.cs`): `appendLog=false` é
+      DEFAULT (trunca a cada boot, não Append), fallback de até 5 arquivos
+      (`LogOutput.N.log`) se travado. Implementado igual: `fopen("w")` na
+      1ª escrita do processo, fallback com sufixo numérico.
+- [x] **3.2** Filtro de nível Debug (`1bb3866`) — confirmado no fonte real
+      (freebuff, BepInEx v5.4.23.5): default de `[Logging.Console]` e
+      `[Logging.Disk]` `LogLevels` é `Fatal|Error|Message|Info|Warning`,
+      SEM Debug. `stream_send_prefixed` descarta nível Debug por padrão.
+- [x] **3.3** Bridge de logcat (`1bb3866`) — unifica o log NATIVO do
+      próprio jogo (não só do módulo) no mesmo canal stream+disco.
+      Achado real (OpenCode): BepInEx tem `UnityLogSource`, gancho em
+      `Application.logMessageReceived` (evento Unity) pra capturar
+      `Debug.Log` do PRÓPRIO jogo. Battle Cats não é Unity (engine própria
+      PONOS/Cocos2d-x-like) — não existe esse evento gerenciado. Mas o
+      jogo usa `__android_log_print` nativo como qualquer app, já vai pro
+      logcat — só não tava unificado. `logcat -v brief --pid=<próprio>`
+      resolve, filtrando a própria tag pra não duplicar.
+- [x] **3.4** Confirmado NÃO aplicável (kilo): formatação especial de
+      stack trace de exceção (`ex.ToString()`, `LogLevel.Fatal` forçando
+      console a abrir mesmo desabilitado) — não mapeia pra código nativo
+      C/C++ sem exceções gerenciadas. Sem ação.
+- [ ] **3.5** Requisito documentado: `allow-external-apps=true` em
+      `~/.termux/termux.properties`, senão o RunCommandService recusa
+      silenciosamente.
+- [ ] **3.6** hermes ainda pesquisando: enum `LogLevel` completo (Flags,
+      valores 0-32) + cor por nível no console real (`GetConsoleColor` em
+      `LogLevel.cs`) — cores já batem (mapeadas em sessão anterior via
+      `TtyHandler.cs`), pendência é só confirmar uso real de
+      Fatal/Debug no código (nenhum call site usa Debug/Fatal hoje no
+      nosso lado — não é lacuna se o BepInEx também raramente usa).
+
+## O que NÃO é lacuna real (verificado, não suposição)
+- **Captura de logs internos do Unity** — não aplicável, Battle Cats não é
+  engine Unity (achado OpenCode). `WriteUnityLog` do BepInEx é `false` por
+  padrão mesmo no PC — logs do jogo já não vêm por padrão nem lá.
+- **Overlay de log dentro do jogo (IMGUI in-game)** — não pesquisado
+  (devin bloqueado por quota semanal esgotada, confirmado 2x nesta sessão;
+  sem esse dado, não afirmo se existe ou não no BepInEx).
+
 ## Dependências manuais não-automatizáveis (documentadas)
 - `allow-external-apps=true` precisa estar setado manualmente 1x no Termux.
 - `pkg install termux-api` + app Termux:API instalado (mesma fonte/assinatura
