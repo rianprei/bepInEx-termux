@@ -91,12 +91,22 @@ background na mesma sessão.
 - [ ] **3.5** Requisito documentado: `allow-external-apps=true` em
       `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
-- [ ] **3.6** hermes ainda pesquisando: enum `LogLevel` completo (Flags,
-      valores 0-32) + cor por nível no console real (`GetConsoleColor` em
-      `LogLevel.cs`) — cores já batem (mapeadas em sessão anterior via
-      `TtyHandler.cs`), pendência é só confirmar uso real de
-      Fatal/Debug no código (nenhum call site usa Debug/Fatal hoje no
-      nosso lado — não é lacuna se o BepInEx também raramente usa).
+- [x] **3.6** enum `LogLevel` confirmado (hermes, `LogLevel.cs:5`,
+      `[Flags]`): `None=0, Fatal=1, Error=2, Warning=4, Message=8, Info=16,
+      Debug=32, All=63`. Cores (`GetConsoleColor`, mesmo arquivo):
+      Fatal=Red, Error=DarkRed, Warning=Yellow, Message=White,
+      Info/Debug=DarkGray — bate com o mapeamento ANSI já usado em
+      `termux_client.py` (extraído de `TtyHandler.cs` em sessão anterior).
+      Fatal/Debug não usados no nosso lado, sem lacuna: o filtro padrão do
+      próprio BepInEx já exclui Debug do console, e Fatal só serve pra
+      erro irreversível — não é comportamento que falte replicar.
+
+## Status: Fase 3 fechada, 5/5 agentes despachados
+Todos os 5 agentes maestri (hermes, freebuff, OpenCode, kilo, devin)
+foram despachados pra fechar a paridade console/log com o BepInEx. Devin
+bloqueado por cota semanal (`Quota exhausted`, confirmado novamente nesta
+rodada) — item 3.7 (overlay in-game) fica como NÃO COMPROVADO, não como
+lacuna assumida.
 
 ## O que NÃO é lacuna real (verificado, não suposição)
 - **Captura de logs internos do Unity** — não aplicável, Battle Cats não é
