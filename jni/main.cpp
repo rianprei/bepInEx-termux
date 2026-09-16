@@ -899,6 +899,40 @@ static int qsort_strcmp(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+// Carrega o manifest (bc_mod_manifest) de um .so já dlopen'd, se exportado.
+// O manifest é um struct C estático dentro da lib (vê bc_mod_graph.h:52-55);
+// dlsym("bc_mod_manifest") dá o endereço. Copiamos DENTRO do buffer local
+// ANTES de dlclose, porque os ponteiros internos (name/requires_/conflicts)
+// apontam pra rodata da lib — depois de dlclose apontam pra memória liberada.
+// Retorna false se o .so não exporta manifest (vira nodo independente).
+// Safety: lê no máximo BC_MOD_DEPS_MAX requires/conflicts (fim = NULL).
+typedef struct bc_manifest_snapshot {
+    char name[BC_MOD_NAME_MAX];
+    char requires_[BC_MOD_DEPS_MAX][BC_MOD_NAME_MAX];
+    char conflicts[BC_MOD_DEPS_MAX][BC_MOD_NAME_MAX];
+    int n_req, n_con;   // contagem real (não só o null-terminado)
+} bc_manifest_snapshot;
+
+static bool discover_mod_manifest(void *handle, bc_manifest_snapshot *out) {
+    if (out == nullptr) return false;
+    memset(out, 0, sizeof(*out));
+    const struct bc_mod_manifest *m =
+        (const struct bc_mod_manifest *)dlsym(handle, "bc_mod_manifest");
+    if (m == nullptr || m->name == nullptr) return false;
+    snprintf(out->name, sizeof(out->name), "%s", m->name);
+    for (int i = 0; i < BC_MOD_DEPS_MAX && m->requires_[i] != nullptr; i++) {
+        snprintf(out->requires_[out->n_req], sizeof(out->requires_[out->n_req]),
+                 "%s", m->requires_[i]);
+        out->n_req++;
+    }
+    for (int i = 0; i < BC_MOD_DEPS_MAX && m->conflicts[i] != nullptr; i++) {
+        snprintf(out->conflicts[out->n_con], sizeof(out->conflicts[out->n_con]),
+                 "%s", m->conflicts[i]);
+        out->n_con++;
+    }
+    return true;
+}
+
 // Descobre e carrega todos os .so em BC_MODS_DIR (bc_loader.h). Roda DEPOIS
 // de install_all() — os hooks estáticos já estão de pé, resolve_symbol()
 // funciona pros mods usarem. Isolamento de falha por arquivo: um mod que
@@ -928,9 +962,71 @@ static void load_dynamic_mods() {
         return;
     }
 
-    // ordem determinística (prefixo numérico no nome do arquivo controla a
-    // ordem de carga — ver bc_loader.h)
+    // Ordem de descoberta determinística (arquivo) só como desempate — a
+    // ordem de CARGA real vem do grafo de dependência (bc_mod_graph_sort),
+    // igual aos hooks estáticos (bc_resolve_load_order). Sem isso um mod com
+    // `requires` podia carregar antes do que ele depende (gap #8, achado
+    // pelo hermes na review).
     qsort(names, n_names, sizeof(names[0]), qsort_strcmp);
+    if (n_names > BC_MOD_GRAPH_MAX_MODS) n_names = BC_MOD_GRAPH_MAX_MODS;
+
+    bc_loader_ops ops = {};
+    ops.dlopen = [](const char *path, int flags) -> void * { return dlopen(path, flags); };
+    ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
+    ops.dlclose = [](void *h) -> int { return dlclose(h); };
+    ops.run_entry = mod_entry_runner;
+
+    // Fase 1: dlopen todo mundo e coleta manifest (ou fallback = nó
+    // independente, nome = arquivo). Precisa estar tudo aberto ANTES de
+    // ordenar, porque o manifest só existe depois do dlopen.
+    void *handles[BC_MOD_GRAPH_MAX_MODS] = {};
+    bc_manifest_snapshot snaps[BC_MOD_GRAPH_MAX_MODS];
+    bool opened[BC_MOD_GRAPH_MAX_MODS] = {};
+    int failed = 0;
+
+    for (int i = 0; i < n_names; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
+        void *h = ops.dlopen(path, 2 /*RTLD_NOW*/);
+        if (h == nullptr) {
+            LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
+                 names[i]);
+            failed++;
+            continue;
+        }
+        if (ops.dlsym(h, "bc_mod_register") == nullptr) {
+            LOGW("mod loader: %s — sem símbolo bc_mod_register, não é mod deste loader",
+                 names[i]);
+            ops.dlclose(h);
+            failed++;
+            continue;
+        }
+        handles[i] = h;
+        opened[i] = true;
+        if (!discover_mod_manifest(h, &snaps[i])) {
+            // sem manifest exportado → nó independente (nome = arquivo,
+            // sem requires/conflicts), mesmo comportamento de antes do #8.
+            memset(&snaps[i], 0, sizeof(snaps[i]));
+            snprintf(snaps[i].name, sizeof(snaps[i].name), "%s", names[i]);
+        }
+    }
+
+    // Fase 2: monta manifests pro grafo (só os que abriram) e ordena.
+    int idx_map[BC_MOD_GRAPH_MAX_MODS]; // posição no grafo -> índice em names/handles
+    struct bc_mod_manifest gmods[BC_MOD_GRAPH_MAX_MODS];
+    int n_gmods = 0;
+    for (int i = 0; i < n_names; i++) {
+        if (!opened[i]) continue;
+        struct bc_mod_manifest *gm = &gmods[n_gmods];
+        memset(gm, 0, sizeof(*gm));
+        gm->name = snaps[i].name;
+        for (int r = 0; r < snaps[i].n_req && r < BC_MOD_DEPS_MAX; r++)
+            gm->requires_[r] = snaps[i].requires_[r];
+        for (int c = 0; c < snaps[i].n_con && c < BC_MOD_DEPS_MAX; c++)
+            gm->conflicts[c] = snaps[i].conflicts[c];
+        idx_map[n_gmods] = i;
+        n_gmods++;
+    }
 
     bc_mod_api api = {};
     api.version = BC_MOD_API_VERSION;
@@ -939,39 +1035,45 @@ static void load_dynamic_mods() {
     api.resolve_symbol = mod_api_resolve_symbol;
     api.log = mod_api_log;
 
-    bc_loader_ops ops = {};
-    ops.dlopen = [](const char *path, int flags) -> void * { return dlopen(path, flags); };
-    ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
-    ops.dlclose = [](void *h) -> int { return dlclose(h); };
-    ops.run_entry = mod_entry_runner;
+    int ok = 0, inactive = 0;
+    if (n_gmods > 0) {
+        struct bc_mod_graph_result res;
+        int n_order = bc_mod_graph_sort(gmods, n_gmods, &res);
 
-    int ok = 0, inactive = 0, failed = 0;
-    for (int i = 0; i < n_names; i++) {
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
-        bc_loaded_mod out;
-        bc_load_status st = bc_loader_load_one(&ops, path, &api, &out);
-        switch (st) {
-            case BC_LOAD_OK:
+        // Fase 3: carrega na ordem do grafo (só os aprovados).
+        for (int k = 0; k < n_order; k++) {
+            int gi = res.order[k];
+            int i = idx_map[gi];
+            void *sym = ops.dlsym(handles[i], "bc_mod_register");
+            bool active = mod_entry_runner(&api, sym);
+            if (active) {
                 LOGI("mod loader: %s carregado e ativo", names[i]);
                 ok++;
-                break;
-            case BC_LOAD_INACTIVE:
+            } else {
                 LOGI("mod loader: %s carregado mas inativo (entry retornou false)", names[i]);
+                ops.dlclose(handles[i]);
                 inactive++;
-                break;
-            case BC_LOAD_ERR_OPEN:
-                LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
-                     names[i]);
-                failed++;
-                break;
-            case BC_LOAD_ERR_NOSYM:
-                LOGW("mod loader: %s — sem símbolo bc_mod_register, não é mod deste loader",
-                     names[i]);
-                failed++;
-                break;
+            }
+            opened[i] = false; // marcado como tratado (evita dlclose duplo abaixo)
+        }
+
+        // Mods rejeitados pelo grafo (conflict/missing/cycle): nunca chama o
+        // entry, fecha o handle sem tentar carregar (isolamento, igual a um
+        // dlopen que falhou — não derruba os outros nem o jogo).
+        for (int gi = 0; gi < n_gmods; gi++) {
+            int i = idx_map[gi];
+            if (!opened[i]) continue; // já tratado (entrou na ordem)
+            const char *why = (res.status[gi] == BC_MOD_REJ_CONFLICT) ? "conflict"
+                             : (res.status[gi] == BC_MOD_REJ_MISSING) ? "requires ausente"
+                             : (res.status[gi] == BC_MOD_REJ_CYCLE)   ? "ciclo de dependência"
+                                                                       : "rejeitado";
+            LOGW("mod loader: %s — rejeitado pelo grafo (%s), pulando", names[i], why);
+            ops.dlclose(handles[i]);
+            failed++;
+            opened[i] = false;
         }
     }
+
     publish_log("Message", "mod loader: %d ok, %d inativo, %d falhou (de %d .so em %s)",
                 ok, inactive, failed, n_names, BC_MODS_DIR);
 }
