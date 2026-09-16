@@ -48,6 +48,21 @@ processo em runtime, nunca escreve dentro do APK/pasta do app. Um update
 de APK (Play Store) não apaga nem precisa tocar no módulo; só pode mudar
 endereços internos, que é exatamente o problema que o item 1 já resolve.
 
+**3. Controle de acesso real no canal de controle (kernel, não forjável).**
+Verificado em instalação real: `BepInEx/plugins/` e `BepInEx/config/` (PC)
+são graváveis (`755`) por qualquer processo rodando como o mesmo usuário
+do SO — sem isolamento entre apps, sem autenticação, qualquer programa
+(inclusive malware) pode substituir uma DLL de plugin ou editar config sem
+pedir permissão nenhuma; é o modelo de permissão de desktop, não tem
+analogia melhor no PC. O canal de controle do bepin-termux
+(`companion.cpp`, socket abstract `@bc_companion`) usa `SO_PEERCRED` —
+autenticação a nível de kernel, não forjável por processo userspace —
+aceitando só UID 0 (root), UID 2000 (shell/adb) ou o UID real do Termux
+(`is_authorized_uid()`). Um app Android arbitrário (sandbox de UID
+diferente) não consegue nem abrir o socket, muito menos falsificar
+identidade — isolamento que o modelo de permissão do Android garante e o
+Windows/Steam não tem equivalente.
+
 ## Arquitetura
 
 ```
