@@ -279,7 +279,12 @@ static void *get_lib_exec_range(const char *libname, LibExecRange *out) {
             const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
             if (ph->p_type == PT_LOAD && (ph->p_flags & PF_X)) {
                 c->out->base = (void *)(info->dlpi_addr + ph->p_vaddr);
-                c->out->size = (size_t)ph->p_memsz;
+                // p_memsz inclui BSS (zero-fill além do que o arquivo mapeia
+                // de verdade); escanear até lá arrisca ler página não
+                // mapeada. min() com p_filesz nunca lê além do garantido
+                // (mesmo bug achado e corrigido em bc_pattern_scan.h,
+                // review do OpenCode — twin real, mesmo padrão PT_LOAD+PF_X).
+                c->out->size = (size_t)(ph->p_filesz < ph->p_memsz ? ph->p_filesz : ph->p_memsz);
             }
         }
         return 1;
