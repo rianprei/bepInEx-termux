@@ -1,3 +1,0 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# Stream ao vivo do companion bc-poc (session foreground)
-exec python3 ~/battlecats-mods/zygisk-bc-poc/bc_log_viewer.py stream

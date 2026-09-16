@@ -101,7 +101,6 @@ static std::atomic<int> g_mods_count{0};
 static std::atomic<int> g_throttle_every{0};  // 0 = throttle desligado; N = pula 1 a cada N frames
 
 // Watch-per-key callbacks (BepInEx SettingChanged port — bc_mods_conf.h).
-// Tabela plana de callbacks registrados pro reload delta-check.
 static bc_mod_watch g_watch_table[BC_SCHEMA_N];
 static int g_watch_count = 0;
 

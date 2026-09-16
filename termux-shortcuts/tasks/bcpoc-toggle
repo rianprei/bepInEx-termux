@@ -1,6 +1,0 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# Uso pelo Widget exige valor fixo — troque <hook> pelo nome real (ex.: appUpdateDraw)
-PATH=/data/data/com.termux/files/usr/bin:$PATH
-python3 ~/battlecats-mods/zygisk-bc-poc/bc_log_viewer.py toggle_mod <hook> \
-  && termux-toast -s "hook alternado" \
-  || termux-toast -s "falhou toggle (companion vivo?)"
