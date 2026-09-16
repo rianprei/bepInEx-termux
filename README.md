@@ -110,6 +110,27 @@ Caso 50. Exposto a mods dinâmicos via `bc_mod_api.resolve_pattern` (campo
 novo no fim do struct — mod compilado contra a API anterior continua
 funcionando sem mudança).
 
+**Prova empírica (não simulada) de que resolve o problema de verdade**: o
+projeto já tem 4 builds regionais reais do jogo extraídas (arquivos
+`.so` distintos, hashes diferentes, não redistribuídos aqui por serem
+binário de terceiro). O RVA de `appUpdateDraw` varia **~120KB** entre elas:
+
+| Região | MD5 do `.so`                      | RVA de `appUpdateDraw` |
+|--------|------------------------------------|-------------------------|
+| EN     | `049a93097de3534ea9279369cd8009a5` | `0x31ec4c`               |
+| TW     | `f33fe5be2beb5d883a26e5a8cd5b6637` | `0x30168c`               |
+| KR     | `b4d15eb7abc764b3631e333f2fc18ae4` | `0x3013bc`               |
+| JP     | `f954d90207ca99f68147b878e8ee4f75` | `0x3087bc`               |
+
+Um hook por **RVA fixo** (`offsetsdb.h`) funcionaria em exatamente 1 dessas
+4 builds reais e cairia em `DORMANT` nas outras 3 — é literalmente o
+cenário que RVA fixo não sobrevive. Os 24 bytes do prólogo (`bc_pattern_scan`
+Caso 50), extraídos via `dd`+`od` nos 4 offsets acima, são **byte-a-byte
+idênticos** nas 4 builds: `ff 43 01 d1 fd 7b 02 a9 f6 57 03 a9 f4 4f 04 a9
+fd 83 00 91 54 d0 3b d5`. Isso é a prova real (não hipótese) de que o
+AOB scan acha a função certa mesmo com endereço mudando drasticamente
+entre builds — o mesmo tipo de mudança que um update do jogo produz.
+
 ### 2. `jni/companion.cpp` — processo companion (root)
 
 Daemon root separado (`REGISTER_ZYGISK_COMPANION`), spawnado pelo
