@@ -14,17 +14,26 @@ A maior parte do "ecossistema concorrente" está **morta ou arquivada**:
 | VirtualXposed | app virtualizada + Xposed | 8.597★ | inativo/sem manutenção recente | busca hermes |
 | whale (asLody) | inline hook nativo C | 917★ | **archived** | busca hermes |
 | Riru | ponte root pra Zygisk-like | — | **deprecated oficialmente**, sucessor = Zygisk (o que já usamos) | busca hermes |
-| xhook (iqiyi) | hook nativo | 1.468★ | ativo, mas só PLT hooking (mais fraco que inline hook) | busca hermes |
+| xhook (iqiyi) | hook nativo (PLT-only) | 4.348★ / 789 forks | ativo, push 2025-06-27, mas só PLT hooking (mais fraco que inline hook — não intercepta chamada direta/estática, só ponteiro de import) | api.github.com/repos/iqiyi/xhook (GitHub API direto, kilo/orquestrador) |
 | SandHook | hook ART | — | licença **Anti-996** (não é OSS padrão, zona cinzenta legal p/ uso comercial) | busca freebuff |
 | Substrate/Cydia Substrate (Android) | hook nativo histórico | — | efetivamente abandonado, sem release relevante recente | busca hermes |
 | **shadowhook (ByteDance)** | inline hook nativo C, **mesma categoria do Dobby que usamos** | — | **ATIVO**, licença MIT, "stably used in production apps", Android 4.1→17 QPR1 Beta 4, arm/arm64, 4 modos de hook, overhead medido **0,26µs** em runtime | busca freebuff |
+| **Frida** | framework geral de instrumentação dinâmica (não é "mod loader" no sentido BepInEx) | **21.944★ / 2.214 forks** | **ATIVO, massivamente maduro** — push HOJE (2026-09-16), o maior projeto de toda a comparação por larga margem | api.github.com/repos/frida/frida (GitHub API direto) |
+| TaiChi (太极) | virtual-app + Xposed | — | **sinal fraco/fragmentado** — sem repo canônico de peso encontrado em 2 buscas independentes (hermes + GitHub API direto); provável projeto descontinuado/nunca consolidado no GitHub | busca hermes + GitHub API |
 
-**Conclusão honesta**: não existe hoje um "BepInEx mobile" consolidado e vivo pra
-comparar de igual pra igual — o campo é fragmentado e majoritariamente abandonado.
-O único concorrente direto, ativo e tecnicamente comparável (hook nativo inline,
-não bytecode ART) é o **shadowhook** da ByteDance. Nossa escolha de infraestrutura
-(Zygisk em vez de Riru) já está alinhada com o que sobreviveu no ecossistema —
-Riru foi descontinuado oficialmente a favor de Zygisk.
+**Conclusão honesta, atualizada**: não existe um "BepInEx mobile" consolidado
+comparável 1:1 — o campo de frameworks de MOD LOADING é fragmentado e
+majoritariamente abandonado (LSPatch, whale, VirtualXposed, TaiChi). O único
+concorrente direto e tecnicamente comparável nessa categoria (hook nativo
+inline, não bytecode ART) é o **shadowhook** da ByteDance. Fora dessa
+categoria específica, **Frida** é um projeto muito maior e mais maduro que
+qualquer coisa aqui catalogada (21,9k★, manutenção diária) — mas resolve um
+problema diferente (instrumentação/pesquisa de segurança geral via
+JS-bridge, não injeção de mod permanente tipo BepInEx/Zygisk); não é
+substituível 1:1 pelo bepin-termux nem vice-versa, categorias distintas,
+comparação direta seria enganosa. Nossa escolha de infraestrutura (Zygisk
+em vez de Riru) já está alinhada com o que sobreviveu no ecossistema — Riru
+foi descontinuado oficialmente a favor de Zygisk.
 
 ## Prioridades (ordem de execução)
 
@@ -61,7 +70,19 @@ Sem ação necessária.
 ### 4. Publicar esta pesquisa como parte da documentação de arquitetura — ✅ FEITO
 Este arquivo, linkado em `README.md` § Ver também.
 
-## Status: 4/4 itens fechados
+## Status: 4/4 itens fechados, 5/5 agentes despachados
+
+Todos os 5 agentes maestri foram despachados pra analisar concorrentes:
+hermes, freebuff, OpenCode e kilo entregaram pesquisa real (web search +
+GitHub API, fontes citadas na tabela acima). Devin ficou bloqueado por
+**cota semanal de billing esgotada na conta** (`Quota exhausted`,
+`app.devin.ai/settings/usage`) — confirmado 2x, não é erro de config
+recuperável dentro da sessão (diferente do kilo, cujo erro de provider
+Nvidia foi corrigido trocando de modelo via `/models`). O trabalho de
+pesquisa que seria do devin (Frida, Substrate, Xposed clássico) foi
+coberto de forma redundante por hermes/kilo/orquestrador direto via
+GitHub API — nenhuma lacuna real de cobertura ficou aberta.
+
 Roadmap completo executado nesta sessão. Nenhum item pendente no momento.
 
 ## O que NÃO vamos fingir
