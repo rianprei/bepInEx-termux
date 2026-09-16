@@ -424,7 +424,14 @@ struct HookPlan {
 #define BC_POC_LOG_PATH "/data/local/tmp/bc_poc_LogOutput.log"
 #define BC_POC_LOG_FILE_LIMIT 5
 static FILE *g_log_file = nullptr;
-static bool g_log_file_tried = false;
+// pthread_once, não bool simples: stream_send_prefixed é chamado de várias
+// threads concorrentes (hooks do jogo + logcat_bridge_thread) — achado real
+// por inspeção: um bool "tried" tem TOCTOU clássico, 2 threads podem ver
+// false ao mesmo tempo, ambas chamarem fopen("w") no MESMO path, cada FILE*
+// com seu próprio offset zerado (fopen não herda posição), escritas
+// concorrentes se sobrescrevendo em vez de acrescentar. pthread_once
+// garante exatamente 1 execução real, concorrentes esperam a 1ª terminar.
+static pthread_once_t g_log_file_once = PTHREAD_ONCE_INIT;
 
 static void log_file_open() {
     char path[64];
@@ -441,11 +448,13 @@ static void log_file_open() {
 }
 
 static void log_file_write(const char *line, int len) {
-    if (!g_log_file_tried) {
-        g_log_file_tried = true;
-        log_file_open();
-    }
+    pthread_once(&g_log_file_once, log_file_open);
     if (g_log_file == nullptr) return;
+    // fwrite/fflush em si não são thread-safe pra chamadas concorrentes no
+    // MESMO FILE* (podem intercalar bytes de linhas diferentes) — aceitável
+    // aqui: pior caso é uma linha de log espremida com outra, nunca corrompe
+    // o arquivo/crasha, e o stream ao vivo (canal principal) não tem esse
+    // problema (send() é atômico por datagrama para linhas desse tamanho).
     fwrite(line, 1, (size_t)len, g_log_file);
     fflush(g_log_file);
 }
