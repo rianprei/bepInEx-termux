@@ -1,5 +1,5 @@
 APP_STL := c++_static
-APP_CPPFLAGS := -std=c++17 -fexceptions -frtti -fomit-frame-pointer -DANDROID -D_FORTIFY_SOURCE=2 -DNDEBUG -fstack-protector-strong -fvisibility=hidden
+APP_CPPFLAGS := -std=c++17 -fexceptions -frtti -fomit-frame-pointer -DANDROID -D_FORTIFY_SOURCE=2 -DNDEBUG -fstack-protector-strong -fvisibility=hidden -Wall -Wextra
 APP_LDFLAGS := -static-libstdc++ -static-libgcc -llog -Wl,-z,relro,-z,now -Wl,--as-needed
 # -landroid removido: achado real (strace + leitura do zygiskd64) — nenhum
 # símbolo do .so vem de libandroid.so, mas listar como NEEDED puxava uma

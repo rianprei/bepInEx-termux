@@ -65,7 +65,6 @@ static std::atomic<int>  g_sdk{0};           // runtime Android SDK level (JNI)
 static std::atomic<bool> g_build_id_resolved{false}; // PT_NOTE build-id == BC_BUILD_ID (fail-closed pra base+offset)
 // (g_mod_enabled removido — throttle agora é g_throttle_every:int do config)
 static std::atomic<int>  g_frame_counter{0};   // frame counter pro throttle
-static const int MIN_SDK = 21;               // Android 5.0 minimum (Dobby compat)
 static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
 // Métrica de overhead do dispatcher (clock_gettime MONOTONIC)
 static std::atomic<uint64_t> g_hook_overhead_ns{0};      // nanos totais no dispatcher

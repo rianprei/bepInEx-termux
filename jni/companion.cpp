@@ -296,10 +296,6 @@ static const struct bc_mod_schema *schema_find(const char *name) {
     return nullptr;
 }
 
-static bool is_known_hook(const char *name) {
-    return schema_find(name) != nullptr;
-}
-
 // Carrega o config atual preenchendo TODAS as chaves do schema (default quando
 // ausente). Retorna sempre BC_SCHEMA_N.
 static int load_mods_conf(struct bc_mod_entry *out, int cap) {
