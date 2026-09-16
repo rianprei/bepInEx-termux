@@ -2,11 +2,13 @@
 // Dobby com resiliência. Cada símbolo falha silenciosamente (log) em vez de
 // derrubar o processo do jogo.
 //
-// Alvos (via readelf --dyn-symbols do libnative-lib.so v15.5.0 en):
-//   appInit     = 0x31eb7c (208 bytes) — chamado 1x no início
-//   appUpdateDraw = 0x31ec4c (228 bytes) — por frame
-//   appTouch    = 0x31efb8 (192 bytes) — por toque
-//   appKey      = 0x31f078 (364 bytes) — por tecla de hardware
+// Alvos (símbolos JNI, confirmados via readelf --dyn-symbols na análise
+// original do libnative-lib.so v15.5.0 en; os offsets/build atuais ficam
+// em offsetsdb.h, gerado por bc_offset_check.py — não editar aqui):
+//   appInit       — chamado 1x no início
+//   appUpdateDraw — por frame
+//   appTouch      — por toque
+//   appKey        — por tecla de hardware
 //
 // Resiliência: para cada símbolo, se DobbySymbolResolver não achar, loga
 // "falhou inspecionando X" e segue pro próximo. Esse padrão permite que
@@ -527,20 +529,6 @@ HookPlan hooks_appkey =
 
 static HookPlan *PLANS[] = { &hooks_appinit, &hooks_updatedraw, &hooks_apptouch, &hooks_appkey };
 static const int N_PLANS = 4;
-
-// RVAs (offsets virtuais dentro da lib) conferidos via readelf no APK do jogo
-// EN v15.5.0 (MD5 049a9309), obtidos do libnative-lib.so pela sessão
-// leitura --dyn-symbols. Se a versão do jogo mudar, esses offsets devem
-// corresponder ao símbolo atualizado antes de instalar o hook.
-static const struct {
-    const char *shortname;
-    uintptr_t expected_rva;
-} EXPECTED_RVAS[] = {
-    {"appInit",     0x31eb7c},
-    {"appUpdateDraw", 0x31ec4c},
-    {"appTouch",    0x31efb8},
-    {"appKey",      0x31f078},
-};
 
 // --- Self-test + resolução por alvo, chamado por try_install ANTES do DobbyHook.
 // Cascata (context/battlecats-offset-db-schema.md §6):
