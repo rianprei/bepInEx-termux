@@ -452,6 +452,12 @@ static void log_file_write(const char *line, int len) {
 
 static void stream_send_prefixed(const char *level, const char *source,
                                  const char *body) {
+    // Filtro por nível — confirmado no fonte real (freebuff, BepInEx
+    // v5.4.23.5): default de [Logging.Console] e [Logging.Disk] LogLevels
+    // é Fatal|Error|Message|Info|Warning, SEM Debug (ConsoleLogListener.cs,
+    // Chainloader.cs). Relevante agora com o bridge de logcat (abaixo),
+    // que pode receber linhas Debug/Verbose de libs nativas do processo.
+    if (strcmp(level, "Debug") == 0) return;
     time_t now = time(nullptr);
     struct tm tmv;
     localtime_r(&now, &tmv);
@@ -476,6 +482,66 @@ static void stream_send_prefixed(const char *level, const char *source,
         g_stream_fd.store(-1, std::memory_order_relaxed);
     }
     // EAGAIN/EWOULDBLOCK = buffer cheio → linha descartada. OK, não bloqueia.
+}
+
+// Unifica no MESMO pipeline (stream+disco) o log NATIVO do próprio processo
+// do jogo — achado real (pesquisa OpenCode): BepInEx tem UnityLogSource,
+// que gancha Application.logMessageReceived (evento gerenciado do Unity)
+// pra capturar Debug.Log do PRÓPRIO jogo, não só de plugins. Battle Cats
+// não é Unity (engine própria PONOS/Cocos2d-x-like) — não existe esse
+// evento gerenciado pra ganchar. Mas o jogo ainda usa __android_log_print
+// como qualquer app nativo, e isso já vai pro logcat por padrão (canal
+// separado, sem módulo nenhum) — só não estava unificado com o stream/log
+// do bc-poc. `logcat --pid=<próprio pid>` cobre TUDO que esse processo
+// loga, jogo e módulo juntos; filtramos a própria LOG_TAG pra não duplicar
+// linha que publish_log/publish_event já manda direto (senão apareceria 2x).
+static void *logcat_bridge_thread(void *) {
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "logcat -v brief --pid=%d", getpid());
+    FILE *lc = popen(cmd, "r");
+    if (lc == nullptr) {
+        LOGW("logcat_bridge: popen falhou: %s — sem unificação de log nativo do jogo",
+             strerror(errno));
+        return nullptr;
+    }
+    char line[512];
+    while (fgets(line, sizeof(line), lc) != nullptr) {
+        size_t l = strlen(line);
+        if (l > 0 && line[l - 1] == '\n') line[l - 1] = '\0';
+        if (line[0] == '\0') continue;
+        // Formato "-v brief": "L/Tag( pid): mensagem"
+        char level_c = line[0];
+        char *slash = strchr(line, '/');
+        if (slash == nullptr) continue;
+        char *paren = strchr(slash + 1, '(');
+        if (paren == nullptr) continue;
+        *paren = '\0';
+        const char *tag = slash + 1;
+        if (strcmp(tag, LOG_TAG) == 0) continue;  // já veio via publish_log/publish_event
+        char *colon = strchr(paren + 1, ':');
+        const char *msg = (colon != nullptr && colon[1] == ' ') ? colon + 2 : (paren + 1);
+        const char *level;
+        switch (level_c) {
+            case 'F': level = "Fatal";   break;
+            case 'E': level = "Error";   break;
+            case 'W': level = "Warning"; break;
+            case 'I': level = "Info";    break;
+            default:  level = "Debug";   break;  // D/V — filtrado no stream_send_prefixed
+        }
+        stream_send_prefixed(level, tag, msg);
+    }
+    pclose(lc);
+    LOGI("logcat_bridge: encerrado (logcat do PID %d parou)", getpid());
+    return nullptr;
+}
+
+static void start_logcat_bridge() {
+    pthread_t t;
+    if (pthread_create(&t, nullptr, logcat_bridge_thread, nullptr) == 0) {
+        pthread_detach(t);
+    } else {
+        LOGW("start_logcat_bridge: pthread_create falhou: %s", strerror(errno));
+    }
 }
 
 // Streaming de evento de hook (chamada quente, per-frame) — corpo pronto,
@@ -1211,6 +1277,7 @@ static void *event_thread(void *) {
     // X.Y.Z - <game>" em Message no início do carregamento) — nosso
     // equivalente: banner do módulo antes de qualquer instalação.
     publish_log("Message", "BC POC Zygisk %d hooks disponíveis — iniciando instalação", N_PLANS);
+    start_logcat_bridge();  // unifica log nativo do jogo no mesmo canal (1x por sessão)
     // Opção A (§8): valida o build ANTES de qualquer instalação.
     g_build_id_resolved.store(verify_build_id(TARGET_LIB), std::memory_order_relaxed);
     install_all();
