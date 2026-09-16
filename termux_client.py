@@ -59,6 +59,7 @@ def send_command(cmd):
     false pro caminho não-stream), então loop até EOF é o jeito certo,
     não frágil como confiar num recv() só cobrir tudo."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(5.0)
     try:
         sock.connect(SOCKET_NAME)
         sock.sendall((cmd + '\n').encode())
@@ -68,13 +69,20 @@ def send_command(cmd):
             if not data:
                 break
             chunks.append(data)
-        return b''.join(chunks).decode()
+        resp = b''.join(chunks).decode()
+        if not resp:
+            return "error: resposta vazia (companion rejeitou por SO_PEERCRED? UID não autorizado)"
+        return resp
     except ConnectionRefusedError:
         return "error: connection refused (companion not running?)"
     except FileNotFoundError:
         return "error: socket not found (companion not running?)"
-    except Exception as e:
-        return f"error: {e}"
+    except socket.timeout:
+        return "error: timeout ao conectar/ler — companion não responde"
+    except (ConnectionResetError, BrokenPipeError):
+        return "error: conexão resetada (companion morreu ou rejeitou)"
+    except OSError as e:
+        return f"error: falha de conexão ({e})"
     finally:
         sock.close()
 
