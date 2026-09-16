@@ -1,4 +1,0 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# Rodado automaticamente pelo companion via Termux:API RUN_COMMAND quando o
-# jogo inicia — replica a janela de console ao vivo do BepInEx (Windows).
-exec python3 ~/battlecats-mods/zygisk-bc-poc/termux_client.py stream

@@ -1,0 +1,27 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Rodado automaticamente pelo companion via Termux:API RUN_COMMAND (RunCommandService,
+# termux-app — não termux-api, confirmado no fonte) quando o jogo inicia.
+#
+# Console BepInEx (PC) é confirmado ONE-WAY no código-fonte real (ConsoleManager.cs,
+# WindowsConsoleDriver.cs — zero Read/ReadLine/Console.In em toda a classe): só emite
+# log, nunca aceita comando digitado de volta. Aqui vai além disso — a sessão do
+# RunCommandService é um terminal interativo real (RunCommandService.java confirma
+# Runner.TERMINAL_SESSION quando RUN_COMMAND_BACKGROUND=false), então além do stream
+# de log ao vivo, também aceita comando digitado na mesma janela (REPL) — coisa que o
+# BepInEx no PC não tem.
+#
+# Protocolo: nenhum comando novo no companion. Cada linha digitada abre uma conexão
+# request/response comum (toggle_mod, set_mod, list_patches, ...) via o client já
+# testado (termux_client.py) — o stream roda em paralelo, em background, na mesma
+# janela.
+
+CLIENT=~/battlecats-mods/zygisk-bc-poc/termux_client.py
+
+python3 "$CLIENT" stream &
+STREAM_PID=$!
+trap 'kill "$STREAM_PID" 2>/dev/null' EXIT
+
+while IFS= read -r linha; do
+    [ -z "$linha" ] && continue
+    python3 "$CLIENT" $linha
+done

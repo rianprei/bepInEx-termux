@@ -1000,19 +1000,22 @@ static void daemonize_termux_server(int game_fd) {
     _exit(0);
 }
 
-// Abre o Termux mostrando o stream de log ao vivo — equivalente ao console
-// window que o BepInEx abre no Windows quando o jogo inicia. Dispara 1x por
-// spawn do companion (= 1x por sessão do jogo), fire-and-forget via
-// RUN_COMMAND (Termux:API). Requer allow-external-apps=true em
-// ~/.termux/termux.properties (documentado no README) — sem isso o
-// RunCommandService recusa silenciosamente, o companion segue normal.
+// Abre o Termux mostrando stream de log ao vivo + REPL (comando digitado na
+// mesma janela) — vai além do console do BepInEx no Windows, confirmado
+// output-only no código-fonte (ConsoleManager.cs/WindowsConsoleDriver.cs,
+// zero Read/ReadLine/Console.In). Dispara 1x por spawn do companion (= 1x
+// por sessão do jogo), fire-and-forget via RUN_COMMAND (RunCommandService,
+// pacote termux-app — não termux-api, confirmado no fonte do termux-app).
+// Requer allow-external-apps=true em ~/.termux/termux.properties
+// (documentado no README) — sem isso o RunCommandService recusa
+// silenciosamente, o companion segue normal.
 static void launch_termux_console() {
     const char *cmd =
         "am start -n com.termux/com.termux.app.TermuxActivity >/dev/null 2>&1; "
         "am startservice -n com.termux/com.termux.app.RunCommandService "
         "-a com.termux.RUN_COMMAND "
         "--es com.termux.RUN_COMMAND_PATH "
-        "'/data/data/com.termux/files/home/battlecats-mods/zygisk-bc-poc/termux-console/bcpoc-stream' "
+        "'/data/data/com.termux/files/home/battlecats-mods/zygisk-bc-poc/termux-console/bepin-console' "
         "--ez com.termux.RUN_COMMAND_BACKGROUND false >/dev/null 2>&1 &";
     int rc = system(cmd);
     if (rc != 0) {

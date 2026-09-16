@@ -11,29 +11,57 @@ pedido do usuário — não fazem parte do objetivo real. O objetivo é só:
    quando o jogo inicia, replicando a janela de console que o BepInEx abre
    no Windows.
 
-## Fontes pesquisadas (confirmadas, não inventadas)
+## Fontes pesquisadas (confirmadas, não inventadas — 4 agentes, código-fonte real)
 
-- **Termux:API RUN_COMMAND** — app `com.termux.api` expõe `RunCommandService`
-  (intent `com.termux.RUN_COMMAND`), que roda um script no Termux a partir
-  de outro processo (com `allow-external-apps=true` em
-  `~/.termux/termux.properties`). Fonte: github.com/termux/termux-api.
-- **push_mod** — já implementado (`af898ca`): protocolo `push_mod <nome> <tamanho>`
-  via socket no companion.cpp, sem precisar `su` no Termux (UID Termux é aceito
-  por `is_authorized_uid`).
+- **Console BepInEx (PC) é ONE-WAY** — confirmado por 2 agentes independentes
+  (hermes + OpenCode) lendo `ConsoleManager.cs`/`WindowsConsoleDriver.cs`/
+  `IConsoleDriver.cs` no fonte real (github.com/BepInEx/BepInEx): zero
+  `Read`/`ReadLine`/`ReadKey`/`Console.In` em toda a classe. Só emite log,
+  nunca aceita comando digitado de volta.
+- **Ciclo de vida do console BepInEx** (kilo, `ConsoleManager.cs`/
+  `ConsoleWindow.cs`, permalinks no fonte): abre no `Preloader.cs:39` via
+  `AllocConsole`, acompanha o processo do jogo desde o início; fecha
+  implicitamente com o processo (sem `DetachConsole` explícito no shutdown).
+  `PreventClose` só remove o botão X da UI, não impede fechamento por
+  término de processo — não existe opção de manter aberto depois do jogo.
+- **Termux RUN_COMMAND é do termux-app, não termux-api** (correção real,
+  freebuff, clone de `termux/termux-app` + wiki oficial
+  `RUN_COMMAND-Intent.md`): `RunCommandService.java` em
+  `app/src/main/java/com/termux/app/`. `RUN_COMMAND_BACKGROUND=false` →
+  `Runner.TERMINAL_SESSION` (linhas 82-85) → `TermuxService` →
+  `TermuxSession.execute` → `new TerminalSession(...)` — **sessão real,
+  interativa**, não read-only.
+- **push_mod** — já implementado (`af898ca`, completo em `9c7353f`):
+  protocolo `push_mod <nome> <tamanho>` via socket no companion.cpp, sem
+  `su` (UID Termux aceito por `is_authorized_uid`), carrega o `.so` na hora
+  via `load_dynamic_mods()`.
+
+## Decisão de design (com base na pesquisa)
+
+Como a sessão RUN_COMMAND é terminal real interativo e o BepInEx no PC não
+aceita input nenhum, bepin-termux pode ir **além** da paridade: REPL na
+mesma janela do stream (usuário digita `toggle_mod`/`set_mod`/etc enquanto
+vê o log ao vivo) — vantagem real sobre o PC, não invenção. Sem comando
+novo no companion: cada linha digitada abre uma conexão request/response
+comum via `termux_client.py` (já testado), o stream roda em paralelo em
+background na mesma sessão.
 
 ---
 
 ## Fase 1 — P0: fundamento
 - [x] `push_mod <nome> <tamanho>` no companion (socket binário, sem su).
+- [x] push_mod carrega o `.so` na hora, sem reiniciar o jogo (`9c7353f`).
 
-## Fase 2 — console ao vivo (objetivo atual)
-- [ ] **2.1** `launch_termux_console()` no companion (`companion_handler`,
+## Fase 2 — console ao vivo + REPL (objetivo atual)
+- [x] **2.1** `launch_termux_console()` no companion (`companion_handler`,
       1x por spawn = 1x por sessão do jogo): `am start` abre o Termux, depois
-      `am startservice` no `RunCommandService` roda `bcpoc-stream`
-      (stream de log ao vivo), foreground (`RUN_COMMAND_BACKGROUND=false`).
-      Fire-and-forget — se Termux/RUN_COMMAND não estiver disponível, loga
-      warning e segue normal (não trava o companion).
-- [ ] **2.2** Requisito documentado no README: `allow-external-apps=true`
+      `am startservice` no `RunCommandService` roda `termux-console/bepin-console`
+      em foreground (`RUN_COMMAND_BACKGROUND=false`). Fire-and-forget — se
+      Termux/RUN_COMMAND não estiver disponível, loga warning e segue normal.
+- [x] **2.2** `bepin-console`: stream de log em background (`&`) + loop
+      lendo stdin em foreground, cada linha digitada vira comando pro
+      companion via `termux_client.py` — REPL na mesma janela do stream.
+- [ ] **2.3** Requisito documentado no README: `allow-external-apps=true`
       em `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
 
