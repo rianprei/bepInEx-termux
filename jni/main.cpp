@@ -504,6 +504,15 @@ static void stream_send_prefixed(const char *level, const char *source,
 // do bc-poc. `logcat --pid=<próprio pid>` cobre TUDO que esse processo
 // loga, jogo e módulo juntos; filtramos a própria LOG_TAG pra não duplicar
 // linha que publish_log/publish_event já manda direto (senão apareceria 2x).
+//
+// Limitação conhecida, baixa severidade: `logcat --pid=X` continua rodando
+// mesmo depois do processo X morrer (o filtro não faz o próprio logcat
+// sair sozinho) — o subprocesso vira órfão (reparented pro init) quando o
+// jogo é morto abruptamente (SIGKILL, sem chance de cleanup). Órfão fica
+// idle (sem output novo pra imprimir, CPU desprezível) até reboot ou kill
+// manual — não é crash nem vazamento de memória, só um processo parado.
+// Fix completo exigiria supervisor externo (companion já root, poderia
+// `pkill -9 -f "logcat.*--pid=<pid morto>"`) — fora de escopo agora.
 static void *logcat_bridge_thread(void *) {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "logcat -v brief --pid=%d", getpid());
