@@ -52,6 +52,25 @@ fica como próximo passo real se quiser esse nível de rigor. O que dá pra
 afirmar com segurança: overhead sub-microssegundo, mesma ordem de grandeza
 do concorrente de referência, não é gargalo prático pro caso de uso.
 
+**Tentativa real de apples-to-apples (feita, achado honesto)**: clonado
+`bytedance/android-inline-hook` (repo real, 2.391★, corrige a fonte —
+`shadowhook` é o nome do módulo, não do repo), buildado via Gradle+CMake
+com sucesso (`libshadowhook.so` arm64-v8a real, não simulado), escrito um
+benchmark C standalone (mesma metodologia `clock_gettime` do bc-poc) e
+enviado pro mesmo device físico via `adb push`. Resultado: `shadowhook_init`
+retornou `SHADOWHOOK_ERRNO_INIT_LINKER` (12) — a lib depende de resolver
+símbolos internos/privados do `linker64` do sistema (`sh_linker_get_symbol_info`,
+via `sh_linker.c:678`) que não bateram nesse device (Android 16, HyperOS,
+build de linker recente/específico da OEM). Não investiguei mais fundo
+(precisaria decompilar o `linker64` desse device especificamente) — mas é
+um achado genuíno e relevante: **shadowhook, apesar de "stably used in
+production" citado pela ByteDance, também depende de resolver símbolos
+internos que podem quebrar em builds específicas de Android/OEM** — a
+mesma classe de fragilidade que motivou o AOB pattern scan no bc-poc,
+só que na camada do linker do sistema em vez do binário do jogo. Benchmark
+apples-to-apples fica bloqueado por essa incompatibilidade específica de
+device, não por falta de tentativa real.
+
 ### 2. Avaliar "multi hook no mesmo endereço" (recurso real do shadowhook) — ✅ SEM GAP
 Verificado no código (`bc_hook_logic.h`, `HOOK_MAX_CALLBACKS=4`): já temos
 isso, arquitetura diferente, mesmo resultado. shadowhook resolve N hooks
