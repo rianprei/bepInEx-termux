@@ -222,7 +222,11 @@ bool is_authorized_uid(uid_t uid) {
     uid_t termux_uid = get_termux_uid();
     if (uid == 0) return true;        // root
     if (uid == 2000) return true;     // shell (adb forward)
-    if (termux_uid >= 0 && uid == termux_uid) return true;  // Termux
+    // termux_uid >= 0 seria tautologia morta: uid_t é não-assinado (POSIX),
+    // nunca filtra o sentinel -1 de get_termux_uid() em falha de stat().
+    // Funcionava por acidente (uid real nunca bate com (uid_t)-1 == UINT_MAX),
+    // não por design — comparação correta contra o sentinel explícito.
+    if (termux_uid != (uid_t)-1 && uid == termux_uid) return true;  // Termux
     return false;
 }
 
