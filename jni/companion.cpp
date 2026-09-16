@@ -80,10 +80,15 @@ static void stream_add_client(int fd) {
         return;
     }
     g_stream_clients[g_stream_count++] = fd;
+    // Captura o total AINDA dentro do lock — ler g_stream_count depois do
+    // unlock é race real (TOCTOU): outra thread pode mudar o valor entre o
+    // unlock e a leitura pro log. Achado via inspeção de código, mesma
+    // classe de bug que ASan/TSan pegam, mas visível aqui por leitura.
+    int total = g_stream_count;
     pthread_mutex_unlock(&g_stream_lock);
-    LOGI("stream client adicionado (fd=%d, total=%d)", fd, g_stream_count);
+    LOGI("stream client adicionado (fd=%d, total=%d)", fd, total);
     char msg[64];
-    snprintf(msg, sizeof(msg), "novo cliente stream conectado (total=%d)", g_stream_count);
+    snprintf(msg, sizeof(msg), "novo cliente stream conectado (total=%d)", total);
     companion_announce("Info", msg);
 }
 
