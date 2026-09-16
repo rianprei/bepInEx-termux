@@ -1242,6 +1242,20 @@ static void *event_thread(void *) {
             repatch_hook(rebuf);
             __system_property_set("persist.bc_poc.repatch_target", "");
         }
+        // reload_mods: companion sinaliza que um push_mod escreveu (ou removeu)
+        // .so em BC_MODS_DIR. O game process re-executa o MESMO
+        // load_dynamic_mods() (bc_loader.h + bc_mod_graph.h, fase de
+        // descoberta→grafo→carga) — NÃO existe um caminho de load separado pro
+        // push; o push só grava o arquivo, o loader canônico enxerga a mudança
+        // assim que roda de novo. Cross-process: companion seta a property,
+        // este processo faz o poll (mesmo padrão do unpatch/repatch/reload).
+        char rmbuf[PROP_VALUE_MAX] = {0};
+        if (__system_property_get("persist.bc_poc.reload_mods", rmbuf) > 0 &&
+            strcmp(rmbuf, "1") == 0) {
+            LOGI("reload_mods signal detectado — re-executando load_dynamic_mods()");
+            load_dynamic_mods();
+            __system_property_set("persist.bc_poc.reload_mods", "0");
+        }
         // Exportar overhead do dispatcher via property (companion lê pro comando hook_overhead)
         uint64_t total_ns = g_hook_overhead_ns.load(std::memory_order_relaxed);
         uint64_t count = g_hook_overhead_count.load(std::memory_order_relaxed);

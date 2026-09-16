@@ -708,6 +708,12 @@ static void handle_push_mod(int fd, const char *name, long size) {
     int w = snprintf(msg, sizeof(msg), "ok: %ld bytes written\n", size);
     if (w > 0) write_all(fd, msg, (size_t)w);
     LOGI("push_mod: wrote %s (%ld bytes)", path, size);
+    // Sinaliza o game process (main.cpp, event_thread) pra RE-EXECUTAR o
+    // loader canônico load_dynamic_mods() (bc_loader.h + bc_mod_graph.h).
+    // Cross-process via property (mesmo padrão reload_config/unpatch/repatch):
+    // o companion não tem acesso à memória do game process pra chamar o loader
+    // direto; o poll remoto enxerga o arquivo novo em BC_MODS_DIR e o carrega.
+    __system_property_set("persist.bc_poc.reload_mods", "1");
 }
 
 // Retorna true se o fd foi "adotado" por outro dono (ex.: stream) e o
