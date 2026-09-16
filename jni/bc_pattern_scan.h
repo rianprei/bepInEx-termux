@@ -100,8 +100,9 @@ static inline bc_scan_status bc_pattern_scan_buffer(const uint8_t *buf, size_t l
 typedef struct bc_scan_ctx {
     const char *want_name;   // nome da lib alvo (ex.: "libnative-lib.so")
     const bc_pattern *pat;
-    void *found_addr;        // resultado, se BC_SCAN_OK
-    size_t match_count;      // total de matches somados entre segmentos PT_LOAD+PF_X
+    void *found_addr;        // resultado, só válido se ok_count==1 && ambiguous_count==0
+    int ok_count;            // segmentos com exatamente 1 match cada
+    int ambiguous_count;     // segmentos que já vieram ambíguos por si só
 } bc_scan_ctx;
 
 static inline int bc_scan_phdr_cb(struct dl_phdr_info *info, size_t, void *data) {
@@ -113,14 +114,20 @@ static inline int bc_scan_phdr_cb(struct dl_phdr_info *info, size_t, void *data)
         const ElfW(Phdr) *phdr = &info->dlpi_phdr[i];
         if (phdr->p_type != PT_LOAD || !(phdr->p_flags & PF_X)) continue;
         const uint8_t *seg = (const uint8_t *)(info->dlpi_addr + phdr->p_vaddr);
-        size_t seglen = phdr->p_memsz;
+        // p_memsz inclui BSS (zero-fill, pode passar do que o arquivo mapeia
+        // de verdade); p_filesz é o que existe fisicamente no arquivo/página
+        // mapeada. Escanear p_memsz num segmento PF_X arrisca ler além do
+        // mapeamento real → segfault se memsz > filesz (achado real na
+        // review do OpenCode). min() é sempre seguro: nunca lê além do que
+        // o arquivo garante mapeado.
+        size_t seglen = phdr->p_filesz < phdr->p_memsz ? phdr->p_filesz : phdr->p_memsz;
         size_t off;
         bc_scan_status st = bc_pattern_scan_buffer(seg, seglen, ctx->pat, &off);
         if (st == BC_SCAN_OK) {
-            ctx->match_count++;
-            ctx->found_addr = (void *)(seg + off);
+            ctx->ok_count++;
+            ctx->found_addr = (void *)(seg + off); // só o último importa se ok_count>1 (vira ambíguo de qualquer forma)
         } else if (st == BC_SCAN_AMBIGUOUS) {
-            ctx->match_count += 2; // marca ambíguo sem contar exato
+            ctx->ambiguous_count++;
         }
     }
     return 0; // continua iterando (pode haver >1 lib com nome parecido)
@@ -137,8 +144,9 @@ static inline bc_scan_status bc_pattern_scan_lib(const char *image_name,
     ctx.want_name = image_name;
     ctx.pat = pat;
     dl_iterate_phdr(bc_scan_phdr_cb, &ctx);
-    if (ctx.match_count == 0) return BC_SCAN_NOT_FOUND;
-    if (ctx.match_count > 1) return BC_SCAN_AMBIGUOUS;
+    if (ctx.ambiguous_count > 0) return BC_SCAN_AMBIGUOUS; // qualquer segmento ambíguo já basta
+    if (ctx.ok_count == 0) return BC_SCAN_NOT_FOUND;
+    if (ctx.ok_count > 1) return BC_SCAN_AMBIGUOUS;        // 2+ segmentos com 1 match cada
     if (out_addr != nullptr) *out_addr = ctx.found_addr;
     return BC_SCAN_OK;
 }

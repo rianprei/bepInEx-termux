@@ -1308,6 +1308,82 @@ int main() {
         check("offset correto com wildcard (5)", off == 5);
     }
 
+    // ================================================================
+    // Caso 51: bc_pattern_scan_buffer com bytes REAIS de appInit (EN)
+    // Segundo pattern real — complementa Caso 50 (appUpdateDraw). Ambos
+    // extraídos via xxd do mesmo libnative-lib.so, offsets diferentes:
+    //   appUpdateDraw @ 0x31ec4c → Caso 50
+    //   appInit       @ 0x31eb7c → Caso 51
+    // ================================================================
+    {
+        printf("\n[Caso 51] bc_pattern_scan_buffer: prólogo real de appInit (EN, 0x31eb7c)\n");
+
+        // 24 bytes reais do appInit (xxd -s 0x31eb7c -l 24 -p):
+        // stp x29,x30,[sp,#-32]!  stp x22,x23,[sp,#16]
+        // stp x20,x21,[sp,#32]    mov x29,sp
+        // adrp x22,...             ldr x8,[x22,#0x1130]
+        static const uint8_t real_appinit[24] = {
+            0xfd, 0x7b, 0xbd, 0xa9, 0xf6, 0x57, 0x01, 0xa9,
+            0xf4, 0x4f, 0x02, 0xa9, 0xfd, 0x03, 0x00, 0x91,
+            0x16, 0x41, 0x00, 0xb0, 0xc8, 0xca, 0x40, 0xf9,
+        };
+
+        bc_pattern pat = {};
+        memcpy(pat.bytes, real_appinit, sizeof(real_appinit));
+        for (size_t i = 0; i < sizeof(real_appinit); i++) pat.mask[i] = 1;
+        pat.len = sizeof(real_appinit);
+
+        // Buffer maior (256) e junk 0x00 (zero fill) — diferente do Caso 50
+        // (128, junk 0x90). Isola: junk não afeta match, scan usa step de 1
+        // byte (não 4 como do_resolv), acha offset arbitrário.
+        uint8_t segment[256];
+        memset(segment, 0x00, sizeof(segment));
+        memcpy(segment + 88, real_appinit, sizeof(real_appinit));
+
+        size_t off = 0;
+        bc_scan_status st = bc_pattern_scan_buffer(segment, sizeof(segment), &pat, &off);
+        check("appInit prologo achado em junk 0x00 → BC_SCAN_OK", st == BC_SCAN_OK);
+        check("offset correto (88)", off == 88);
+
+        // Ambos os patterns (50 + 51) coexistem no mesmo buffer → cada um
+        // encontrado isoladamente (não há cross-match: são bytes diferentes).
+        // mesmos 24 bytes de appUpdateDraw do Caso 50 (xxd -s 0x31ec4c -l 24)
+        // — redeclarado aqui porque o array do Caso 50 é local ao bloco dele.
+        static const uint8_t real_prologue_updatedraw[24] = {
+            0xff, 0x43, 0x01, 0xd1, 0xfd, 0x7b, 0x02, 0xa9,
+            0xf6, 0x57, 0x03, 0xa9, 0xf4, 0x4f, 0x04, 0xa9,
+            0xfd, 0x83, 0x00, 0x91, 0x54, 0xd0, 0x3b, 0xd5,
+        };
+        uint8_t multi[512];
+        memset(multi, 0x90, sizeof(multi));
+        // prologo appUpdateDraw no início, appInit no final
+        memcpy(multi + 0, real_prologue_updatedraw, sizeof(real_prologue_updatedraw));
+        memcpy(multi + 400, real_appinit, sizeof(real_appinit));
+
+        bc_pattern pat_init = {};
+        memcpy(pat_init.bytes, real_appinit, sizeof(real_appinit));
+        for (size_t i = 0; i < sizeof(real_appinit); i++) pat_init.mask[i] = 1;
+        pat_init.len = sizeof(real_appinit);
+
+        bc_scan_status st2 = bc_pattern_scan_buffer(multi, sizeof(multi), &pat_init, &off);
+        check("appInit pattern achado isoladamente no buffer multi", st2 == BC_SCAN_OK);
+        check("appInit offset no buffer multi (400)", off == 400);
+
+        // Ambidade: appInit pattern 2x no segmento → AMBIGUOUS
+        uint8_t dup[300];
+        memset(dup, 0x00, sizeof(dup));
+        memcpy(dup + 20, real_appinit, sizeof(real_appinit));
+        memcpy(dup + 180, real_appinit, sizeof(real_appinit));
+        st = bc_pattern_scan_buffer(dup, sizeof(dup), &pat, &off);
+        check("appInit duplicado → BC_SCAN_AMBIGUOUS", st == BC_SCAN_AMBIGUOUS);
+
+        // Not-found: buffer de junk total (0xFF) → NOT_FOUND
+        uint8_t junk[128];
+        memset(junk, 0xFF, sizeof(junk));
+        st = bc_pattern_scan_buffer(junk, sizeof(junk), &pat, &off);
+        check("junk 0xFF → appInit NOT_FOUND", st == BC_SCAN_NOT_FOUND);
+    }
+
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;
 }
