@@ -887,12 +887,18 @@ int main() {
     // ================================================================
     {
         printf("\n[Caso 35] hook_register_prefix real: registra/estoura/desconhecido\n");
+        // hook_register_prefix_by_slot(cbs, slot, fn) indexa cbs[slot]
+        // INTERNAMENTE — o chamador passa a BASE do array, não um elemento
+        // já indexado. Achado real via AddressSanitizer: &cbs[1] com slot=1
+        // virava cbs[1][1] == cbs[2] (double-index), e &cbs[3] com slot=3
+        // virava cbs[3][3] == cbs[6], global-buffer-overflow de verdade
+        // (corrompia a próxima global no binário) — silencioso sem sanitizer.
         static HookCallbacks cbs[BC_HOOK_NAMES_COUNT] = {};
-        bool p0 = hook_register_prefix_by_slot(&cbs[0], 0, t_prefix_allow);
-        bool p1 = hook_register_prefix_by_slot(&cbs[1], 1, t_prefix_allow);
-        bool p2 = hook_register_prefix_by_slot(&cbs[2], 2, t_prefix_allow);
-        bool p3 = hook_register_prefix_by_slot(&cbs[3], 3, t_prefix_allow);
-        bool bad = hook_register_prefix_by_slot(&cbs[0], 99, t_prefix_allow);  // slot inválido
+        bool p0 = hook_register_prefix_by_slot(cbs, 0, t_prefix_allow);
+        bool p1 = hook_register_prefix_by_slot(cbs, 1, t_prefix_allow);
+        bool p2 = hook_register_prefix_by_slot(cbs, 2, t_prefix_allow);
+        bool p3 = hook_register_prefix_by_slot(cbs, 3, t_prefix_allow);
+        bool bad = hook_register_prefix_by_slot(cbs, 99, t_prefix_allow);  // slot inválido
         check("4 prefix slots registram", p0 && p1 && p2 && p3);
         check("slot inválido → false", bad == false);
     }
