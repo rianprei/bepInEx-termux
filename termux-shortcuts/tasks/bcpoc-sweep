@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/bash
+PATH=/data/data/com.termux/files/usr/bin:$PATH
+IP="$(termux-wifi-connectioninfo | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ip",""))' 2>/dev/null)"
+[ -z "$IP" ] && { termux-toast -s "sem wifi"; exit 1; }
+~/bin/adbw-sweep "$IP" && termux-toast -s "adb reconectado ($IP)" \
+  || termux-toast -s "sweep não achou adb em $IP"
