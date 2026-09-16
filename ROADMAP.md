@@ -28,9 +28,20 @@ Riru foi descontinuado oficialmente a favor de Zygisk.
 
 ## Prioridades (ordem de execução)
 
-### 1. Benchmark real: nosso overhead de hook vs shadowhook (0,26µs)
-Não temos essa métrica medida pro bc-poc hoje. Sem medir, qualquer comparação
-de "performance" é hipótese, não fato — próxima ação concreta.
+### 1. Benchmark real: nosso overhead de hook vs shadowhook (0,26µs) — ✅ MEDIDO
+Medido ao vivo no device (Battle Cats rodando de verdade, hooks disparando):
+**0,60µs** por dispatch (loop completo de prefix+postfix, `main.cpp`
+`g_hook_overhead_ns`/`g_hook_overhead_count`, exportado via
+`persist.bc_poc.hook_overhead_us`).
+
+Comparação honesta: shadowhook cita 0,26µs em benchmark próprio (ByteDance) —
+hardware, metodologia e o que exatamente é medido (single hook trampoline vs
+nosso dispatcher com N callbacks registrados) são diferentes, **não é
+apples-to-apples**. Não vou declarar "mais rápido" nem "mais lento" com
+confiança sem rodar os dois no mesmo device com o mesmo protocolo — isso
+fica como próximo passo real se quiser esse nível de rigor. O que dá pra
+afirmar com segurança: overhead sub-microssegundo, mesma ordem de grandeza
+do concorrente de referência, não é gargalo prático pro caso de uso.
 
 ### 2. Avaliar "multi hook no mesmo endereço" (recurso real do shadowhook)
 shadowhook tem modo MULTI que resolve vários hooks concorrentes no mesmo
