@@ -131,6 +131,27 @@ fd 83 00 91 54 d0 3b d5`. Isso é a prova real (não hipótese) de que o
 AOB scan acha a função certa mesmo com endereço mudando drasticamente
 entre builds — o mesmo tipo de mudança que um update do jogo produz.
 
+**Prova mais forte ainda — update de VERSÃO real, não só cross-região**:
+`tools/battlecats-offsets.json` (banco de assinaturas já mantido pelo
+projeto, gerado por `tools/bc_offset_check.py`) tem 2 capturas da região
+EN em versões diferentes do jogo, **build_id ELF distinto** (update real
+publicado pela ponos, não simulação):
+
+| Versão | `build_id` (ELF note)         | RVA `appInit` | RVA `appUpdateDraw` | RVA `appTouch` | RVA `appKey` |
+|--------|-------------------------------|----------------|----------------------|-----------------|---------------|
+| 15.5.0 | `ceae8883fe17...`              | `0x31EB7C`     | `0x31EC4C`           | `0x31EFB8`      | `0x31F078`    |
+| 15.6.0 | `338b0601243a...`              | `0x32788C`     | `0x32795C`           | `0x327CC8`      | `0x327D88`    |
+
+RVA dos 4 hooks mudou **~40KB (0x9D10)** entre as duas versões — um hook
+por RVA fixo quebraria nos 4 ao atualizar de 15.5.0 pra 15.6.0 (exigiria
+regenerar e reempacotar `offsetsdb.h`, exatamente o custo de manutenção
+que este recurso existe pra eliminar). Comparação byte-a-byte das
+assinaturas `bytes_prologue` das duas versões (script no commit): **os 4
+prólogos são idênticos entre 15.5.0 e 15.6.0**, apesar do RVA ter mudado
+nos 4. Essa é a prova concreta — um update de jogo já aconteceu de
+verdade, capturado nos dados do projeto, e o pattern scan sobrevive; RVA
+fixo não sobreviveria sem reempacotar o módulo.
+
 ### 2. `jni/companion.cpp` — processo companion (root)
 
 Daemon root separado (`REGISTER_ZYGISK_COMPANION`), spawnado pelo
