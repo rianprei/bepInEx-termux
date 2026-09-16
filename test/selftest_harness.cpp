@@ -38,6 +38,7 @@
 #include "bc_mod_graph.h"   // grafo de dependência entre mods (requires/conflicts)
 #include "bc_hook_logic.h"  // FUNÇÕES REAIS (single source of truth com main.cpp)
 #include "bc_mod_api.h"     // contrato de API exposto aos mods .so dinâmicos
+#include "bc_pattern_scan.h"  // AOB scan — bc_pattern_scan_buffer (lógica pura, testável no host)
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
@@ -1243,6 +1244,68 @@ int main() {
 
         check("ops null → BC_LOAD_ERR_OPEN (não crasha)",
               bc_loader_load_one(nullptr, "x.so", nullptr, &out) == BC_LOAD_ERR_OPEN);
+    }
+
+    {
+        // Caso 50: bc_pattern_scan_buffer com bytes REAIS extraídos do
+        // libnative-lib.so (EN, appUpdateDraw @ 0x31ec4c, via xxd) — prova
+        // que o AOB scan acha o prólogo real do jogo, não só dado sintético.
+        printf("\n[Caso 50] bc_pattern_scan_buffer: prólogo real de appUpdateDraw (EN)\n");
+
+        // 24 bytes fixos do prólogo real (sub sp; stp x29,x30; stp x22,x21;
+        // stp x20,x19; add x29,sp; mrs x20,TPIDR_EL0) — sem operando de
+        // endereço relativo (adrp vem só depois, byte 24).
+        static const uint8_t real_prologue[24] = {
+            0xff, 0x43, 0x01, 0xd1, 0xfd, 0x7b, 0x02, 0xa9,
+            0xf6, 0x57, 0x03, 0xa9, 0xf4, 0x4f, 0x04, 0xa9,
+            0xfd, 0x83, 0x00, 0x91, 0x54, 0xd0, 0x3b, 0xd5,
+        };
+
+        bc_pattern pat = {};
+        memcpy(pat.bytes, real_prologue, sizeof(real_prologue));
+        for (size_t i = 0; i < sizeof(real_prologue); i++) pat.mask[i] = 1; // sem wildcard
+        pat.len = sizeof(real_prologue);
+
+        // Simula o segmento .text: prólogo de outra função (lixo) + o
+        // prólogo real no meio + mais lixo depois — como seria escanear um
+        // .so de verdade, não um buffer feito sob medida pro pattern caber.
+        uint8_t fake_segment[128];
+        memset(fake_segment, 0x90, sizeof(fake_segment)); // "lixo" não-zero
+        memcpy(fake_segment + 40, real_prologue, sizeof(real_prologue));
+
+        size_t off = 0;
+        bc_scan_status st = bc_pattern_scan_buffer(fake_segment, sizeof(fake_segment), &pat, &off);
+        check("acha o prólogo real em meio a lixo → BC_SCAN_OK", st == BC_SCAN_OK);
+        check("offset correto (40)", off == 40);
+
+        // Ambiguidade real: o mesmo pattern aparece 2x no segmento →
+        // recusa escolher, retorna AMBIGUOUS (não "pega o primeiro").
+        uint8_t dup_segment[200];
+        memset(dup_segment, 0x90, sizeof(dup_segment));
+        memcpy(dup_segment + 10, real_prologue, sizeof(real_prologue));
+        memcpy(dup_segment + 100, real_prologue, sizeof(real_prologue));
+        st = bc_pattern_scan_buffer(dup_segment, sizeof(dup_segment), &pat, &off);
+        check("pattern duplicado → BC_SCAN_AMBIGUOUS (nunca escolhe às cegas)",
+              st == BC_SCAN_AMBIGUOUS);
+
+        // Não encontrado: pattern real não está no buffer.
+        uint8_t empty_segment[64];
+        memset(empty_segment, 0x00, sizeof(empty_segment));
+        st = bc_pattern_scan_buffer(empty_segment, sizeof(empty_segment), &pat, &off);
+        check("ausente → BC_SCAN_NOT_FOUND", st == BC_SCAN_NOT_FOUND);
+
+        // Wildcard real: mascara os 4 últimos bytes (mrs x20 tem encoding
+        // fixo aqui, mas testamos a mecânica de wildcard mesmo assim —
+        // simula um operando que mudaria entre builds).
+        bc_pattern pat_wild = pat;
+        pat_wild.mask[20] = pat_wild.mask[21] = pat_wild.mask[22] = pat_wild.mask[23] = 0;
+        uint8_t mutated[64];
+        memset(mutated, 0x90, sizeof(mutated));
+        memcpy(mutated + 5, real_prologue, sizeof(real_prologue));
+        mutated[5 + 20] = 0xAA; mutated[5 + 21] = 0xBB; // bytes mudados, mas mascarados
+        st = bc_pattern_scan_buffer(mutated, sizeof(mutated), &pat_wild, &off);
+        check("wildcard ignora bytes mascarados → BC_SCAN_OK mesmo mutado", st == BC_SCAN_OK);
+        check("offset correto com wildcard (5)", off == 5);
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

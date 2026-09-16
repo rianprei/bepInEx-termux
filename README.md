@@ -69,7 +69,10 @@ mods) — mesmo padrão DORMANT dos hooks estáticos, agora por mod.
 
 Grafo de dependência (`jni/bc_mod_graph.h`): cada mod pode declarar
 `requires`/`conflicts` por nome; resolve ordem topológica, rejeita ciclo e
-conflito sem crashar (`BC_MOD_REJ_CYCLE`/`BC_MOD_REJ_CONFLICT`).
+conflito sem crashar (`BC_MOD_REJ_CYCLE`/`BC_MOD_REJ_CONFLICT`). O loader de
+`.so` dinâmicos aplica esse grafo de verdade na ordem de carga (não só o
+nome do arquivo) — um mod com `requires` nunca carrega antes do que ele
+depende.
 
 Config tipada (`jni/bc_mods_conf.h`): schema com tipo (`BC_MOD_BOOL/INT/ENUM`)
 + range/domínio, validado **antes** de aplicar (equivalente ao
@@ -79,6 +82,33 @@ mais callback por chave individual quando o valor muda (porta do
 
 Ver
 `context/bc-poc-hardening-summary.md`.
+
+### 1.2. AOB pattern scan (`jni/bc_pattern_scan.h`) — resiliência a update do jogo
+
+Gap estrutural real entre bepin-termux e BepInEx PC: BepInEx/Harmony hooka
+por **metadata .NET** (`Type.GetMethod(nome, assinatura)`), sobrevive a
+recompiles porque nome/assinatura não mudam mesmo com o binário realocado.
+bepin-termux (Dobby) hooka por **endereço fixo** (RVA em `offsetsdb.h`),
+que quebra a cada update do jogo — não existe metadata gerenciada num
+binário nativo ARM64.
+
+`bc_pattern_scan_buffer`/`bc_pattern_scan_lib` são o equivalente nativo real
+(mesma técnica de Frida/Cheat Engine/IDA FLIRT): varre o segmento executável
+procurando os bytes que só uma função tem (com wildcard nos operandos que
+mudam entre builds — `adrp`/`bl` relativos), em vez de assumir que ela está
+sempre no mesmo offset. Um recompile que só realoca código (sem mudar o
+corpo da função) continua achando o pattern; um recompile que muda o corpo
+quebra igual RVA quebraria — não é milagre, é estritamente mais resiliente
+que offset fixo, nunca menos.
+
+Honesto sobre o limite: ambiguidade (0 ou 2+ matches) **nunca** escolhe "o
+primeiro que achar" — retorna erro explícito (`BC_SCAN_NOT_FOUND`/
+`BC_SCAN_AMBIGUOUS`), igual a `resolve_symbol` hoje. Testado com bytes reais
+extraídos do binário do jogo (prólogo de `appUpdateDraw`, EN, via
+`llvm-objdump`/`xxd`), não só dado sintético — ver `test/selftest_harness.cpp`
+Caso 50. Exposto a mods dinâmicos via `bc_mod_api.resolve_pattern` (campo
+novo no fim do struct — mod compilado contra a API anterior continua
+funcionando sem mudança).
 
 ### 2. `jni/companion.cpp` — processo companion (root)
 
@@ -149,8 +179,9 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 49 testes unitários do hook
-lifecycle e do loader de mods dinâmico (`test/selftest_harness.cpp`, 0
+gameplay real, zero crash/ANR. Bateria de 55 testes unitários do hook
+lifecycle, do loader de mods dinâmico e do AOB pattern scan
+(`test/selftest_harness.cpp`, 0
 falhas na última execução) cobrindo patch/unpatch/repatch, idempotência,
 race entre clientes concorrentes, stress test de 50 ciclos unpatch/repatch
 no mesmo hook, grafo de dependência (ciclo/conflito) e os 4 caminhos reais

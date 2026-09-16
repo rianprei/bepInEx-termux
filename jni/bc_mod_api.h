@@ -71,6 +71,15 @@ typedef struct bc_mod_api {
     // Loga uma linha (logcat + streaming BepInEx-style pro Termux). msg
     // é cópia no acto — o mod pode reusar o buffer depois.
     void (*log)(bc_log_level level, const char *msg);
+
+    // Resolve endereço por AOB (array-of-bytes) scan em vez de RVA/symbol
+    // fixo — ver bc_pattern_scan.h. Campo NOVO no fim: mod antigo compilado
+    // contra versão 1 da API funciona igual (o loader zero-inicializa esse
+    // ponteiro se o mod não souber dele; um mod que TENTAR chamar precisa
+    // checar version>=2 antes). pattern_bytes/mask: BC_MOD_PATTERN_MAX_BYTES
+    // (mesmo limite de bc_pattern.h). Retorna nullptr se 0 ou 2+ matches
+    // (ambiguidade é falha explícita, nunca "pega o primeiro").
+    void *(*resolve_pattern)(const uint8_t *pattern_bytes, const uint8_t *mask, size_t len);
 } bc_mod_api;
 
 // Assinatura do entry point exportado por CADA mod .so.

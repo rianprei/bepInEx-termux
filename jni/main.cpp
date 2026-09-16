@@ -42,6 +42,7 @@
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
 #include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
 #include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
+#include "bc_pattern_scan.h"  // AOB scan — resolve endereço por bytes, sobrevive recompile do jogo
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -880,6 +881,20 @@ static bool mod_api_register_postfix(const char *hook, bc_postfix_fn fn) {
 static void *mod_api_resolve_symbol(const char *sym) {
     return DobbySymbolResolver(TARGET_LIB, sym);
 }
+static void *mod_api_resolve_pattern(const uint8_t *pattern_bytes, const uint8_t *mask,
+                                     size_t len) {
+    if (pattern_bytes == nullptr || mask == nullptr || len == 0 ||
+        len > BC_PATTERN_MAX_BYTES)
+        return nullptr;
+    bc_pattern pat = {};
+    memcpy(pat.bytes, pattern_bytes, len);
+    memcpy(pat.mask, mask, len);
+    pat.len = len;
+    void *addr = nullptr;
+    bc_scan_status st = bc_pattern_scan_lib(TARGET_LIB, &pat, &addr);
+    if (st != BC_SCAN_OK) return nullptr;
+    return addr;
+}
 static void mod_api_log(bc_log_level level, const char *msg) {
     switch (level) {
         case BC_LOG_WARN:  LOGW("[mod] %s", msg); publish_log("Warning", "[mod] %s", msg); break;
@@ -1034,6 +1049,7 @@ static void load_dynamic_mods() {
     api.register_postfix = mod_api_register_postfix;
     api.resolve_symbol = mod_api_resolve_symbol;
     api.log = mod_api_log;
+    api.resolve_pattern = mod_api_resolve_pattern;
 
     int ok = 0, inactive = 0;
     if (n_gmods > 0) {
