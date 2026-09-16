@@ -401,10 +401,57 @@ struct HookPlan {
 // hardcoded "Info"/"BCPOC" antes) pra publish_event (eventos de hook) e
 // publish_log (linhas livres — warning/error, ex. build-id mismatch,
 // DORMANT) compartilharem a mesma formatação sem duplicar timestamp/prefixo.
+// Equivalente ao LogOutput.log do BepInEx — grava TODA linha em disco,
+// sobrevive ao console fechado (gap real achado por inspeção: nada aqui
+// persistia, só ia pro logcat + stream ao vivo, que somem quando o
+// terminal fecha). Path em /data/local/tmp — mesmo dir que o companion já
+// libera com chmod(0777) pro UID do processo do jogo escrever (achado
+// documentado em companion.cpp, reusado aqui, sem permissão nova).
+//
+// Comportamento por padrão bate com o real (confirmado no fonte,
+// DiskLogListener.cs do BepInEx): `appendLog=false` é o DEFAULT — o
+// construtor abre com `FileMode.Create` (TRUNCA a cada boot), não Append.
+// Aqui: fopen("w") na primeira escrita do processo — cada spawn do game
+// process (1x por sessão) começa arquivo novo, mesma semântica. Se o
+// arquivo estiver travado (outro processo escrevendo), tenta até 5 nomes
+// (LogOutput.N.log), mesmo `fileLimit=5` do construtor real.
+//
+// Diferença deliberada: BepInEx usa delayedFlushing=true por padrão (timer
+// de 2s). Aqui fazemos fflush por linha (equivalente ao InstantFlushing=true
+// do BepInEx, opção não-default) — processo Android pode ser morto pelo
+// OOM killer sem aviso, ao contrário do processo desktop; perder as
+// últimas linhas antes de um crash seria pior aqui do que no PC.
+#define BC_POC_LOG_PATH "/data/local/tmp/bc_poc_LogOutput.log"
+#define BC_POC_LOG_FILE_LIMIT 5
+static FILE *g_log_file = nullptr;
+static bool g_log_file_tried = false;
+
+static void log_file_open() {
+    char path[64];
+    for (int i = 0; i < BC_POC_LOG_FILE_LIMIT; i++) {
+        if (i == 0) {
+            snprintf(path, sizeof(path), "%s", BC_POC_LOG_PATH);
+        } else {
+            snprintf(path, sizeof(path), "/data/local/tmp/bc_poc_LogOutput.%d.log", i);
+        }
+        g_log_file = fopen(path, "w");
+        if (g_log_file != nullptr) return;
+    }
+    LOGW("log_file_open: fopen falhou em %d tentativas — sem persistência em disco", BC_POC_LOG_FILE_LIMIT);
+}
+
+static void log_file_write(const char *line, int len) {
+    if (!g_log_file_tried) {
+        g_log_file_tried = true;
+        log_file_open();
+    }
+    if (g_log_file == nullptr) return;
+    fwrite(line, 1, (size_t)len, g_log_file);
+    fflush(g_log_file);
+}
+
 static void stream_send_prefixed(const char *level, const char *source,
                                  const char *body) {
-    int fd = g_stream_fd.load(std::memory_order_relaxed);
-    if (fd < 0) return;
     time_t now = time(nullptr);
     struct tm tmv;
     localtime_r(&now, &tmv);
@@ -418,6 +465,9 @@ static void stream_send_prefixed(const char *level, const char *source,
                        tmv.tm_hour, tmv.tm_min, tmv.tm_sec, level, source, body);
     if (len < 0) return;
     if (len > (int)sizeof(line) - 1) len = (int)sizeof(line) - 1;
+    log_file_write(line, len);  // grava SEMPRE, mesmo sem cliente stream conectado
+    int fd = g_stream_fd.load(std::memory_order_relaxed);
+    if (fd < 0) return;
     // MSG_DONTWAIT: não bloqueia o jogo. MSG_NOSIGNAL: evita SIGPIPE
     // (matar o jogo) se o companion morreu/fechou o socket por baixo.
     ssize_t r = send(fd, line, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL);
