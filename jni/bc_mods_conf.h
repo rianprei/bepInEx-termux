@@ -99,13 +99,17 @@ static inline bool bc_mod_coerce_enum(const char *val,
                                       const char *const *values,
                                       const char *def,
                                       char *out, size_t cap) {
+    // Precisão explícita (cap-1) em vez de "%s": elimina o falso-positivo
+    // de -Wformat-truncation (gcc não sabe estaticamente que `val`/`def`
+    // cabem em `cap` — snprintf já trunca com segurança, mas o warning
+    // sinaliza como "pode truncar" sem essa pista de tamanho máximo).
     for (const char *const *v = values; *v != nullptr; v++) {
         if (strcmp(val, *v) == 0) {
-            snprintf(out, cap, "%s", val);
+            snprintf(out, cap, "%.*s", (int)(cap - 1), val);
             return true;
         }
     }
-    snprintf(out, cap, "%s", def);
+    snprintf(out, cap, "%.*s", (int)(cap - 1), def);
     return false;
 }
 
