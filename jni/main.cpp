@@ -32,12 +32,16 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <dirent.h>
 
 #include "zygisk.hpp"
 #include "dobby.h"
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
 #include "bc_mods_conf.h" // config runtime de hooks (companion escreve, módulo lê)
 #include "bc_hook_logic.h" // dispatcher Prefix/Postfix + lógica unpatch/repatch (single source of truth, testado no harness)
+#include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
+#include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
+#include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -95,6 +99,11 @@ static const int BC_SCHEMA_N = (int)(sizeof(BC_SCHEMA) / sizeof(BC_SCHEMA[0]));
 static struct bc_mod_entry g_cfg[8];  // >= BC_SCHEMA_N (6 chaves)
 static std::atomic<int> g_mods_count{0};
 static std::atomic<int> g_throttle_every{0};  // 0 = throttle desligado; N = pula 1 a cada N frames
+
+// Watch-per-key callbacks (BepInEx SettingChanged port — bc_mods_conf.h).
+// Tabela plana de callbacks registrados pro reload delta-check.
+static bc_mod_watch g_watch_table[BC_SCHEMA_N];
+static int g_watch_count = 0;
 
 // lookup simples pós-load (código do hook lê aqui, não o arquivo)
 static const struct bc_mod_entry *cfg_find(const char *name) {
@@ -530,6 +539,51 @@ HookPlan hooks_appkey =
 static HookPlan *PLANS[] = { &hooks_appinit, &hooks_updatedraw, &hooks_apptouch, &hooks_appkey };
 static const int N_PLANS = 4;
 
+// --- Manifests de dependência entre mods (gap 2 do BepInEx, bc_mod_graph.h) ---
+// requires: Hard-only (igual BepInDependency HardDependency) — o alvo precisa
+// estar DECLARADO no conjunto; conflicts: nenhum pode estar presente.
+// Hoje (4 hooks independentes) ninguém declara nada — a ordem resolvida é a
+// ordem de declaração (menor índice primeiro, determinístico). A estrutura
+// existe pra mods reais declararem dependência sem mudar o loader.
+static const struct bc_mod_manifest BC_MANIFESTS[N_PLANS] = {
+    {"appInit",       {nullptr, nullptr, nullptr, nullptr}, {nullptr, nullptr, nullptr, nullptr}},
+    {"appUpdateDraw", {nullptr, nullptr, nullptr, nullptr}, {nullptr, nullptr, nullptr, nullptr}},
+    {"appTouch",      {nullptr, nullptr, nullptr, nullptr}, {nullptr, nullptr, nullptr, nullptr}},
+    {"appKey",        {nullptr, nullptr, nullptr, nullptr}, {nullptr, nullptr, nullptr, nullptr}},
+};
+
+// Loga o status de rejeição de um mod (rótulo por causa — igual semântica do
+// BepInEx DependencyErrors: erro claro por plugin, sem derrubar os irmãos).
+static void bc_log_mod_reject(const char *name, enum bc_mod_status st) {
+    const char *why =
+        (st == BC_MOD_REJ_CONFLICT) ? "CONFLITO declarado com outro mod presente" :
+        (st == BC_MOD_REJ_MISSING)  ? "REQUIRE ausente no conjunto" :
+        (st == BC_MOD_REJ_CYCLE)    ? "ciclo de requires (grupo insatisfazível)" :
+                                      "status desconhecido";
+    LOGE("[mod-graph] %s: NÃO carregado — %s", name, why);
+    publish_log("Error", "[mod-graph] %s rejeitado: %s", name, why);
+}
+
+// Resolve a ordem de carga dos PLANS[] respeitando requires/conflicts.
+// Preenche out com a sequência de instalação (índices em PLANS[]) e loga
+// cada rejeição. Retorna n_order. Nunca crasha (contrato do header).
+static int bc_resolve_load_order(int *order, int cap) {
+    struct bc_mod_graph_result res;
+    int n = bc_mod_graph_sort(BC_MANIFESTS, N_PLANS, &res);
+    int copied = 0;
+    for (int i = 0; i < n && copied < cap; i++) {
+        int idx = res.order[i];
+        if (idx < 0 || idx >= N_PLANS) continue;  // defesa extra fora do header
+        order[copied++] = idx;
+    }
+    for (int i = 0; i < N_PLANS; i++) {
+        if (res.status[i] != BC_MOD_OK)
+            bc_log_mod_reject(BC_MANIFESTS[i].name, res.status[i]);
+    }
+    LOGI("[mod-graph] ordem de carga: %d/%d mod(s) aprovado(s)", copied, N_PLANS);
+    return copied;
+}
+
 // --- Self-test + resolução por alvo, chamado por try_install ANTES do DobbyHook.
 // Cascata (context/battlecats-offset-db-schema.md §6):
 //   1. RVA fixo do DB (exige build-id confirmado) — prólogo confere o alvo
@@ -809,11 +863,125 @@ static void write_patches_snapshot(unsigned seq) {
     close(tfd);
 }
 
-// Instala todos os planos — isolamento total: falha em um hook não derruba os outros (Pattern 11: per-hook isolation). Se todos falharem → dormant (não crasha, só loga). Se ao menos um funcionar → ACTIVE.
+// Instala os planos NA ORDEM do grafo de dependência — isolamento total:
+// falha em um hook não derruba os outros (Pattern 11: per-hook isolation);
+// mod rejeitado pelo grafo nem chega ao try_install (log claro, sem crash).
+// Se todos falharem → dormant (não crasha, só loga). Se ao menos um funcionar → ACTIVE.
+// --- Loader de mods .so dinâmicos (driver real, ver bc_loader.h/bc_mod_api.h) ---
+// Wrappers que implementam bc_mod_api usando a infraestrutura já existente
+// (g_hook_callbacks, DobbySymbolResolver, LOGx/publish_log) — nenhuma lógica
+// nova aqui, só plumbing entre o contrato do mod e o que o loader já tem.
+static bool mod_api_register_prefix(const char *hook, bc_prefix_fn fn) {
+    return hook_register_prefix(g_hook_callbacks, hook, (HookPrefixFn)fn);
+}
+static bool mod_api_register_postfix(const char *hook, bc_postfix_fn fn) {
+    return hook_register_postfix(g_hook_callbacks, hook, (HookPostfixFn)fn);
+}
+static void *mod_api_resolve_symbol(const char *sym) {
+    return DobbySymbolResolver(TARGET_LIB, sym);
+}
+static void mod_api_log(bc_log_level level, const char *msg) {
+    switch (level) {
+        case BC_LOG_WARN:  LOGW("[mod] %s", msg); publish_log("Warning", "[mod] %s", msg); break;
+        case BC_LOG_ERROR: LOGE("[mod] %s", msg); publish_log("Error", "[mod] %s", msg); break;
+        default:            LOGI("[mod] %s", msg); publish_log("Info", "[mod] %s", msg); break;
+    }
+}
+
+// run_entry real: sym já foi resolvido via dlsym(handle, "bc_mod_register")
+// pelo bc_loader_load_one — só faz o cast e chama.
+static bool mod_entry_runner(void *api, void *sym) {
+    auto fn = (bc_mod_register_fn)sym;
+    return fn((const bc_mod_api *)api);
+}
+
+static int qsort_strcmp(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+// Descobre e carrega todos os .so em BC_MODS_DIR (bc_loader.h). Roda DEPOIS
+// de install_all() — os hooks estáticos já estão de pé, resolve_symbol()
+// funciona pros mods usarem. Isolamento de falha por arquivo: um mod que
+// falha em dlopen/dlsym é pulado (logado), não derruba os outros nem o jogo
+// (mesmo padrão DORMANT já usado nos hooks estáticos).
+static void load_dynamic_mods() {
+    DIR *dir = opendir(BC_MODS_DIR);
+    if (dir == nullptr) {
+        LOGI("mod loader: %s ausente ou sem acesso — sem mods dinâmicos (normal se não usa)",
+             BC_MODS_DIR);
+        return;
+    }
+
+    char names[64][256];
+    int n_names = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != nullptr && n_names < 64) {
+        if (!bc_loader_is_mod_filename(ent->d_name)) continue;
+        strncpy(names[n_names], ent->d_name, sizeof(names[n_names]) - 1);
+        names[n_names][sizeof(names[n_names]) - 1] = '\0';
+        n_names++;
+    }
+    closedir(dir);
+
+    if (n_names == 0) {
+        LOGI("mod loader: %s sem .so — nada pra carregar", BC_MODS_DIR);
+        return;
+    }
+
+    // ordem determinística (prefixo numérico no nome do arquivo controla a
+    // ordem de carga — ver bc_loader.h)
+    qsort(names, n_names, sizeof(names[0]), qsort_strcmp);
+
+    bc_mod_api api = {};
+    api.version = BC_MOD_API_VERSION;
+    api.register_prefix = mod_api_register_prefix;
+    api.register_postfix = mod_api_register_postfix;
+    api.resolve_symbol = mod_api_resolve_symbol;
+    api.log = mod_api_log;
+
+    bc_loader_ops ops = {};
+    ops.dlopen = [](const char *path, int flags) -> void * { return dlopen(path, flags); };
+    ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
+    ops.dlclose = [](void *h) -> int { return dlclose(h); };
+    ops.run_entry = mod_entry_runner;
+
+    int ok = 0, inactive = 0, failed = 0;
+    for (int i = 0; i < n_names; i++) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
+        bc_loaded_mod out;
+        bc_load_status st = bc_loader_load_one(&ops, path, &api, &out);
+        switch (st) {
+            case BC_LOAD_OK:
+                LOGI("mod loader: %s carregado e ativo", names[i]);
+                ok++;
+                break;
+            case BC_LOAD_INACTIVE:
+                LOGI("mod loader: %s carregado mas inativo (entry retornou false)", names[i]);
+                inactive++;
+                break;
+            case BC_LOAD_ERR_OPEN:
+                LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
+                     names[i]);
+                failed++;
+                break;
+            case BC_LOAD_ERR_NOSYM:
+                LOGW("mod loader: %s — sem símbolo bc_mod_register, não é mod deste loader",
+                     names[i]);
+                failed++;
+                break;
+        }
+    }
+    publish_log("Message", "mod loader: %d ok, %d inativo, %d falhou (de %d .so em %s)",
+                ok, inactive, failed, n_names, BC_MODS_DIR);
+}
+
 static void install_all() {
+    int order[N_PLANS];
+    int n = bc_resolve_load_order(order, N_PLANS);
     int ok = 0;
-    for (int i = 0; i < N_PLANS; i++) {
-        if (try_install(PLANS[i])) ok++;
+    for (int i = 0; i < n; i++) {
+        if (try_install(PLANS[order[i]])) ok++;
     }
     LOGI("instalação final: %d/%d hooks funcionais", ok, N_PLANS);
     if (ok == 0) {
@@ -847,6 +1015,20 @@ static bool wait_lib_loaded(const char *libname, int timeout_ms) {
     }
 }
 
+// Watch callback: throttle_every mudou → recalcula g_throttle_every (mesmo
+// derivado que apply_mods_config usa no boot). Exemplo real de uso do padrão
+// watch-per-key (BepInEx ConfigEntry.SettingChanged port). Dispara quando a
+// chave "throttle_every" muda entre reloads, mantendo o runtime consistente
+// sem precisar de restart.
+static void watch_throttle(const char *key, const struct bc_mod_entry *old_val,
+                            const struct bc_mod_entry *new_val) {
+    (void)key; (void)old_val;
+    int v = (new_val->present && new_val->i >= 1) ? (int)new_val->i : 0;
+    g_throttle_every.store(v, std::memory_order_relaxed);
+    if (v > 0)
+        LOGI("[watch] %s mudou → pula 1 frame a cada %d", key, v);
+}
+
 // Thread de espera + instalação
 static void *event_thread(void *) {
     if (!wait_lib_loaded(TARGET_LIB, 5000)) {
@@ -863,6 +1045,12 @@ static void *event_thread(void *) {
     install_all();
     LOGI("state: %s", g_dormant.load() ? "DORMANT" : "ACTIVE");
     publish_log("Message", "instalação concluída — state: %s", g_dormant.load() ? "DORMANT" : "ACTIVE");
+    // Mods dinâmicos DEPOIS dos hooks estáticos — resolve_symbol() já funciona.
+    load_dynamic_mods();
+    // Registra callbacks watch-per-key (BepInEx SettingChanged port).
+    // Exemplo: throttle_every mudou → recalcula g_throttle_every em runtime.
+    bc_mod_watch_register(g_watch_table, BC_SCHEMA_N, &g_watch_count,
+                          "throttle_every", watch_throttle);
     // relatório depois de 5s de atividade
     sleep(5);
     for (int i = 0; i < N_PLANS; i++) {
@@ -885,6 +1073,12 @@ static void *event_thread(void *) {
             // Guard de no-op (BepInEx SettingChanged só dispara em delta real):
             // compara antes/depois, só loga o que mudou de fato.
             int changed = 0;
+            // Watch-per-key (BepInEx SettingChanged port): para cada chave que
+            // mudou, dispara callback registrado. Usa bc_mods_entry_equal (valor
+            // + present) — mais preciso que a comparação manual acima que
+            // ignora present. bc_mod_watch_find/busca fatoradas em bc_mods_conf.h.
+            // (BepInEx ConfigFile.cs:596-510: try/catch por callback; em C não
+            // há exceções → callbacks internos devem ser não-panicking.)
             for (int i = 0; i < BC_SCHEMA_N; i++) {
                 bool same;
                 switch (BC_SCHEMA[i].type) {
@@ -895,6 +1089,10 @@ static void *event_thread(void *) {
                 if (!same) {
                     changed++;
                     publish_log("Info", "reload_config: %s mudou", g_cfg[i].name);
+                    bc_mod_watch_fn fn = bc_mod_watch_find(g_watch_table, g_watch_count,
+                                                            g_cfg[i].name);
+                    if (fn != nullptr)
+                        fn(g_cfg[i].name, &before[i], &g_cfg[i]);
                 }
             }
             if (changed == 0) {

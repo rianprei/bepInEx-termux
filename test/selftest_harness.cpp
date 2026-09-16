@@ -35,7 +35,10 @@
 // offsetsdb.h inclui <stdint.h> e o struct bc_sig + as 4 assinaturas reais.
 #include "offsetsdb.h"
 #include "bc_mods_conf.h"
+#include "bc_mod_graph.h"   // grafo de dependência entre mods (requires/conflicts)
 #include "bc_hook_logic.h"  // FUNÇÕES REAIS (single source of truth com main.cpp)
+#include "bc_mod_api.h"     // contrato de API exposto aos mods .so dinâmicos
+#include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
 static const char *const T_SRC_DOMAIN[] = {"game", "companion", nullptr};
@@ -50,7 +53,7 @@ static const struct bc_mod_schema T_SCHEMA[] = {
 static const int T_SCHEMA_N = (int)(sizeof(T_SCHEMA) / sizeof(T_SCHEMA[0]));
 
 // helper de busca no array parseado
-static const struct bc_mod_entry *t_find(const struct bc_mod_entry *e, int n, const char *name) {
+static struct bc_mod_entry *t_find(struct bc_mod_entry *e, int n, const char *name) {
     for (int i = 0; i < n; i++)
         if (strcmp(e[i].name, name) == 0) return &e[i];
     return nullptr;
@@ -283,6 +286,17 @@ static int t_install_stub(void *target, void *replacement, void **backup) {
 static uintptr_t d_orig_wide(uintptr_t a0, uintptr_t, uintptr_t, uintptr_t,
                              uintptr_t, uintptr_t, uintptr_t, uintptr_t) {
     return a0 * 2;
+}
+
+// --- watch callback stub (bc_mod_watch_fn) pra testar registro/fire ---
+static int g_watch_call_count = 0;
+static char g_watch_last_key[32] = {0};
+static void w_dummy(const char *key, const struct bc_mod_entry *old_val,
+                    const struct bc_mod_entry *new_val) {
+    (void)old_val; (void)new_val;
+    g_watch_call_count++;
+    if (key != nullptr)
+        snprintf(g_watch_last_key, sizeof(g_watch_last_key), "%s", key);
 }
 
 int main() {
@@ -979,6 +993,256 @@ int main() {
         check("appKey agora active (backup != null)", st[3].backup != nullptr);
         // e um segundo hook nunca instalado → no-target
         check("appInit no-target (resolved null)", st[0].resolved_addr == nullptr);
+    }
+
+    // ================================================================
+    // Casos 41-42: watch-per-key (BepInEx SettingChanged port — bc_mods_conf.h)
+    // ================================================================
+    {
+        printf("\n[Caso 41] bc_mod_watch_register/find: registra/substitui/overflow/nome Inválido\n");
+        static bc_mod_watch wt[BC_MODS_CONF_MAX] = {};
+        static int wt_count = 0;
+        g_watch_call_count = 0;
+
+        // registra 2 chaves distintas
+        bool r1 = bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "throttle_every", w_dummy);
+        bool r2 = bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "appKey", w_dummy);
+        check("registra 2 chaves", r1 && r2);
+        check("count=2 após registros válidos", wt_count == 2);
+
+        // re-registrar mesma chave substitui, não duplica (idempotente)
+        bool r3 = bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "throttle_every", w_dummy);
+        check("re-registro substitui (idempotente)", r3 == true && wt_count == 2);
+
+        // lookup encontra os callbacks registrados
+        check("lookup throttle_every retorna fn",
+              bc_mod_watch_find(wt, wt_count, "throttle_every") != nullptr);
+        check("lookup appKey retorna fn",
+              bc_mod_watch_find(wt, wt_count, "appKey") != nullptr);
+        check("lookup chave não-registrada retorna nullptr",
+              bc_mod_watch_find(wt, wt_count, "nope") == nullptr);
+
+        // args inválidos → false
+        check("register key=null → false",
+              bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, nullptr, w_dummy) == false);
+        check("register fn=null → false",
+              bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "x", nullptr) == false);
+
+        // overflow: enche a tabela
+        static bc_mod_watch wt2[BC_MODS_CONF_MAX] = {};
+        static int wt2_count = 0;
+        for (int i = 0; i < BC_MODS_CONF_MAX; i++) {
+            char kn[32];
+            snprintf(kn, sizeof(kn), "k%d", i);
+            bc_mod_watch_register(wt2, BC_MODS_CONF_MAX, &wt2_count, kn, w_dummy);
+        }
+        check("tabela cheia → count = BC_MODS_CONF_MAX", wt2_count == BC_MODS_CONF_MAX);
+        check("overflow rejeita (count não sobe)",
+              bc_mod_watch_register(wt2, BC_MODS_CONF_MAX, &wt2_count, "extra", w_dummy) == false);
+    }
+    {
+        printf("\n[Caso 42] bc_mod_watch_fire_changed: dispara só em delta real (valor + present)\n");
+        static bc_mod_watch wt[BC_MODS_CONF_MAX] = {};
+        static int wt_count = 0;
+        g_watch_call_count = 0;
+        wt_count = 0;
+
+        bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "throttle_every", w_dummy);
+        bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "appKey", w_dummy);
+        bc_mod_watch_register(wt, BC_MODS_CONF_MAX, &wt_count, "appInit", w_dummy);
+
+        struct bc_mod_entry before[BC_MODS_CONF_MAX] = {};
+        struct bc_mod_entry after[BC_MODS_CONF_MAX] = {};
+        int n = bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, before, BC_MODS_CONF_MAX);
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, after, BC_MODS_CONF_MAX);
+
+        // Caso 42a: configs idênticas → nada dispara (BepInEx SettingChanged no-op)
+        int f0 = bc_mod_watch_fire_changed(wt, wt_count, before, after, n);
+        check("delta zero → 0 callbacks", f0 == 0 && g_watch_call_count == 0);
+
+        // Caso 42b: throttle_every muda (59→42) → só o callback dessa chave
+        t_find(after, n, "throttle_every")->i = 42;
+        t_find(after, n, "throttle_every")->present = true;
+        g_watch_call_count = 0;
+        int f1 = bc_mod_watch_fire_changed(wt, wt_count, before, after, n);
+        check("throttle_every muda → 1 callback", f1 == 1 && g_watch_call_count == 1);
+        check("callback recebeu key=throttle_every", strcmp(g_watch_last_key, "throttle_every") == 0);
+
+        // Caso 42c: múltiplas mudanças → múltiplos callbacks
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, before, BC_MODS_CONF_MAX);
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, after, BC_MODS_CONF_MAX);
+        t_find(after, n, "throttle_every")->i = 100;
+        t_find(after, n, "throttle_every")->present = true;
+        t_find(after, n, "appKey")->b = false;
+        t_find(after, n, "appKey")->present = true;
+        g_watch_call_count = 0;
+        int f2 = bc_mod_watch_fire_changed(wt, wt_count, before, after, n);
+        check("2 mudanças → 2 callbacks", f2 == 2 && g_watch_call_count == 2);
+
+        // Caso 42d: chave sem callback registrado não dispara (só loga no main.cpp)
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, before, BC_MODS_CONF_MAX);
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, after, BC_MODS_CONF_MAX);
+        t_find(after, n, "stream_source");  // não tem watch registrado
+        t_find(after, n, "appUpdateDraw")->b = false;
+        t_find(after, n, "appUpdateDraw")->present = true;
+        g_watch_call_count = 0;
+        int f3 = bc_mod_watch_fire_changed(wt, wt_count, before, after, n);
+        check("mudança sem callback → 0 fire (appUpdateDraw não registrado)", f3 == 0);
+
+        // Caso 42e: present muda (ausente→presente, valor=default) → fire
+        bc_mods_parse(nullptr, T_SCHEMA, T_SCHEMA_N, before, BC_MODS_CONF_MAX);
+        bc_mods_parse("appInit=on\n", T_SCHEMA, T_SCHEMA_N, after, BC_MODS_CONF_MAX);
+        g_watch_call_count = 0;
+        int f4 = bc_mod_watch_fire_changed(wt, wt_count, before, after, n);
+        check("present=false→true (appInit) → 1 callback", f4 == 1 && g_watch_call_count == 1);
+    }
+
+    {
+        printf("\n[Caso 41] mod-graph: independentes → ordem = declaração, todos OK\n");
+        static const struct bc_mod_manifest m[] = {
+            {"appInit",  {}, {}},
+            {"appTouch", {}, {}},
+            {"appKey",   {}, {}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 3, &st);
+        check("3 independentes aprovados", r == 3);
+        check("ordem = ordem de declaração",
+              st.order[0] == 0 && st.order[1] == 1 && st.order[2] == 2);
+        check("status todos OK",
+              st.status[0] == BC_MOD_OK && st.status[1] == BC_MOD_OK &&
+              st.status[2] == BC_MOD_OK);
+    }
+    {
+        printf("\n[Caso 42] mod-graph: requires presente → dependência sai antes\n");
+        static const struct bc_mod_manifest m[] = {
+            {"modB", {"modA"}, {}},   // declarado ANTES, mas depende de modA
+            {"modA", {}, {}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 2, &st);
+        check("2 aprovados", r == 2);
+        check("modA (idx1) sai primeiro, modB (idx0) depois",
+              st.order[0] == 1 && st.order[1] == 0);
+    }
+    {
+        printf("\n[Caso 43] mod-graph: chain C→B→A → ordem A, B, C\n");
+        static const struct bc_mod_manifest m[] = {
+            {"modC", {"modB"}, {}},
+            {"modB", {"modA"}, {}},
+            {"modA", {}, {}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 3, &st);
+        check("3 aprovados", r == 3);
+        check("ordem A,B,C (idx 2,1,0)",
+              st.order[0] == 2 && st.order[1] == 1 && st.order[2] == 0);
+    }
+    {
+        printf("\n[Caso 44] mod-graph: require ausente → requerente rejeitado, irmãos carregam\n");
+        static const struct bc_mod_manifest m[] = {
+            {"orphan", {"fantasma"}, {}},
+            {"solo",   {}, {}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 2, &st);
+        check("só solo carrega", r == 1 && st.order[0] == 1);
+        check("orphan = REJ_MISSING", st.status[0] == BC_MOD_REJ_MISSING);
+        check("solo = OK", st.status[1] == BC_MOD_OK);
+    }
+    {
+        printf("\n[Caso 45] mod-graph: conflict declarado e presente → declarador rejeitado, alvo fica\n");
+        static const struct bc_mod_manifest m[] = {
+            {"base", {}, {}},
+            {"ext",  {}, {"base"}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 2, &st);
+        check("só base carrega", r == 1 && st.order[0] == 0);
+        check("ext = REJ_CONFLICT", st.status[1] == BC_MOD_REJ_CONFLICT);
+        check("base = OK", st.status[0] == BC_MOD_OK);
+    }
+    {
+        printf("\n[Caso 46] mod-graph: ciclo de requires → grupo rejeitado, independente carrega\n");
+        static const struct bc_mod_manifest m[] = {
+            {"cicloA", {"cicloB"}, {}},
+            {"cicloB", {"cicloA"}, {}},
+            {"solo",   {}, {}},
+        };
+        struct bc_mod_graph_result st;
+        int r = bc_mod_graph_sort(m, 3, &st);
+        check("só solo carrega", r == 1 && st.order[0] == 2);
+        check("cicloA e cicloB = REJ_CYCLE",
+              st.status[0] == BC_MOD_REJ_CYCLE && st.status[1] == BC_MOD_REJ_CYCLE);
+        check("solo = OK", st.status[2] == BC_MOD_OK);
+    }
+    {
+        printf("\n[Caso 47] mod-graph: entrada hostil (null/vazio/overflow/nome null) não crasha\n");
+        static const struct bc_mod_manifest m[] = {
+            {"x", {}, {}},
+            {nullptr, {}, {}},   // nome null no conjunto: filtrado silenciosamente
+        };
+        struct bc_mod_graph_result st;
+        check("mods null → 0", bc_mod_graph_sort(nullptr, 3, &st) == 0);
+        check("n=0 → 0", bc_mod_graph_sort(m, 0, &st) == 0);
+        check("n>MAX → 0", bc_mod_graph_sort(m, BC_MOD_GRAPH_MAX_MODS + 1, &st) == 0);
+        int r = bc_mod_graph_sort(m, 2, &st);
+        check("nome null filtrado, x carrega", r == 1 && st.order[0] == 0);
+    }
+
+    {
+        printf("\n[Caso 48] bc_loader: filtro de nome de arquivo .so (puro)\n");
+        check("null → false", bc_loader_is_mod_filename(nullptr) == false);
+        check("vazio → false", bc_loader_is_mod_filename("") == false);
+        check("oculto (.mod.so) → false", bc_loader_is_mod_filename(".mod.so") == false);
+        check("sem extensão .so → false", bc_loader_is_mod_filename("mod.txt") == false);
+        check("curto demais (\"a\") → false", bc_loader_is_mod_filename("a") == false);
+        check("válido (01_core.so) → true", bc_loader_is_mod_filename("01_core.so") == true);
+    }
+    {
+        printf("\n[Caso 49] bc_loader_load_one: 4 caminhos reais via ops injetados (stub)\n");
+        // Stubs determinísticos — simulam dlopen/dlsym/dlclose/run_entry sem
+        // libs reais, testando a MESMA lógica de decisão do device.
+        static int close_calls = 0;
+        static bool entry_ran = false;
+        close_calls = 0; entry_ran = false;
+
+        bc_loader_ops ops_ok = {};
+        ops_ok.dlopen  = [](const char *, int) -> void * { return (void *)0x1; };
+        ops_ok.dlsym   = [](void *, const char *) -> void * { return (void *)0x2; };
+        ops_ok.dlclose = [](void *) -> int { close_calls++; return 0; };
+        ops_ok.run_entry = [](void *, void *) -> bool { entry_ran = true; return true; };
+
+        bc_loaded_mod out;
+        bc_load_status st = bc_loader_load_one(&ops_ok, "fake.so", nullptr, &out);
+        check("dlopen+dlsym+entry true → BC_LOAD_OK", st == BC_LOAD_OK);
+        check("out.status == OK", out.status == BC_LOAD_OK);
+        check("entry foi chamada", entry_ran == true);
+        check("handle preservado (não fechado em sucesso)", close_calls == 0);
+
+        bc_loader_ops ops_inactive = ops_ok;
+        entry_ran = false;
+        ops_inactive.run_entry = [](void *, void *) -> bool { entry_ran = true; return false; };
+        st = bc_loader_load_one(&ops_inactive, "fake2.so", nullptr, &out);
+        check("entry retorna false → BC_LOAD_INACTIVE", st == BC_LOAD_INACTIVE);
+
+        bc_loader_ops ops_open_fail = {};
+        ops_open_fail.dlopen = [](const char *, int) -> void * { return nullptr; };
+        st = bc_loader_load_one(&ops_open_fail, "bad.so", nullptr, &out);
+        check("dlopen falha → BC_LOAD_ERR_OPEN", st == BC_LOAD_ERR_OPEN);
+        check("out zerado em erro (handle null)", out.handle == nullptr);
+
+        close_calls = 0;
+        bc_loader_ops ops_nosym = {};
+        ops_nosym.dlopen  = [](const char *, int) -> void * { return (void *)0x1; };
+        ops_nosym.dlsym   = [](void *, const char *) -> void * { return nullptr; };
+        ops_nosym.dlclose = [](void *) -> int { close_calls++; return 0; };
+        st = bc_loader_load_one(&ops_nosym, "notamod.so", nullptr, &out);
+        check("dlsym nulo → BC_LOAD_ERR_NOSYM", st == BC_LOAD_ERR_NOSYM);
+        check("handle fechado quando símbolo ausente (não vaza)", close_calls == 1);
+
+        check("ops null → BC_LOAD_ERR_OPEN (não crasha)",
+              bc_loader_load_one(nullptr, "x.so", nullptr, &out) == BC_LOAD_ERR_OPEN);
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

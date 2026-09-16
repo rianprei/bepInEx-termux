@@ -48,6 +48,36 @@ via Dobby.
 
 **Fail-safe**: qualquer etapa que falhar deixa aquele hook específico
 DORMANT (log-only, sem crashar o processo do jogo). Ver
+
+### 1.1. Loader de mods `.so` dinâmico (`jni/bc_loader.h` + `jni/bc_mod_api.h`)
+
+O que fecha o gap de "mod hardcoded" → "mod-loader de verdade": qualquer
+`.so` colocado em `/data/local/tmp/bc_mods/` (ordenados por prefixo
+numérico no nome) é descoberto, `dlopen()`+`dlsym("bc_mod_register")` no
+boot, **depois** dos hooks estáticos (o mod já pode usar `resolve_symbol`
+contra a lib carregada). Cada mod exporta:
+
+```c
+extern "C" bool bc_mod_register(const bc_mod_api *api);
+```
+
+recebe `register_prefix`/`register_postfix` (mesmo dispatcher Prefix/Postfix
+estilo Harmony já usado nos hooks estáticos), `resolve_symbol`, e `log`.
+Isolamento de falha por arquivo: `dlopen` que falha ou `dlsym` sem o símbolo
+esperado só pula aquele `.so` (log, não derruba o processo nem os outros
+mods) — mesmo padrão DORMANT dos hooks estáticos, agora por mod.
+
+Grafo de dependência (`jni/bc_mod_graph.h`): cada mod pode declarar
+`requires`/`conflicts` por nome; resolve ordem topológica, rejeita ciclo e
+conflito sem crashar (`BC_MOD_REJ_CYCLE`/`BC_MOD_REJ_CONFLICT`).
+
+Config tipada (`jni/bc_mods_conf.h`): schema com tipo (`BC_MOD_BOOL/INT/ENUM`)
++ range/domínio, validado **antes** de aplicar (equivalente ao
+`AcceptableValueRange`/`AcceptableValueList` do BepInEx `ConfigEntry<T>`),
+mais callback por chave individual quando o valor muda (porta do
+`ConfigFile.SettingChanged`, `ConfigFile.cs:596-610` do BepInEx).
+
+Ver
 `context/bc-poc-hardening-summary.md`.
 
 ### 2. `jni/companion.cpp` — processo companion (root)
@@ -119,10 +149,13 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 40 testes unitários do hook
-lifecycle (`test/selftest_harness.cpp`, 0 falhas na última execução)
-cobrindo patch/unpatch/repatch, idempotência, race entre clientes
-concorrentes, e stress test de 50 ciclos unpatch/repatch no mesmo hook.
+gameplay real, zero crash/ANR. Bateria de 49 testes unitários do hook
+lifecycle e do loader de mods dinâmico (`test/selftest_harness.cpp`, 0
+falhas na última execução) cobrindo patch/unpatch/repatch, idempotência,
+race entre clientes concorrentes, stress test de 50 ciclos unpatch/repatch
+no mesmo hook, grafo de dependência (ciclo/conflito) e os 4 caminhos reais
+do loader `.so` dinâmico (ok/inativo/dlopen falha/símbolo ausente).
+Módulo recompilado limpo via `ndk-build` após cada mudança.
 
 Ponte de controle confirmada de ponta a ponta via `adb forward`:
 

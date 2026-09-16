@@ -287,6 +287,90 @@ static inline bool bc_mods_equal(const struct bc_mod_entry *a,
     return true;
 }
 
+// ---- Watch-per-key callbacks (BepInEx ConfigEntry.SettingChanged port) ----------
+//
+// BepInEx (ConfigEntryBase.cs:22-24 + ConfigFile.cs:596-611):
+//   - cada ConfigEntry<T> se registra no evento FILE-Level SettingChanged;
+//   - filtra por `args.ChangedSetting == this` e re-emite pro evento POR-ENTRADA;
+//   - OnSettingChanged envolve CADA handler em try/catch — handler ruim vira
+//     Logger.LogError, loop continua (ConfigFile.cs:596-610).
+//
+// bc-poc: o polling loop já detecta deltas (main.cpp:888). Aqui: tabela plana
+// de callbacks por-chave + busca lookup + função de disparo fatorada (single
+// source of truth, testada no harness — espelho de hook_dispatch em
+// bc_hook_logic.h que o main.cpp DELEGA e o harness testa diretamente).
+//
+// Limitation: C não tem exceções → NÃO isolamos crashes por callback.
+// Em C++ um callback C++ pode lançar, mas a assinatura é extern "C"
+// (pointer de função C) → UB lançar através disso. Documentado: callbacks
+// internos do bc-poc são conhecidos e não-panicking.
+
+// Callback: dispara quando uma chave muda entre reload. old/new são entradas
+// do schema (ambos sempre preenchidos — bc_mods_parse preenche todos os slots
+// com defaults). key é o nome da chave (g_cfg[i].name).
+typedef void (*bc_mod_watch_fn)(const char *key,
+                                const struct bc_mod_entry *old_val,
+                                const struct bc_mod_entry *new_val);
+
+// Par chave → callback (tabela plana; tamanho = número de chaves no schema)
+typedef struct {
+    char key[32];
+    bc_mod_watch_fn fn;
+} bc_mod_watch;
+
+// Registra callback pra uma chave. Idempotent: re-registrar a mesma chave
+// substitui o callback (não duplica). Retorna true se ok (capacidade + args).
+static inline bool bc_mod_watch_register(bc_mod_watch *table, int cap, int *count,
+                                         const char *key, bc_mod_watch_fn fn) {
+    if (table == nullptr || cap <= 0 || count == nullptr ||
+        key == nullptr || fn == nullptr || strlen(key) >= sizeof(table[0].key))
+        return false;
+    for (int i = 0; i < *count; i++) {
+        if (strcmp(table[i].key, key) == 0) {
+            table[i].fn = fn;
+            return true;
+        }
+    }
+    if (*count >= cap) return false;
+    snprintf(table[*count].key, sizeof(table[*count].key), "%s", key);
+    table[*count].fn = fn;
+    (*count)++;
+    return true;
+}
+
+// Busca callback registrado pra uma chave. nullptr se não registrado.
+static inline bc_mod_watch_fn bc_mod_watch_find(const bc_mod_watch *table,
+                                                 int count, const char *key) {
+    if (table == nullptr || key == nullptr) return nullptr;
+    for (int i = 0; i < count; i++)
+        if (strcmp(table[i].key, key) == 0)
+            return table[i].fn;
+    return nullptr;
+}
+
+// Dispara callbacks pra TODAS as chaves que mudaram entre before[] e after[].
+// Usa bc_mods_entry_equal() → match inclui present+valor (presence NÃO é
+// cosmético — linha ausente→presente com default É mudança real). Fatorada
+// aqui (e não inline no main.cpp reload loop) pra ser testável no harness.
+// Retorna nº de callbacks disparados.
+static inline int bc_mod_watch_fire_changed(const bc_mod_watch *table, int count,
+                                             const struct bc_mod_entry *before,
+                                             const struct bc_mod_entry *after, int n) {
+    if (table == nullptr || count <= 0 || before == nullptr ||
+        after == nullptr || n <= 0)
+        return 0;
+    int fired = 0;
+    for (int i = 0; i < n; i++) {
+        if (bc_mods_entry_equal(&before[i], &after[i])) continue;
+        bc_mod_watch_fn fn = bc_mod_watch_find(table, count, after[i].name);
+        if (fn != nullptr) {
+            fn(after[i].name, &before[i], &after[i]);
+            fired++;
+        }
+    }
+    return fired;
+}
+
 #ifdef __cplusplus
 }
 #endif
