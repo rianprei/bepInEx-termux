@@ -13,6 +13,41 @@ Prova de conceito validada ao vivo contra o Battle Cats
 genérica: qualquer app com libs nativas dá pra hookar trocando os símbolos
 alvo.
 
+## Onde é estruturalmente mais resiliente que BepInEx PC (e onde não é)
+
+Comparação honesta, não "melhor em tudo" — BepInEx tem anos de maturidade,
+ecossistema de plugins, suporte IL2CPP, e nenhuma dessas vantagens de
+ecossistema é replicável aqui. Duas vantagens estruturais **reais e
+verificadas** (não memória, não hipótese):
+
+**1. Sobrevive a update de VERSÃO do jogo (hooking por assinatura, não RVA).**
+BepInEx/Harmony hooka por metadata .NET (`Type.GetMethod`), que sobrevive
+recompile porque nome/assinatura não mudam. bepin-termux (nativo, sem
+runtime gerenciado) usa AOB pattern scan (`jni/bc_pattern_scan.h`) como
+equivalente: procura os bytes da função, não o endereço. Prova real (não
+simulada): dados já capturados do próprio projeto (`tools/battlecats-offsets.json`)
+mostram um update real do Battle Cats (EN 15.5.0→15.6.0, build_id ELF
+distinto) onde o RVA dos 4 hooks mudou ~40KB e o prólogo de bytes ficou
+idêntico nos 4 — RVA fixo teria quebrado, assinatura sobreviveu sem
+reempacotar nada. Limite honesto: sobrevive reposicionamento de código
+(o que updates normalmente fazem), não mudança do CORPO da função — nisso
+metadata .NET ainda tem vantagem que nenhuma técnica nativa replica sem
+runtime gerenciado.
+
+**2. Sobrevive a update do APK sem reinstalar nada (instalação fora do app).**
+BepInEx no PC injeta via **Doorstop**: `winhttp.dll` (hijack de DLL) +
+`doorstop_config.ini` sentados dentro da própria **pasta de instalação do
+jogo** (confirmado em instalação real local: `winhttp.dll` e
+`doorstop_config.ini` na raiz do diretório do jogo, apontando pra
+`BepInEx\core\BepInEx.Preloader.dll`). Um update/verify-integrity da
+distribuidora (Steam etc.) pode sobrescrever ou remover esses arquivos —
+prática documentada na comunidade BepInEx: reinstalar/revalidar após
+update grande do jogo. bepin-termux é um módulo **Zygisk** (Magisk) que
+vive fora do storage do app inteiramente (`/data/adb/modules/`) — hooka o
+processo em runtime, nunca escreve dentro do APK/pasta do app. Um update
+de APK (Play Store) não apaga nem precisa tocar no módulo; só pode mudar
+endereços internos, que é exatamente o problema que o item 1 já resolve.
+
 ## Arquitetura
 
 ```
