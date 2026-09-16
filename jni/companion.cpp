@@ -26,6 +26,7 @@
 
 #include "zygisk.hpp"
 #include "bc_mods_conf.h"
+#include "bc_loader.h"  // BC_MODS_DIR + bc_loader_is_mod_filename() — validação de nome pro push_mod
 
 #define LOG_TAG "BC_COMPANION"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -633,6 +634,82 @@ static void handle_set_mod(int fd, const char *name, const char *value) {
     if (w > 0) write_all(fd, msg, (size_t)w);
 }
 
+// Limite de tamanho pro push_mod — protege contra client malicioso/bugado
+// mandando "size" absurdo e travando o companion lendo pra sempre.
+#define BC_PUSH_MOD_MAX_SIZE (16 * 1024 * 1024)
+
+// Recebe um .so via socket e escreve em BC_MODS_DIR. Protocolo: linha
+// "push_mod <nome> <tamanho>" já consumida por read_command() antes de
+// chamar aqui — o payload bruto (exatamente <tamanho> bytes) vem em
+// seguida, ainda não lido (read_command lê byte-a-byte só até '\n', não
+// passa do delimitador). Root já autenticado via SO_PEERCRED antes deste
+// ponto (mesmo socket, mesma conexão) — reusa a mesma confiança, sem novo
+// gate.
+static void handle_push_mod(int fd, const char *name, long size) {
+    if (!bc_loader_is_mod_filename(name)) {
+        const char *e = "error: invalid mod filename\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+    if (size <= 0 || size > BC_PUSH_MOD_MAX_SIZE) {
+        const char *e = "error: invalid size\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+
+    mkdir(BC_MODS_DIR, 0755);
+
+    char path[512];
+    int pw = snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, name);
+    if (pw <= 0 || (size_t)pw >= sizeof(path)) {
+        const char *e = "error: path too long\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+
+    int out = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (out < 0) {
+        LOGE("push_mod: open(%s) failed: %s", path, strerror(errno));
+        const char *e = "error: open failed\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+
+    char chunk[8192];
+    long remaining = size;
+    bool ok = true;
+    while (remaining > 0) {
+        size_t want = remaining < (long)sizeof(chunk) ? (size_t)remaining : sizeof(chunk);
+        ssize_t got = read(fd, chunk, want);
+        if (got <= 0) {
+            LOGE("push_mod: read failed at %ld bytes remaining: %s",
+                 remaining, got == 0 ? "EOF" : strerror(errno));
+            ok = false;
+            break;
+        }
+        ssize_t w = write(out, chunk, (size_t)got);
+        if (w != got) {
+            LOGE("push_mod: write(%s) failed: %s", path, strerror(errno));
+            ok = false;
+            break;
+        }
+        remaining -= got;
+    }
+    close(out);
+
+    if (!ok) {
+        unlink(path);  // arquivo parcial não deve ficar meio-carregado no diretório de mods
+        const char *e = "error: transfer incomplete\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+
+    char msg[64];
+    int w = snprintf(msg, sizeof(msg), "ok: %ld bytes written\n", size);
+    if (w > 0) write_all(fd, msg, (size_t)w);
+    LOGI("push_mod: wrote %s (%ld bytes)", path, size);
+}
+
 // Retorna true se o fd foi "adotado" por outro dono (ex.: stream) e o
 // chamador (accept loop) NÃO deve fechar o client_fd — false = fluxo normal
 // request/response, chamador fecha como sempre.
@@ -727,6 +804,19 @@ bool handle_termux_request(int client_fd) {
                 __system_property_set("persist.bc_poc.unpatch_target", name);
                 const char *response = "ok: unpatch signal sent";
                 write_all(client_fd, response, strlen(response));
+            }
+        } else if (strncmp(buf, "push_mod ", 9) == 0) {
+            // "push_mod <nome> <tamanho>" — parse manual em vez de sscanf(%s)
+            // porque precisamos saber onde o nome termina pra achar o
+            // tamanho depois, sem limite implícito de sscanf em nome.
+            char name[256];
+            long size = -1;
+            int matched = sscanf(buf + 9, "%255s %ld", name, &size);
+            if (matched != 2) {
+                const char *e = "error: usage: push_mod <nome> <tamanho>\n";
+                write_all(client_fd, e, strlen(e));
+            } else {
+                handle_push_mod(client_fd, name, size);
             }
         } else if (strncmp(buf, "repatch_mod ", 12) == 0) {
             // Sinal cross-process pro game process re-instalar um hook que
