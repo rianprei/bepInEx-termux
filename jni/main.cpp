@@ -1426,6 +1426,29 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
     publish_log("Info", "[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
 }
 
+// Thread genérica de espera + instalação — equivalente ao event_thread do
+// Battle Cats, mas sem nome de lib fixo pra esperar (não sabemos qual é a
+// lib nativa do jogo genérico). bc_wait_engine_detect faz poll da cascata
+// inteira (Cocos2d-x + fallback genérico) até achar ou estourar timeout.
+// 8000ms/200ms: janela um pouco maior que os 5000ms fixos do Battle Cats
+// (lib de nome conhecido responde mais rápido a um simples name-match;
+// aqui cada poll faz enumeração de símbolo em todas as libs carregadas,
+// mais caro por iteração, por isso o intervalo de 200ms em vez de 8ms).
+static void *generic_event_thread(void *arg) {
+    const char *pkg = (const char *)arg;
+    bc_engine_signal sig = bc_wait_engine_detect(8000, 200);
+    if (sig == BC_ENGINE_UNKNOWN) {
+        LOGI("%s: nenhum símbolo Java_* achado em 8s — dormant (RegisterNatives blind spot ou app não-nativo)", pkg);
+        publish_log("Info", "generalização: %s sem engine/símbolo detectado em 8s — nada instalado", pkg);
+        return nullptr;
+    }
+    LOGI("%s: engine nativo detectado (sinal=%d) — instalando hook de log", pkg, (int)sig);
+    int n = bc_generic_hook_install_all(generic_hook_log_cb);
+    LOGI("%s: %d hook(s) de log instalado(s)", pkg, n);
+    publish_log("Info", "generalização: %s — %d símbolo(s) Java_* com hook de log instalado(s)", pkg, n);
+    return nullptr;
+}
+
 class BCModule : public zygisk::ModuleBase {
 public:
     void onLoad(Api *api, JNIEnv *env) override {
@@ -1446,30 +1469,28 @@ public:
         }
         be_bc = is_bc(pkg);
         if (!be_bc) {
-            // Generalização Cocos2d-x (pedido do usuário 2026-09-16): só
-            // escaneia/atua em pacote explicitamente na allowlist —
-            // detectar em TODO app do device custaria latência de boot
-            // pra apps que não interessam. bc_generic_allowlist.h.
+            // Generalização Cocos2d-x/C++ nativo (pedido do usuário
+            // 2026-09-16): só escaneia/atua em pacote explicitamente na
+            // allowlist — detectar em TODO app do device custaria latência
+            // de boot pra apps que não interessam. bc_generic_allowlist.h.
+            //
+            // ACHADO REAL (revisão freebuff, testado ao vivo no device):
+            // NÃO detecta aqui — preAppSpecialize roda ANTES do processo
+            // ser especializado, nenhuma lib do app está mapeada ainda
+            // (scan ao vivo em zygote64 confirmou 0 símbolos Java_* nesse
+            // estágio). Só marca o candidato pela allowlist; a detecção de
+            // verdade (com poll+timeout, já que não sabemos o nome da lib
+            // como no caminho Battle Cats) acontece em postAppSpecialize.
             char pkg_copy[256];
             snprintf(pkg_copy, sizeof(pkg_copy), "%s", pkg);
             env->ReleaseStringUTFChars(args->nice_name, pkg);
-            if (bc_generic_allowlist_contains(pkg_copy)) {
-                // bc_detect_engine(): tenta reconhecer Cocos2d-x primeiro
-                // (sinal específico), cai em BC_ENGINE_GENERIC_NATIVE se
-                // não reconhecer o motor mas achar símbolo Java_* em
-                // alguma lib — cobre qualquer jogo C++ nativo, não só
-                // Cocos2d-x. bc_generic_hook.h já hooka por símbolo,
-                // engine-agnóstico, então nenhuma outra mudança é
-                // necessária pra esse caminho aceitar motor desconhecido.
-                bc_engine_signal sig = bc_detect_engine();
-                if (sig != BC_ENGINE_UNKNOWN) {
-                    LOGI("engine nativo detectado em %s (sinal=%d) — allowlist, generalização entra aqui", pkg_copy, (int)sig);
-                    be_generic = true;
-                } else {
-                    LOGI("%s na allowlist mas nenhum símbolo Java_* achado — nada a hookar (RegisterNatives blind spot ou app não-nativo)", pkg_copy);
-                }
+            be_generic_candidate = bc_generic_allowlist_contains(pkg_copy);
+            if (be_generic_candidate) {
+                snprintf(be_generic_pkg, sizeof(be_generic_pkg), "%s", pkg_copy);
+                LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
+            } else {
+                api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
             }
-            if (!be_generic) { api->setOption(Option::DLCLOSE_MODULE_LIBRARY); }
             return;
         }
         env->ReleaseStringUTFChars(args->nice_name, pkg);
@@ -1500,16 +1521,20 @@ public:
     }
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
-        if (be_generic) {
-            // Generalização: só chegou aqui porque pkg está na allowlist E
-            // Cocos2d-x foi detectado (preAppSpecialize). Instala hook de
-            // LOG (DobbyInstrument, sem reconstruir chamada original — ver
-            // bc_generic_hook.h) em até BC_GENERIC_HOOK_MAX símbolos Java_*
-            // achados em qualquer lib carregada. Fail-safe por símbolo: se
-            // DobbyInstrument falhar num símbolo, os outros continuam.
-            int n = bc_generic_hook_install_all(generic_hook_log_cb);
-            LOGI("postAppSpecialize genérico — %d hook(s) de log instalado(s)", n);
-            publish_log("Info", "generalização: %d símbolo(s) Java_* com hook de log instalado(s)", n);
+        if (be_generic_candidate) {
+            // Detecção de verdade acontece AQUI (postAppSpecialize), não em
+            // preAppSpecialize — achado freebuff acima. Ainda assim as libs
+            // do app podem não ter terminado de carregar neste ponto exato
+            // (mesmo motivo por que o caminho Battle Cats usa event_thread +
+            // wait_lib_loaded em vez de instalar direto aqui); como não
+            // sabemos o nome da lib alvo, a espera é por poll da cascata
+            // inteira em vez de por nome — bc_wait_engine_detect.
+            pthread_t t;
+            if (pthread_create(&t, nullptr, generic_event_thread, be_generic_pkg) != 0) {
+                LOGE("pthread_create (generic_event_thread) falhou");
+                return;
+            }
+            pthread_detach(t);
             return;
         }
         if (!be_bc) return;
@@ -1536,7 +1561,8 @@ private:
     Api *api = nullptr;
     JNIEnv *env = nullptr;
     bool be_bc = false;
-    bool be_generic = false;
+    bool be_generic_candidate = false;
+    char be_generic_pkg[256] = {};
 };
 
 REGISTER_ZYGISK_MODULE(BCModule)

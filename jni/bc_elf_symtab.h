@@ -166,6 +166,20 @@ static inline uint32_t bc_gnu_hash_symcount(const uint32_t *gnu_hash) {
     return any ? (max_idx + 1) : 0;
 }
 
+// Trampolim que soma o load bias (endereço de carga da lib, ASLR) antes de
+// repassar pro callback real do usuário — BUG REAL achado por revisão
+// (freebuff, 2026-09-16): bc_elf_symtab_scan_filtered devolve st_value CRU
+// (RVA relativo à base da lib, é assim que o núcleo puro é testável no
+// host sem mapear lib de verdade). Sem somar dlpi_addr aqui, o endereço
+// que chega em bc_generic_hook_install_all é um offset pequeno (ex.:
+// 0x4000), não um ponteiro válido — DobbyInstrument armaria trampolim em
+// memória arbitrária/não mapeada em vez do símbolo real. ctx->load_bias é
+// setado logo abaixo, ANTES do scan, com info->dlpi_addr real da lib.
+static inline void bc_symtab_bias_trampoline(const char *name, uint64_t addr, void *user) {
+    bc_symtab_lib_ctx *ctx = (bc_symtab_lib_ctx *)user;
+    ctx->cb(name, addr + ctx->load_bias, ctx->user);
+}
+
 static inline int bc_symtab_phdr_cb(struct dl_phdr_info *info, size_t, void *data) {
     bc_symtab_lib_ctx *ctx = (bc_symtab_lib_ctx *)data;
     // want_name == nullptr → escaneia TODAS as libs carregadas (usado pelo
@@ -212,8 +226,10 @@ static inline int bc_symtab_phdr_cb(struct dl_phdr_info *info, size_t, void *dat
     uint32_t sym_count = bc_gnu_hash_symcount(gnu_hash);
     if (sym_count == 0) return 0;  // sem DT_GNU_HASH ou hash vazio — fail-safe, não adivinha contagem
 
+    ctx->load_bias = (uintptr_t)info->dlpi_addr;
     bc_elf_symtab_name_filter f = ctx->filter != nullptr ? ctx->filter : bc_elf_filter_jni_prefix;
-    int n = bc_elf_symtab_scan_filtered(symtab, sym_count, strtab, strtab_size, f, ctx->cb, ctx->user);
+    int n = bc_elf_symtab_scan_filtered(symtab, sym_count, strtab, strtab_size, f,
+                                         bc_symtab_bias_trampoline, ctx);
     ctx->total_found += n;
     return 0;  // continua — pode haver mais de uma lib casando o nome
 }

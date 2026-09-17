@@ -63,6 +63,8 @@ typedef enum {
 
 #ifdef __ANDROID__
 #include <link.h>
+#include <unistd.h>
+#include <time.h>
 
 // Nomes reais de lib do motor Cocos2d-x confirmados no clone oficial
 // (branch v4) + variantes de versões antigas — sinal 1 da cascata.
@@ -176,6 +178,30 @@ static inline bc_engine_signal bc_detect_engine(void) {
     if (sig != BC_ENGINE_UNKNOWN) return sig;
     if (bc_detect_generic_native()) return BC_ENGINE_GENERIC_NATIVE;
     return BC_ENGINE_UNKNOWN;
+}
+
+// Poll com timeout — achado real (revisão freebuff, 2026-09-16, testado ao
+// vivo no device): chamar bc_detect_engine() direto em preAppSpecialize
+// não funciona, porque preAppSpecialize roda ANTES do processo do app ser
+// especializado — nenhuma lib do jogo (nem do Zygote comum) está mapeada
+// ainda; scan ao vivo em zygote64 confirmou 0 símbolos Java_* em qualquer
+// lib carregada nesse estágio. Diferente do caminho Battle Cats, que sabe
+// o NOME da lib alvo e pode esperar por ela especificamente
+// (wait_lib_loaded em main.cpp) — aqui não sabemos o nome de antemão, só
+// dá pra reconsultar a cascata inteira em intervalos até aparecer ou
+// estourar o timeout.
+static inline bc_engine_signal bc_wait_engine_detect(int timeout_ms, int poll_ms) {
+    timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;) {
+        bc_engine_signal sig = bc_detect_engine();
+        if (sig != BC_ENGINE_UNKNOWN) return sig;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+                          (now.tv_nsec - start.tv_nsec) / 1000000L;
+        if (elapsed_ms >= timeout_ms) return BC_ENGINE_UNKNOWN;
+        usleep((useconds_t)poll_ms * 1000);
+    }
 }
 
 #endif // __ANDROID__
