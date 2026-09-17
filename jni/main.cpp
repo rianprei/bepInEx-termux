@@ -1184,13 +1184,25 @@ static void load_dynamic_mods() {
         n_gmods++;
     }
 
-    bc_mod_api api = {};
-    api.version = BC_MOD_API_VERSION;
-    api.register_prefix = mod_api_register_prefix;
-    api.register_postfix = mod_api_register_postfix;
-    api.resolve_symbol = mod_api_resolve_symbol;
-    api.log = mod_api_log;
-    api.resolve_pattern = mod_api_resolve_pattern;
+    // BUG REAL achado por revisão (freebuff, P1): antes era stack-local
+    // (`bc_mod_api api = {};` local a esta função). Nada no contrato
+    // (bc_mod_api.h) impede um mod .so de guardar o ponteiro `api` recebido
+    // em bc_mod_register() pra usar depois — se guardar, vira dangling
+    // pointer assim que load_dynamic_mods() retorna (stack já foi
+    // desalocada). `static const` resolve: todos os campos são ponteiros
+    // de função fixos + constante BC_MOD_API_VERSION, valor idêntico em
+    // toda chamada — inicialização única, storage de vida do processo,
+    // thread-safe por garantia de static local do C++11 (guarda oculta do
+    // compilador), sem risco de reentrância entre load_dynamic_mods()
+    // inicial e o reload via sinal (linha ~1395).
+    static const bc_mod_api api = {
+        BC_MOD_API_VERSION,
+        mod_api_register_prefix,
+        mod_api_register_postfix,
+        mod_api_resolve_symbol,
+        mod_api_log,
+        mod_api_resolve_pattern,
+    };
 
     int ok = 0, inactive = 0;
     if (n_gmods > 0) {
@@ -1202,7 +1214,7 @@ static void load_dynamic_mods() {
             int gi = res.order[k];
             int i = idx_map[gi];
             void *sym = ops.dlsym(handles[i], "bc_mod_register");
-            bool active = mod_entry_runner(&api, sym);
+            bool active = mod_entry_runner(const_cast<bc_mod_api *>(&api), sym);
             if (active) {
                 LOGI("mod loader: %s carregado e ativo", names[i]);
                 ok++;
