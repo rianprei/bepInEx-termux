@@ -41,6 +41,9 @@
 #include "bc_hook_logic.h" // dispatcher Prefix/Postfix + lógica unpatch/repatch (single source of truth, testado no harness)
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
 #include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
+#include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
+#include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
+#include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
 #include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
 #include "bc_pattern_scan.h"  // AOB scan — resolve endereço por bytes, sobrevive recompile do jogo
 
@@ -1434,8 +1437,27 @@ public:
             return;
         }
         be_bc = is_bc(pkg);
+        if (!be_bc) {
+            // Generalização Cocos2d-x (pedido do usuário 2026-09-16): só
+            // escaneia/atua em pacote explicitamente na allowlist —
+            // detectar em TODO app do device custaria latência de boot
+            // pra apps que não interessam. bc_generic_allowlist.h.
+            char pkg_copy[256];
+            snprintf(pkg_copy, sizeof(pkg_copy), "%s", pkg);
+            env->ReleaseStringUTFChars(args->nice_name, pkg);
+            if (bc_generic_allowlist_contains(pkg_copy)) {
+                bc_engine_signal sig = bc_detect_cocos2dx();
+                if (sig != BC_ENGINE_UNKNOWN) {
+                    LOGI("Cocos2d-x detectado em %s (sinal=%d) — allowlist, generalização entra aqui", pkg_copy, (int)sig);
+                    be_generic = true;
+                } else {
+                    LOGI("%s na allowlist mas Cocos2d-x não detectado — nada a fazer", pkg_copy);
+                }
+            }
+            if (!be_generic) { api->setOption(Option::DLCLOSE_MODULE_LIBRARY); }
+            return;
+        }
         env->ReleaseStringUTFChars(args->nice_name, pkg);
-        if (!be_bc) { api->setOption(Option::DLCLOSE_MODULE_LIBRARY); return; }
         LOGI("preAppSpecialize de jp.co.ponos.battlecatsen — entrando");
         // (throttle migrado pra bc_mods.conf tipado — throttle_every=N;
         //  a leitura agora é feita em load_mods_config() no postAppSpecialize.
@@ -1463,6 +1485,16 @@ public:
     }
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
+        if (be_generic) {
+            // Generalização: só chegou aqui porque pkg está na allowlist E
+            // Cocos2d-x foi detectado (preAppSpecialize). Hoje isso só loga
+            // — instalar hook genérico de verdade (log de chamada JNI via
+            // bc_elf_symtab_scan_lib) é o próximo passo, ainda não ligado
+            // no caminho de instalação de hook real (install_all() é
+            // Battle-Cats-specific, hardcoded em offsetsdb.h).
+            LOGI("postAppSpecialize genérico — detecção confirmada, hook ainda não instalado (infra pendente)");
+            return;
+        }
         if (!be_bc) return;
         LOGI("postAppSpecialize — subindo thread de hooks");
         // Config de hooks (bc_mods.conf): lido AQUI, síncrono e antes da
@@ -1487,6 +1519,7 @@ private:
     Api *api = nullptr;
     JNIEnv *env = nullptr;
     bool be_bc = false;
+    bool be_generic = false;
 };
 
 REGISTER_ZYGISK_MODULE(BCModule)

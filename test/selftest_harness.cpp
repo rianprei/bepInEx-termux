@@ -40,6 +40,8 @@
 #include "bc_mod_api.h"     // contrato de API exposto aos mods .so dinâmicos
 #include "bc_pattern_scan.h"  // AOB scan — bc_pattern_scan_buffer (lógica pura, testável no host)
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
+#include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
+#include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
 static const char *const T_SRC_DOMAIN[] = {"game", "companion", nullptr};
@@ -1388,6 +1390,79 @@ int main() {
         memset(junk, 0xFF, sizeof(junk));
         st = bc_pattern_scan_buffer(junk, sizeof(junk), &pat, &off);
         check("junk 0xFF → appInit NOT_FOUND", st == BC_SCAN_NOT_FOUND);
+    }
+
+    printf("\n[Caso 52] bc_elf_symtab_scan_filtered: enumeração de símbolo ELF sintético (generalização Cocos2d-x)\n");
+    {
+        // Tabela sintética: índice 0 é sempre o símbolo nulo reservado (ELF
+        // spec), depois 4 símbolos JNI-like + 2 que devem ser filtrados
+        // (STB_LOCAL e STT_OBJECT não contam como export de função real).
+        const char strtab[] = "\0Java_com_foo_Bar_metodo1\0Java_com_foo_Bar_metodo2\0"
+                               "naoJniSymbol\0Java_local_ignorado\0Java_object_ignorado\0";
+        // offsets calculados manualmente pelos tamanhos dos literais acima
+        size_t off_m1 = 1;                                      // "Java_com_foo_Bar_metodo1"
+        size_t off_m2 = off_m1 + strlen("Java_com_foo_Bar_metodo1") + 1;
+        size_t off_naojni = off_m2 + strlen("Java_com_foo_Bar_metodo2") + 1;
+        size_t off_local = off_naojni + strlen("naoJniSymbol") + 1;
+        size_t off_object = off_local + strlen("Java_local_ignorado") + 1;
+
+        bc_elf64_sym syms[6] = {};
+        syms[0] = {0, 0, 0, 0, 0, 0};  // símbolo nulo reservado
+        syms[1] = {(uint32_t)off_m1, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0x1000, 0};
+        syms[2] = {(uint32_t)off_m2, (uint8_t)((BC_ELF_STB_WEAK << 4) | BC_ELF_STT_FUNC), 0, 0, 0x2000, 0};
+        syms[3] = {(uint32_t)off_naojni, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0x3000, 0};
+        syms[4] = {(uint32_t)off_local, (uint8_t)((0 /*STB_LOCAL*/ << 4) | BC_ELF_STT_FUNC), 0, 0, 0x4000, 0};
+        syms[5] = {(uint32_t)off_object, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | 1 /*STT_OBJECT*/), 0, 0, 0x5000, 0};
+
+        struct Found { char names[8][64]; int n; } found = {};
+        auto cb = [](const char *name, uint64_t, void *user) {
+            auto *f = (Found *)user;
+            if (f->n < 8) { snprintf(f->names[f->n], 64, "%s", name); f->n++; }
+        };
+
+        int n = bc_elf_symtab_scan(syms, 6, strtab, sizeof(strtab), cb, &found);
+        check("achou exatamente 2 símbolos JNI-like (STB_GLOBAL/WEAK + STT_FUNC + prefixo Java_)", n == 2);
+        check("primeiro símbolo é metodo1", found.n >= 1 && strcmp(found.names[0], "Java_com_foo_Bar_metodo1") == 0);
+        check("segundo símbolo é metodo2 (STB_WEAK também conta)", found.n >= 2 && strcmp(found.names[1], "Java_com_foo_Bar_metodo2") == 0);
+
+        // Filtro customizado (usado pela detecção de engine): substring "cocos2d"
+        auto cocos_filter = [](const char *name, size_t) -> bool {
+            return strstr(name, "cocos2d") != nullptr;
+        };
+        const char strtab2[] = "\0_ZN7cocos2d8DirectorC1Ev\0algumaOutraCoisa\0";
+        bc_elf64_sym syms2[3] = {};
+        syms2[0] = {0, 0, 0, 0, 0, 0};
+        syms2[1] = {1, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0x9000, 0};
+        syms2[2] = {(uint32_t)(1 + strlen("_ZN7cocos2d8DirectorC1Ev") + 1),
+                    (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xA000, 0};
+        int n2 = bc_elf_symtab_scan_filtered(syms2, 3, strtab2, sizeof(strtab2), cocos_filter, cb, &found);
+        check("filtro customizado (cocos2d substring) acha só o símbolo certo", n2 == 1);
+
+        // Bounds-safety: st_name apontando fora do strtab nunca lê fora dos limites
+        bc_elf64_sym bad[2] = {};
+        bad[0] = {0, 0, 0, 0, 0, 0};
+        bad[1] = {9999, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xB000, 0};
+        int n3 = bc_elf_symtab_scan(bad, 2, strtab, sizeof(strtab), cb, &found);
+        check("st_name fora do strtab é ignorado, não lê fora dos limites", n3 == 0);
+
+        // sym_count == 0 (contagem GNU_HASH zerada, ex.: DT_GNU_HASH ausente) → 0 achados, sem crash
+        int n4 = bc_elf_symtab_scan(syms, 0, strtab, sizeof(strtab), cb, &found);
+        check("sym_count=0 (sem DT_GNU_HASH) → 0 símbolos, sem crash", n4 == 0);
+    }
+
+    printf("\n[Caso 53] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
+    {
+        const char *buf = "com.foo.bar\n# comentario\n\ncom.baz.qux \n  com.indentado\n";
+        check("pacote exato na lista é achado", bc_generic_allowlist_contains_buf(buf, "com.foo.bar"));
+        check("linha comentada não conta", !bc_generic_allowlist_contains_buf(buf, "comentario"));
+        check("trailing space é ignorado", bc_generic_allowlist_contains_buf(buf, "com.baz.qux"));
+        check("leading space é ignorado", bc_generic_allowlist_contains_buf(buf, "com.indentado"));
+        check("pacote fora da lista não é achado", !bc_generic_allowlist_contains_buf(buf, "com.nao.listado"));
+        check("prefixo parcial não conta como match (com.foo.barbaz != com.foo.bar)",
+              !bc_generic_allowlist_contains_buf(buf, "com.foo.barbaz"));
+        check("buffer vazio nunca acha nada", !bc_generic_allowlist_contains_buf("", "com.foo.bar"));
+        check("buf nulo não crasha", !bc_generic_allowlist_contains_buf(nullptr, "com.foo.bar"));
+        check("pkg nulo não crasha", !bc_generic_allowlist_contains_buf(buf, nullptr));
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
