@@ -44,6 +44,7 @@
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
+#include "bc_generic_hook.h" // hook de log genérico (DobbyInstrument) em símbolo Java_* descoberto
 #include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
 #include "bc_pattern_scan.h"  // AOB scan — resolve endereço por bytes, sobrevive recompile do jogo
 
@@ -1418,6 +1419,13 @@ static void *event_thread(void *) {
     return nullptr;
 }
 
+// Adapter: bc_generic_hook_install_all espera fn pointer puro (symbol, count),
+// publish_log é variádica — junta os dois sem mudar a assinatura de publish_log.
+static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
+    LOGI("[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
+    publish_log("Info", "[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
+}
+
 class BCModule : public zygisk::ModuleBase {
 public:
     void onLoad(Api *api, JNIEnv *env) override {
@@ -1487,12 +1495,14 @@ public:
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (be_generic) {
             // Generalização: só chegou aqui porque pkg está na allowlist E
-            // Cocos2d-x foi detectado (preAppSpecialize). Hoje isso só loga
-            // — instalar hook genérico de verdade (log de chamada JNI via
-            // bc_elf_symtab_scan_lib) é o próximo passo, ainda não ligado
-            // no caminho de instalação de hook real (install_all() é
-            // Battle-Cats-specific, hardcoded em offsetsdb.h).
-            LOGI("postAppSpecialize genérico — detecção confirmada, hook ainda não instalado (infra pendente)");
+            // Cocos2d-x foi detectado (preAppSpecialize). Instala hook de
+            // LOG (DobbyInstrument, sem reconstruir chamada original — ver
+            // bc_generic_hook.h) em até BC_GENERIC_HOOK_MAX símbolos Java_*
+            // achados em qualquer lib carregada. Fail-safe por símbolo: se
+            // DobbyInstrument falhar num símbolo, os outros continuam.
+            int n = bc_generic_hook_install_all(generic_hook_log_cb);
+            LOGI("postAppSpecialize genérico — %d hook(s) de log instalado(s)", n);
+            publish_log("Info", "generalização: %d símbolo(s) Java_* com hook de log instalado(s)", n);
             return;
         }
         if (!be_bc) return;
