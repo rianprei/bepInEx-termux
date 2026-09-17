@@ -23,6 +23,16 @@
 // raiz, arquivos terminando em ".so", sem oculto. Ordem de carga: o readdir
 // é imprevisível → o CALLER deve sort por nome antes de carregar (prefixo
 // numérico no nome garante ordem: "01_core.so" antes de "02_extra.so").
+// Esse sort é só DESEMPATE determinístico de descoberta — a ordem real de
+// carga vem do grafo de dependência (bc_mod_graph.h), aplicado pelo caller.
+//
+// Contrato de nome pra `requires`/`conflicts` (achado na review do
+// hermes): um mod que EXPORTA bc_mod_manifest é referenciado pelo NOME
+// declarado no manifest; um mod SEM manifest vira nó independente cujo
+// nome é o NOME DO ARQUIVO .so. Um `requires` tem que bater com qual dos
+// dois o dependido usa — se o dependido não exporta manifest, o
+// dependente deve declarar `requires` = nome do arquivo, não um nome
+// arbitrário.
 
 #ifndef BC_LOADER_H
 #define BC_LOADER_H
@@ -72,6 +82,14 @@ typedef struct bc_loaded_mod {
 static inline bool bc_loader_is_mod_filename(const char *name) {
     if (name == nullptr || name[0] == '\0') return false;
     if (name[0] == '.') return false;               // oculto / . / ..
+    // BUG REAL achado por revisão (hermes): sem checar '/', um nome tipo
+    // "foo/../../../../data/local/tmp/evil.so" passava aqui (não começa
+    // com '.', termina em ".so") — path traversal real, porque
+    // companion.cpp::handle_push_mod concatena esse nome direto em
+    // BC_MODS_DIR e escreve como ROOT (é o ponto inteiro do push_mod).
+    // Mods vivem em diretório FLAT por design (sem subpasta) — qualquer
+    // '/' no nome já é inválido, não só sequência ".." especificamente.
+    if (strchr(name, '/') != nullptr) return false;
     size_t len = strlen(name);
     if (len < 3) return false;
     return (strcmp(name + len - 3, ".so") == 0);    // termina em ".so"

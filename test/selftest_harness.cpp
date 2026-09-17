@@ -1207,6 +1207,14 @@ int main() {
         check("sem extensão .so → false", bc_loader_is_mod_filename("mod.txt") == false);
         check("curto demais (\"a\") → false", bc_loader_is_mod_filename("a") == false);
         check("válido (01_core.so) → true", bc_loader_is_mod_filename("01_core.so") == true);
+        // Path traversal (achado real hermes): '/' em qualquer posição
+        // tinha que ser rejeitado — antes do fix, "foo/../../evil.so" não
+        // começa com '.' e termina em ".so", passava no filtro; companion.cpp
+        // concatena esse nome direto em BC_MODS_DIR e escreve como root.
+        check("traversal (../../evil.so) → false", bc_loader_is_mod_filename("../../evil.so") == false);
+        check("subpasta (foo/bar.so) → false", bc_loader_is_mod_filename("foo/bar.so") == false);
+        check("traversal sem prefixo . (a/../../evil.so) → false", bc_loader_is_mod_filename("a/../../evil.so") == false);
+        check("barra absoluta (/etc/evil.so) → false", bc_loader_is_mod_filename("/etc/evil.so") == false);
     }
     {
         printf("\n[Caso 49] bc_loader_load_one: 4 caminhos reais via ops injetados (stub)\n");
