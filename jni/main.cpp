@@ -1436,7 +1436,17 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 // mais caro por iteração, por isso o intervalo de 200ms em vez de 8ms).
 static void *generic_event_thread(void *arg) {
     const char *pkg = (const char *)arg;
-    bc_engine_signal sig = bc_wait_engine_detect(8000, 200);
+    // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
+    // JNI única logo após System.loadLibrary() (padrão comum de init) pode
+    // rodar ANTES do poll instalar o hook — DobbyInstrument só intercepta
+    // chamada FUTURA a partir do momento em que instala, não retroage.
+    // Intervalo menor (50ms em vez de 200ms) reduz a janela de corrida,
+    // mas não elimina: se a call acontecer no mesmo instante do
+    // System.loadLibrary(), nenhum poll síncrono pega a tempo. Fix de
+    // verdade (hookar JNI_OnLoad/dlopen) é fora de escopo — custo real
+    // do scan a cada 50ms é aceitável só durante a janela de 8s, não
+    // indefinidamente.
+    bc_engine_signal sig = bc_wait_engine_detect(8000, 50);
     if (sig == BC_ENGINE_UNKNOWN) {
         LOGI("%s: nenhum símbolo Java_* achado em 8s — dormant (RegisterNatives blind spot ou app não-nativo)", pkg);
         publish_log("Info", "generalização: %s sem engine/símbolo detectado em 8s — nada instalado", pkg);

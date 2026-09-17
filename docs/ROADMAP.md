@@ -187,11 +187,46 @@ Duas rodadas de revisão real (não retórica) rodaram contra esse código:
    - README dizia "61 testes", real são 55 casos (228 assertions) —
      corrigido.
 
+### Validação ao vivo no device (2026-09-17, pós-`f9714a3`)
+Não havia jogo Cocos2d-x real instalado pra testar a allowlist — em vez
+de deixar isso sem prova, construído do zero um APK de teste mínimo
+(`com.bepintest.fakegame`, package próprio, `.so` compilado com o mesmo
+NDK do projeto, exporta só `Java_com_bepintest_fakegame_MainActivity_nativeInit`,
+sem nada Cocos2d-x) e testado contra o módulo real no device físico.
+
+Log real capturado:
+```
+com.bepintest.fakegame na allowlist — detecção de engine adiada pra postAppSpecialize
+com.bepintest.fakegame: engine nativo detectado (sinal=4) — instalando hook de log
+com.bepintest.fakegame: 8 hook(s) de log instalado(s)
+```
+`sinal=4` = `BC_ENGINE_GENERIC_NATIVE` (fallback, não Cocos2d-x) — confirma
+que o caminho genérico funciona pra QUALQUER app C++/JNI, não só pra
+Battle Cats/Cocos2d-x. Battle Cats testado no mesmo boot, 4/4 hooks
+intactos — generalização não quebrou o caminho específico.
+
+**Achados operacionais reais desse teste:**
+- Módulo atualizado (`.so` trocado manualmente em `/data/adb/modules/`) só
+  recarrega com **reboot completo** — `killall zygote64` sozinho não
+  reinicia `zygiskd`/`magiskd` de verdade (uptime do device não mudou
+  depois do kill). Não documentado antes, causava resultado "módulo não
+  injeta" enganoso achando que era bug de código.
+- **Corrida real**: chamada JNI única logo após `System.loadLibrary()`
+  (padrão comum de app real) pode executar ANTES do poll genérico
+  instalar o hook — `DobbyInstrument` só intercepta chamada futura a
+  partir da instalação, não retroage. Mitigado (não eliminado) reduzindo
+  o intervalo de poll de 200ms pra 50ms em `generic_event_thread`
+  (`main.cpp`) — reduz a janela, não garante pegar toda chamada única no
+  mesmo instante do `loadLibrary`. Fix de verdade exigiria hookar
+  `JNI_OnLoad`/`dlopen`, fora de escopo. Chamada repetida (loop de
+  render por frame, caso comum em jogo real) não tem esse problema —
+  eventualmente cai dentro da janela de poll.
+
 ### O que NÃO foi feito (limite real, não escondido)
-- Nunca testado ao vivo contra jogo Cocos2d-x real diferente do Battle
-  Cats — nenhum instalado no device de teste pra popular a allowlist.
-  Validação é build (`ndk-build -B -j4`, 0 erros/0 warnings) + harness
-  (`selftest_harness`, 100%) + ASan/UBSan, não replay end-to-end no device.
+- Nunca testado contra jogo COMERCIAL Cocos2d-x real (só o APK de teste
+  mínimo acima) — prova a mecânica funciona, não prova comportamento com
+  motor Cocos2d-x de verdade rodando (mais libs carregadas, mais ruído
+  de símbolo, timing de carga diferente).
 - `load_dynamic_mods()` (loader de mod `.so` dinâmico via `push_mod`) não
   roda no caminho genérico — mods atuais assumem `TARGET_LIB` fixo
   (Battle Cats), não são engine-agnósticos. Decisão consciente de não
