@@ -51,6 +51,10 @@ typedef enum {
     BC_ENGINE_COCOS2DX_LIB = 1,       // sinal 1: lib do motor presente
     BC_ENGINE_COCOS2DX_SYMBOL = 2,    // sinal 2: symbol cocos2d:: achado (amalgamado)
     BC_ENGINE_COCOS2DX_STOCK_JNI = 3, // sinal 3: Activity stock do engine
+    BC_ENGINE_GENERIC_NATIVE = 4,     // fallback: nenhum sinal Cocos2d-x bateu,
+                                       // mas alguma lib exporta símbolo Java_*
+                                       // — qualquer jogo/app C++/JNI nativo,
+                                       // motor desconhecido, cai aqui.
 } bc_engine_signal;
 
 #ifdef __cplusplus
@@ -136,12 +140,41 @@ static inline bool bc_detect_cocos2dx_stock_jni(void) {
     return n > 0;
 }
 
-// Cascata completa — roda os 3 sinais em ordem de custo, retorna o
+// Cascata Cocos2d-x — roda os 3 sinais em ordem de custo, retorna o
 // primeiro que bater (ou BC_ENGINE_UNKNOWN se nenhum bateu).
 static inline bc_engine_signal bc_detect_cocos2dx(void) {
     if (bc_detect_cocos2dx_lib()) return BC_ENGINE_COCOS2DX_LIB;
     if (bc_detect_cocos2dx_symbol()) return BC_ENGINE_COCOS2DX_SYMBOL;
     if (bc_detect_cocos2dx_stock_jni()) return BC_ENGINE_COCOS2DX_STOCK_JNI;
+    return BC_ENGINE_UNKNOWN;
+}
+
+// Fallback genérico: nenhum sinal Cocos2d-x bateu, mas o app é nativo
+// C++/JNI de QUALQUER motor (Unreal, engine própria, etc.) se alguma lib
+// carregada exportar pelo menos um símbolo Java_*. bc_generic_hook.h já é
+// engine-agnóstico (hooka por símbolo, não por motor) — esse sinal só
+// autoriza a entrada pro pipeline de hook genérico mesmo sem reconhecer o
+// motor.
+//
+// LIMITE HONESTO (mesmo de bc_elf_symtab.h): app que registra tudo via
+// RegisterNatives() em vez de exportar Java_* não tem símbolo nenhum pra
+// achar — continua indetectável por qualquer sinal, cai em UNKNOWN mesmo
+// sendo C++ de verdade. "Sem erros" aqui significa nunca crasha (DORMANT),
+// não significa "sempre acha algo pra hookar".
+static inline bool bc_detect_generic_native(void) {
+    bool lib_found = false;
+    int n = bc_elf_symtab_scan_lib(nullptr, bc_engine_detect_noop_cb, nullptr, &lib_found);
+    return n > 0;
+}
+
+// Cascata completa — tenta reconhecer o motor primeiro (Cocos2d-x, sinal
+// mais específico), e só se nenhum bater cai no fallback genérico
+// (qualquer C++/JNI nativo). Retorna o primeiro que bater, ou
+// BC_ENGINE_UNKNOWN se nem símbolo Java_* existir.
+static inline bc_engine_signal bc_detect_engine(void) {
+    bc_engine_signal sig = bc_detect_cocos2dx();
+    if (sig != BC_ENGINE_UNKNOWN) return sig;
+    if (bc_detect_generic_native()) return BC_ENGINE_GENERIC_NATIVE;
     return BC_ENGINE_UNKNOWN;
 }
 

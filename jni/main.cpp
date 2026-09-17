@@ -1454,12 +1454,19 @@ public:
             snprintf(pkg_copy, sizeof(pkg_copy), "%s", pkg);
             env->ReleaseStringUTFChars(args->nice_name, pkg);
             if (bc_generic_allowlist_contains(pkg_copy)) {
-                bc_engine_signal sig = bc_detect_cocos2dx();
+                // bc_detect_engine(): tenta reconhecer Cocos2d-x primeiro
+                // (sinal específico), cai em BC_ENGINE_GENERIC_NATIVE se
+                // não reconhecer o motor mas achar símbolo Java_* em
+                // alguma lib — cobre qualquer jogo C++ nativo, não só
+                // Cocos2d-x. bc_generic_hook.h já hooka por símbolo,
+                // engine-agnóstico, então nenhuma outra mudança é
+                // necessária pra esse caminho aceitar motor desconhecido.
+                bc_engine_signal sig = bc_detect_engine();
                 if (sig != BC_ENGINE_UNKNOWN) {
-                    LOGI("Cocos2d-x detectado em %s (sinal=%d) — allowlist, generalização entra aqui", pkg_copy, (int)sig);
+                    LOGI("engine nativo detectado em %s (sinal=%d) — allowlist, generalização entra aqui", pkg_copy, (int)sig);
                     be_generic = true;
                 } else {
-                    LOGI("%s na allowlist mas Cocos2d-x não detectado — nada a fazer", pkg_copy);
+                    LOGI("%s na allowlist mas nenhum símbolo Java_* achado — nada a hookar (RegisterNatives blind spot ou app não-nativo)", pkg_copy);
                 }
             }
             if (!be_generic) { api->setOption(Option::DLCLOSE_MODULE_LIBRARY); }
