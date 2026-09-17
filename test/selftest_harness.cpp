@@ -1114,7 +1114,7 @@ int main() {
     }
 
     {
-        printf("\n[Caso 41] mod-graph: independentes → ordem = declaração, todos OK\n");
+        printf("\n[Caso 54] mod-graph: independentes → ordem = declaração, todos OK\n");
         static const struct bc_mod_manifest m[] = {
             {"appInit",  {}, {}},
             {"appTouch", {}, {}},
@@ -1130,7 +1130,7 @@ int main() {
               st.status[2] == BC_MOD_OK);
     }
     {
-        printf("\n[Caso 42] mod-graph: requires presente → dependência sai antes\n");
+        printf("\n[Caso 55] mod-graph: requires presente → dependência sai antes\n");
         static const struct bc_mod_manifest m[] = {
             {"modB", {"modA"}, {}},   // declarado ANTES, mas depende de modA
             {"modA", {}, {}},
