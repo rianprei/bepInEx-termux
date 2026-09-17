@@ -1036,6 +1036,16 @@ static void *mod_api_resolve_pattern(const uint8_t *pattern_bytes, const uint8_t
     if (st != BC_SCAN_OK) return nullptr;
     return addr;
 }
+static bool mod_api_install_hook(void *target, void *replacement, void **orig_out) {
+    if (target == nullptr || replacement == nullptr) return false;
+    int rc = DobbyHook(target, replacement, orig_out);
+    if (rc != 0) {
+        LOGE("[mod] install_hook falhou (rc=%d) em %p", rc, target);
+        publish_log("Error", "[mod] install_hook falhou (rc=%d) em %p", rc, target);
+        return false;
+    }
+    return true;
+}
 static void mod_api_log(bc_log_level level, const char *msg) {
     switch (level) {
         case BC_LOG_WARN:  LOGW("[mod] %s", msg); publish_log("Warning", "[mod] %s", msg); break;
@@ -1202,6 +1212,7 @@ static void load_dynamic_mods() {
         mod_api_resolve_symbol,
         mod_api_log,
         mod_api_resolve_pattern,
+        mod_api_install_hook,
     };
 
     int ok = 0, inactive = 0;
