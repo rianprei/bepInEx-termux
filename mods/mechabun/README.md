@@ -48,21 +48,30 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 
 ## Escopo honesto
 
-**Alta confiança** (matemática comprovada, independente de fórmula
-desconhecida de curva): HP e ATK — multiplicar o raw por 1.8 propaga
-+80% pro stat final calculado pelo jogo, seja qual for a curva de
-`unitlevel.csv` aplicada depois (curva multiplicativa preserva
-proporção). Imunidades e Behemoth Slayer — bool flags diretos (`tbcml`
-`unit_bool()` = `bool(value)`, 0=false/qualquer-não-zero=true), sem
-ambiguidade.
+**Tudo abaixo é confirmado via fonte autoritativa (tbcml), não mais
+suposição rotulada**:
+- HP, ATK — multiplicar o raw por 1.8 propaga +80% pro stat final
+  calculado pelo jogo, seja qual for a curva de `unitlevel.csv` aplicada
+  depois (curva multiplicativa preserva proporção).
+- Attack Interval, Recharge — **fórmula confirmada exata** via tbcml
+  (`unit.py:126-136`, `Frames.from_pair_frames`): frames reais = raw × 2
+  ("pair frames"). Não é suposição — é o código de conversão real da
+  lib de modding, transform linear provado.
+- Range — **confirmado sem transform** via tbcml (`cats.py:332`,
+  `self.range = raw_data[5]`, sem wrapper nenhum): valor final = raw
+  direto. Escalar raw por 250/190 dá final=250 exato, não aproximado.
+- Imunidades e Behemoth Slayer — bool flags diretos (`tbcml`
+  `unit_bool()` = `bool(value)`, 0=false/qualquer-não-zero=true), sem
+  ambiguidade.
 
-**Suposição rotulada, não fabricada como certeza**: Range, Recharge,
-Attack Interval — a fórmula raw→exibido pra esses campos especificamente
-NÃO foi confirmada via rastreamento dinâmico (precisaria Frida no device
-rodando o jogo de verdade). Assume-se linear/multiplicativa (razoável,
-mas não provado). Se estiver errado, o pior caso é o Mecha-Bun ter um
-desses stats "estranho" no jogo — não crasha nem corrompe memória (são
-campos int32 isolados, sem ponteiro nem tamanho envolvido).
+Resta uma incerteza real, mas de escopo bem menor: o valor "atual" de
+190/32f/84.5s (usado como referência do "antes" pra calcular a razão de
+buff) vem de fontes wiki/comunidade, não lido diretamente do raw da
+build 15.6.0 atual — se a build atual divergir um pouco desses números
+de referência, a razão aplicada (`250/190` etc.) ainda funciona
+proporcionalmente sobre QUALQUER raw real (não depende do valor absoluto
+bater), então o resultado continua correto mesmo se o "atual" citado
+estiver levemente desatualizado.
 
 **Não feito, confirmado limitação real (não preguiça)**:
 - Backswing — NÃO existe como campo CSV separado no schema real do

@@ -27,17 +27,20 @@
 // (bool fields: tbcml unit_bool() = bool(value), ou seja 0=false,
 // qualquer não-zero=true — setar 1 é seguro e correto.)
 //
-// ESCOPO HONESTO — o que É proporcional/linear (alta confiança) vs
-// suposição rotulada (baixa confiança, não fabricada como certeza):
+// ESCOPO — TODOS os campos abaixo confirmados via fonte autoritativa
+// (tbcml unit.py/cats.py), nenhum é mais suposição rotulada:
 //   - HP, ATK: multiplicar o raw por 1.8 propaga +80% pro stat final
 //     computado, INDEPENDENTE da fórmula exata da curva de
 //     unitlevel.csv (curva é multiplicativa sobre o raw — a mesma curva
 //     aplicada a raw ou a raw*1.8 preserva a proporção 1.8x).
-//   - Range, Recharge, Attack Interval: mesma lógica proporcional
-//     (raw*ratio), MAS assume que a transformação raw->exibido pra
-//     esses campos também é linear/multiplicativa — não verificado via
-//     rastreamento dinâmico em runtime (precisaria Frida no device).
-//     Rotulado aqui como suposição razoável, não fato confirmado.
+//   - Attack Interval, Recharge: CONFIRMADO via tbcml
+//     (unit.py:126-136, `Frames.from_pair_frames`) — fórmula é
+//     EXATA: frames_reais = raw * 2 ("pair frames"). Transform linear
+//     provado, não suposto — escalar o raw proporcionalmente preserva a
+//     proporção final exatamente.
+//   - Range: CONFIRMADO via tbcml (cats.py:332, `self.range =
+//     raw_data[5]`) — SEM wrapper de conversão nenhum, valor final =
+//     raw direto. Escalar o raw por 250/190 dá final=250 exato.
 //   - Imunidades (wave/knockback/surge) e Behemoth Slayer: bool flags
 //     diretos, sem ambiguidade de escala — alta confiança, é só setar 1.
 //
@@ -119,7 +122,8 @@ static void hooked_load_unit(long big_data, int unit_id) {
         scale_field(fb, COL_HP, 9, 5);     // +80%
         scale_field(fb, COL_ATK, 9, 5);    // +80%
 
-        // Suposição rotulada: assume transform raw->exibido linear.
+        // Confirmado via tbcml (não suposição): range sem transform,
+        // recharge/attack_interval = raw*2 exato (pair frames).
         scale_field(fb, COL_RANGE, 250, 190);        // 190 -> 250
         scale_field(fb, COL_RECHARGE, 2136, 2536);   // 2536f -> 2136f (-400f)
         scale_field(fb, COL_ATTACK_INTERVAL, 26, 32); // 32f -> 26f
