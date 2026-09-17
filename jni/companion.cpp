@@ -681,6 +681,14 @@ static void handle_push_mod(int fd, const char *name, long size) {
     while (remaining > 0) {
         size_t want = remaining < (long)sizeof(chunk) ? (size_t)remaining : sizeof(chunk);
         ssize_t got = read(fd, chunk, want);
+        if (got < 0 && errno == EINTR) {
+            // BUG REAL achado por revisão (kilo): sinal (comum no Android,
+            // não é erro de transferência) fazia read() retornar -1/EINTR e
+            // o loop tratava como falha fatal — abortava e apagava o .so
+            // parcial no meio de uma transferência válida. EINTR nunca é
+            // erro real, só precisa repetir a MESMA leitura.
+            continue;
+        }
         if (got <= 0) {
             LOGE("push_mod: read failed at %ld bytes remaining: %s",
                  remaining, got == 0 ? "EOF" : strerror(errno));
