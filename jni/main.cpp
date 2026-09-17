@@ -1488,6 +1488,18 @@ public:
             if (be_generic_candidate) {
                 snprintf(be_generic_pkg, sizeof(be_generic_pkg), "%s", pkg_copy);
                 LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
+                // BUG REAL achado por revisão (hermes): sem isso, publish_log()
+                // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
+                // g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
+                // Termux, porque só o caminho be_bc chamava connectCompanion().
+                // Mesma restrição de SELinux do caminho BC: só funciona aqui,
+                // em preAppSpecialize.
+                int companion_fd = api->connectCompanion();
+                if (companion_fd >= 0) {
+                    g_stream_fd.store(companion_fd, std::memory_order_relaxed);
+                } else {
+                    LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
+                }
             } else {
                 api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
             }

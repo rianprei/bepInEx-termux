@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#define BC_MOD_API_VERSION 1
+#define BC_MOD_API_VERSION 2
 
 // Callbacks que um mod registra num hook nomeado (mesmos contratos do
 // dispatcher Harmony-like, ver bc_hook_logic.h). Prefix retorna false →

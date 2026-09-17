@@ -1,4 +1,4 @@
-# bepinEx-termux
+# bepin-termux
 
 Injeção/instrumentação nativa em runtime pra apps Android via **Zygisk**
 (Magisk) + **Dobby** (inline hook ARM64) + ponte de controle pelo **Termux**
@@ -80,7 +80,7 @@ Zygote (fork) ──▶ processo do app ──▶ jni/main.cpp (módulo Zygisk)
                           │ (SO_PEERCRED, fail-closed)
                           ▼
                     Termux / adb forward
-                    (tools/termux_client.py / tools/bc_log_viewer.py)
+                    (termux_client.py / bc_log_viewer.py)
 ```
 
 ### 1. `jni/main.cpp` — módulo Zygisk (API v5)
@@ -209,13 +209,13 @@ Daemon root separado (`REGISTER_ZYGISK_COMPANION`), spawnado pelo
 (`@bc_companion`) autenticado por **`SO_PEERCRED`** (kernel, não-forjável):
 aceita root (UID 0), shell/adb (UID 2000) e o UID real do Termux, rejeita
 qualquer outro processo — fail-closed por padrão. Ver
-`docs/COMPANION_TERMUX_ARCHITECTURE.md`.
+`COMPANION_TERMUX_ARCHITECTURE.md`.
 
 ### 3. Clientes de controle
 
-- **`tools/termux_client.py`** — cliente mínimo, roda dentro do Termux, conecta
+- **`termux_client.py`** — cliente mínimo, roda dentro do Termux, conecta
   direto no socket abstract.
-- **`tools/bc_log_viewer.py`** — cliente para uso **fora** do device, via
+- **`bc_log_viewer.py`** — cliente para uso **fora** do device, via
   `adb forward tcp:PORT localabstract:bc_companion` (nenhuma porta TCP fica
   aberta no device). Trata timeout, forward morto e rejeição de UID com
   mensagens claras em vez de travar ou devolver traceback.
@@ -241,7 +241,7 @@ Log persistido em disco em `/data/local/tmp/bc_poc_LogOutput.log`
 (equivalente ao `LogOutput.log` do BepInEx — trunca a cada boot por
 padrão, mesmo comportamento confirmado em `DiskLogListener.cs`). Log
 nativo do próprio jogo (não só do módulo) é unificado no mesmo arquivo via
-bridge de `logcat` — ver `docs/ROADMAP.md` Fase 3.
+bridge de `logcat` — ver `ROADMAP.md` Fase 3.
 
 ## Build
 
@@ -282,21 +282,21 @@ scripts simples de `post-fs-data.sh` não rodam sem reiniciar primeiro.
 
 ```bash
 # dentro do Termux, direto no socket abstract:
-python3 tools/termux_client.py ping
+python3 termux_client.py ping
 
 # fora do device (PC), via adb forward:
 adb forward tcp:17654 localabstract:bc_companion
-python3 tools/bc_log_viewer.py --host 127.0.0.1 --port 17654 ping
-python3 tools/bc_log_viewer.py --host 127.0.0.1 --port 17654 status
-python3 tools/bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
+python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 ping
+python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 status
+python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ```
 
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 61 testes unitários do hook
-lifecycle, do loader de mods dinâmico e do AOB pattern scan
-(`test/selftest_harness.cpp`, 0
+gameplay real, zero crash/ANR. Bateria de 55 casos de teste (228
+assertions) do hook lifecycle, do loader de mods dinâmico e do AOB
+pattern scan (`test/selftest_harness.cpp`, 0
 falhas na última execução) cobrindo patch/unpatch/repatch, idempotência,
 race entre clientes concorrentes, stress test de 50 ciclos unpatch/repatch
 no mesmo hook, grafo de dependência (ciclo/conflito) e os 4 caminhos reais
@@ -328,14 +328,14 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 
 ## Ver também
 
-- `docs/ROADMAP.md` — roadmap Termux-cêntrico (push_mod + console ao vivo/REPL,
+- `ROADMAP.md` — roadmap Termux-cêntrico (push_mod + console ao vivo/REPL,
   paridade com o log/console do BepInEx).
-- `docs/ROADMAP-COMPETITORS.md` — pesquisa de concorrentes reais (LSPatch, whale, VirtualXposed,
+- `ROADMAP-COMPETITORS.md` — pesquisa de concorrentes reais (LSPatch, whale, VirtualXposed,
   Riru, shadowhook etc.) via GitHub API/web search, prioridades daí derivadas,
   benchmark de overhead medido ao vivo no device.
-- `docs/RESILIENCE_ANALYSIS.md` — análise de resiliência a updates do APK alvo.
-- `docs/INTEGRATION_CHECK.md` — verificação de integração build main+companion.
-- `docs/COMPANION_TERMUX_ARCHITECTURE.md` — arquitetura completa da ponte
+- `RESILIENCE_ANALYSIS.md` — análise de resiliência a updates do APK alvo.
+- `INTEGRATION_CHECK.md` — verificação de integração build main+companion.
+- `COMPANION_TERMUX_ARCHITECTURE.md` — arquitetura completa da ponte
   companion↔Termux, incluindo o modelo de autenticação por `SO_PEERCRED`.
 - `context/` — notas técnicas de hardening, comportamento de config, e
   comparação de design contra o BepInEx (o que ele resolve que este projeto
@@ -344,11 +344,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 ## Créditos
 
 - [Dobby](https://github.com/jmpews/Dobby) (jmpews) — inline hook ARM64.
-  Ver [NOTICE.md](docs/NOTICE.md).
+  Ver [NOTICE.md](NOTICE.md).
 - [Zygisk](https://github.com/topjohnwu/Magisk) (topjohnwu/Magisk) —
   mecanismo de injeção em todo processo Zygote-forked.
 
 ## Licença
 
 MIT — ver [LICENSE](LICENSE). O binário redistribuído (`libdobby.a`) mantém
-a licença MIT original do projeto Dobby — ver [NOTICE.md](docs/NOTICE.md).
+a licença MIT original do projeto Dobby — ver [NOTICE.md](NOTICE.md).

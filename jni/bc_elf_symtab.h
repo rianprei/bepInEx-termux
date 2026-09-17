@@ -158,6 +158,14 @@ static inline uint32_t bc_gnu_hash_symcount(const uint32_t *gnu_hash) {
         // anda a cadeia até o bit de fim (LSB de chain[idx-symoffset] setado)
         for (uint32_t safety = 0; safety < 100000; safety++) {
             if (idx > max_idx) max_idx = idx;
+            // BUG REAL achado por revisão (hermes): idx < symoffset causa
+            // underflow em uint32_t (idx - symoffset vira número gigante) —
+            // leitura fora dos limites de `chain`. Lib hostil/malformada
+            // (agora alcançável: caminho genérico escaneia QUALQUER lib
+            // carregada, não só as próprias) pode ter DT_GNU_HASH corrompido
+            // de propósito. Fail-safe: aborta essa cadeia em vez de ler
+            // memória arbitrária.
+            if (idx < symoffset) break;
             uint32_t chain_val = chain[idx - symoffset];
             if (chain_val & 1) break;  // fim da cadeia
             idx++;

@@ -120,3 +120,79 @@ lacuna assumida.
 - `allow-external-apps=true` precisa estar setado manualmente 1x no Termux.
 - `pkg install termux-api` + app Termux:API instalado (mesma fonte/assinatura
   do Termux — F-Droid↔F-Droid ou GitHub↔GitHub).
+
+## Fase 4: generalização pra qualquer jogo C++/JNI nativo (2026-09-16/17)
+
+Pedido do usuário: sair de "só Battle Cats hardcoded" pra "se adaptar a
+qualquer jogo Cocos2d-x, e a qualquer jogo C++/JNI nativo, não importa
+o motor" — mantendo o caminho Battle-Cats-específico intacto (não
+reescrito, só uma segunda porta de entrada ao lado dele).
+
+### O que foi construído
+- **`jni/bc_elf_symtab.h`** — enumeração de símbolo `.dynsym` via
+  `dl_iterate_phdr` + parsing manual de `DT_GNU_HASH` (mesmo mecanismo do
+  Frida, validado contra `gumelfmodule.c` real). Sem `dlopen` — lib já
+  está mapeada no processo.
+- **`jni/bc_engine_detect.h`** — cascata de 3 sinais Cocos2d-x (lib do
+  motor / símbolo `cocos2d::` / JNI stock `Cocos2dxRenderer`), com
+  fallback `BC_ENGINE_GENERIC_NATIVE` pra qualquer app que exporte
+  `Java_*` mesmo sem motor reconhecido — cobre "qualquer jogo C++", não
+  só Cocos2d-x.
+- **`jni/bc_generic_allowlist.h`** — allowlist de pacote
+  (`/data/local/tmp/bc_generic_allowlist.conf`). Detecção genérica só
+  escaneia/atua em pacote explicitamente listado — escanear TODO app do
+  device custaria latência de boot em apps que não interessam.
+- **`jni/bc_generic_hook.h`** — hook de LOG via `DobbyInstrument` (não
+  `DobbyHook`) em até 8 símbolos `Java_*` descobertos. `DobbyInstrument`
+  não reconstrói a chamada original — sem risco de ABI por assinatura
+  desconhecida, diferente do caminho Battle-Cats-específico que usa
+  `DobbyHook` com replacement de assinatura fixa e conhecida.
+
+### Limite honesto (não escondido, documentado no código)
+Apps que registram tudo via `RegisterNatives()` em `JNI_OnLoad()` não têm
+símbolo `Java_*` exportado — indetectável por qualquer sinal aqui, sem
+workaround sem hookar `RegisterNatives`/`JNI_OnLoad` (fora de escopo).
+"Sem erros" = nunca crasha (fail-safe DORMANT), não = "sempre acha algo
+pra hookar".
+
+### Bugs reais achados por revisão e corrigidos
+Duas rodadas de revisão real (não retórica) rodaram contra esse código:
+
+1. **freebuff** (`60df375`) — 2 bugs P0/P1:
+   - Bias de ASLR (`dlpi_addr`) nunca somado no endereço do símbolo —
+     `DobbyInstrument` armava em offset cru, memória arbitrária/não
+     mapeada, não no símbolo real. Testado ao vivo: scan em zygote64
+     confirmou 0 símbolos Java_* nesse estágio, provando o segundo bug.
+   - Detecção rodando em `preAppSpecialize`, antes do processo ser
+     especializado — nenhuma lib do app mapeada ainda, cascata nunca
+     detectava nada em nenhum app. Movida pra `postAppSpecialize` com
+     poll+timeout (`bc_wait_engine_detect`, 8s/200ms), mesmo padrão do
+     `wait_lib_loaded` do caminho Battle Cats, adaptado pra não saber o
+     nome da lib de antemão.
+
+2. **hermes** — revisão completa do projeto pós-fix, sem P0 novo, achados
+   reais adicionais corrigidos:
+   - `BC_MOD_API_VERSION` ainda em `1` apesar do campo `resolve_pattern`
+     (adicionado em rodada anterior) exigir `version>=2` pro mod checar
+     com segurança — bump pra `2`.
+   - `bc_gnu_hash_symcount`: `idx - symoffset` sem checar `idx >=
+     symoffset` — lib hostil/malformada (alcançável agora: caminho
+     genérico escaneia QUALQUER lib carregada, não só as próprias) causa
+     underflow em `uint32_t` e leitura fora dos limites de `chain`. Fix:
+     aborta a cadeia se `idx < symoffset`.
+   - `connectCompanion()` só era chamado no caminho `be_bc` —
+     `publish_log()` no hook genérico nunca tinha `g_stream_fd` setado,
+     log genérico nunca chegava no Termux (só disco/logcat). Fix: mesma
+     chamada também no branch `be_generic_candidate`.
+   - README dizia "61 testes", real são 55 casos (228 assertions) —
+     corrigido.
+
+### O que NÃO foi feito (limite real, não escondido)
+- Nunca testado ao vivo contra jogo Cocos2d-x real diferente do Battle
+  Cats — nenhum instalado no device de teste pra popular a allowlist.
+  Validação é build (`ndk-build -B -j4`, 0 erros/0 warnings) + harness
+  (`selftest_harness`, 100%) + ASan/UBSan, não replay end-to-end no device.
+- `load_dynamic_mods()` (loader de mod `.so` dinâmico via `push_mod`) não
+  roda no caminho genérico — mods atuais assumem `TARGET_LIB` fixo
+  (Battle Cats), não são engine-agnósticos. Decisão consciente de não
+  wirar ainda, não bug.
