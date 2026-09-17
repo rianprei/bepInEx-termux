@@ -2,3 +2,5 @@ build/
 obj/
 *.o
 __pycache__/
+bc-poc-v12-authuid.zip
+*.zip
