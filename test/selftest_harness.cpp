@@ -36,7 +36,14 @@
 #include "offsetsdb.h"
 #include "bc_mods_conf.h"
 #include "bc_mod_graph.h"   // grafo de dependência entre mods (requires/conflicts)
-#include "bc_hook_logic.h"  // FUNÇÕES REAIS (single source of truth com main.cpp)
+// FUNÇÕES REAIS — single source of truth só pro par unpatch/repatch em
+// bc_unpatch_hook. main.cpp::repatch_hook (produção) NÃO chama
+// bc_repatch_hook — reimplementa a mesma decisão à mão porque opera sobre
+// HookPlan[]/PLANS (busca por shortname num array), não sobre o
+// HookState[] indexado por hook_slot_by_name() que esta função espera.
+// Comportamento equivalente hoje (achado real, revisão OpenCode) — mas
+// Caso 39 abaixo testa ESTA função, não o caminho real de produção.
+#include "bc_hook_logic.h"
 #include "bc_mod_api.h"     // contrato de API exposto aos mods .so dinâmicos
 #include "bc_pattern_scan.h"  // AOB scan — bc_pattern_scan_buffer (lógica pura, testável no host)
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
