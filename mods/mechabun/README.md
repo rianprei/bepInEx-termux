@@ -314,6 +314,28 @@ ao vivo do usuário, não dada), implementar esse hook às cegas é risco
 real demais — mesma disciplina do D17. Assinatura documentada aqui
 pronta pra retomar quando houver via de teste segura.
 
+**Solução real implementada por outro caminho (menor risco)**: em vez
+de decifrar `TextureCache::loadAsync`, achado que `libnative-lib.so`
+importa `fopen`/`open` E `AAssetManager_open` (ambos, confirmado via
+tabela de símbolos externos) — o jogo usa arquivo solto em disco pra
+conteúdo baixado (BCData/packs), não só asset embutido na APK.
+`fopen` é símbolo importado real (entrada PLT), ABI estável
+(`const char *path, const char *mode`), **sem** a ambiguidade de
+layout `std::string` de `libc++` — risco muito menor que hookar
+`TextureCache::loadAsync`. Implementado em `mechabun_mod.cpp`:
+`resolve_symbol("fopen")` + `install_hook`, filtro por substring
+simples no `path` (`uni426_s00.png`/`udi426_s.png`), redireciona pra
+`/data/local/tmp/bc_mods/mechabun_assets/` (path real onde os `.so`
+de mod já são instalados, confirmado no README principal do
+framework); se não bater, chama `fopen` original sem modificação —
+hook opcional, não derruba o mod principal (hook de stats) se
+`resolve_symbol`/`install_hook` falhar. **Build limpo, `nm -D` confirma
+`bc_mod_register` exportado, commit `9900c3b`. NÃO testado em
+device** — comportamento real (se `fopen` é de fato a função usada
+pelo loader de icon, e se o path de redirect existe/tem permissão de
+leitura no device) só confirma com teste real, aguardando autorização
+do usuário.
+
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
 **Engenharia reversa completa e honesta, não abandono por preguiça.**
