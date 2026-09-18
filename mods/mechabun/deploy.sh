@@ -40,3 +40,22 @@ print(s.recv(256).decode())
 \""
 
 echo "Enviado. Confira com: adb shell logcat -d | grep -i mechabun"
+
+# D16.1 — icons do deploy/upgrade (hook de fopen no mod redireciona pra
+# cá). Push separado, opcional: sem esses 2 arquivos o hook so faz
+# fallback pro fopen original (nao quebra nada, so os icons custom nao
+# aparecem). NAO roda sozinho — só se o usuário confirmar de novo.
+ASSETS_DIR="$(dirname "$0")/assets"
+ICON1="$ASSETS_DIR/uni426_s00.png"
+ICON2="$ASSETS_DIR/udi426_s.png"
+if [ -f "$ICON1" ] && [ -f "$ICON2" ]; then
+    read -r -p "Tambem enviar os 2 icons (D16.1) pro path do redirect? (digite 'sim') " CONFIRM_ICONS
+    if [ "$CONFIRM_ICONS" = "sim" ]; then
+        adb shell "mkdir -p /data/local/tmp/bc_mods/mechabun_assets"
+        adb push "$ICON1" "/data/local/tmp/bc_mods/mechabun_assets/uni426_s00.png"
+        adb push "$ICON2" "/data/local/tmp/bc_mods/mechabun_assets/udi426_s.png"
+        echo "Icons enviados."
+    else
+        echo "Icons nao enviados (opcional, mod funciona igual sem eles)."
+    fi
+fi
