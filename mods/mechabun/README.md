@@ -255,13 +255,38 @@ que demangla pra `TextureCache::loadAsync(std::string const&,
 std::string const&, gfx::FilterMode, lambda(TextureLoader&))` — prova
 que a engine usa uma classe `TextureCache` real (nome de classe
 sobrevivente, não ofuscado; padrão idêntico ao cocos2d-x). Esse é o
-load de textura de verdade. **Não achado ainda**: o endereço concreto
-da função `TextureCache::loadAsync` em si — a string é só o typeinfo
-name (RTTI), sem xref de código direto encontrado (endereço provável
-computado via relocation/adrp não capturado pela análise padrão de
-xref do Ghidra). Pesquisa de engine (cocos2d-x `TextureCache` é API
-pública documentada) pode ajudar a confirmar assinatura/offset
-esperado se essa RE for retomada.
+load de textura de verdade. **Correção final (achado fechado)**: `00496518`-`00496740` NÃO é
+vtable de resource — são os thunks internos (`__destroy`/`__clone`/
+`operator()`) do `std::__ndk1::__function::__func` que empacota a
+lambda. **`FUN_00493f70` (endereço real `0x493f70`, file-offset
+`0x393f70` com base de imagem `0x100000`) É o próprio
+`TextureCache::loadAsync`** — assinatura bate exata com o símbolo
+mangled: `(long* out, long* cache_container, ulong* string1,
+ulong* string2, undefined4 filterMode)` = `(cache&, string const&,
+string, gfx::FilterMode, callback)`. Confirmado engine própria da
+PONOS (namespace `gfx::FilterMode`, `TextureCache` sem namespace,
+`libc++ __ndk1`) — NÃO é cocos2d-x (zero hits pra `addImageAsync` e
+API pública do cocos2d-x real). Fan-out de ~120 call sites em dezenas
+de funções (`FUN_00514334`, `FUN_00603120`, `FUN_0074d71c`,
+`FUN_0080cf18`, `FUN_008e11c8`, `FUN_008fa530`...) confirma perfil de
+loader central de TODA textura assíncrona do jogo, não helper de
+nicho.
+
+**Por que não virou hook ainda, mesmo com endereço em mãos**: essa
+função é hot-path compartilhado por TODO carregamento de textura do
+jogo inteiro — mesma categoria de risco do D17 (estrutura/caminho
+compartilhado, não confinado à memória privada do Mecha-Bun). Um hook
+errado aqui não quebra só o ícone do Mecha-Bun, trava/derruba a
+textura de QUALQUER unidade/UI que carregar depois. Falta ainda: (1)
+extrair assinatura de bytes (pattern+mask) de `FUN_00493f70` pra usar
+com `resolve_pattern` (endereço fixo quebra em qualquer diff de build
+do jogo); (2) confirmar o layout exato de string curta/longa
+(`libc++` SSO) pra ler o conteúdo do parâmetro sem crashar em builds
+com string longa; (3) confirmar que o I/O por trás do load (ainda não
+localizado — fica abaixo desse ponto) aceita caminho fora do pack de
+assets original, ou se está restrito a `AAssetManager` sandboxed
+(nesse caso, precisaria repack do asset em vez de hook de path). Esse
+é o real próximo passo, ainda em aberto.
 
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
