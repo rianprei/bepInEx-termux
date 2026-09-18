@@ -288,6 +288,32 @@ assets original, ou se está restrito a `AAssetManager` sandboxed
 (nesse caso, precisaria repack do asset em vez de hook de path). Esse
 é o real próximo passo, ainda em aberto.
 
+**Assinatura de bytes extraída** (pronta pra usar, não ligada ainda):
+prólogo de 64 bytes / 16 instruções de `FUN_00493f70`, único imediato
+relocável mascarado (offset 44, provável `bl`):
+
+```
+PATTERN = { 0xff,0xc3,0x03,0xd1, 0xfd,0x7b,0x09,0xa9, 0xfc,0x6f,0x0a,0xa9,
+            0xfa,0x67,0x0b,0xa9, 0xf8,0x5f,0x0c,0xa9, 0xf6,0x57,0x0d,0xa9,
+            0xf4,0x4f,0x0e,0xa9, 0xfd,0x43,0x02,0x91, 0x5b,0xd0,0x3b,0xd5,
+            0xf3,0x03,0x08,0xaa, 0xf7,0x03,0x01,0xaa, 0x68,0x17,0x40,0xf9,
+            0xf5,0x03,0x00,0xaa, 0xe0,0x03,0x01,0xaa, 0xe1,0x03,0x02,0xaa,
+            0xf9,0x03,0x03,0x2a };
+MASK    = mesmo array, exceto offsets 44/45/46 = 0x00 (wildcard do imediato).
+```
+
+**Por que NÃO foi ligado no mod ainda, decisão deliberada**: mesmo
+com endereço e assinatura em mãos, instalar `install_hook` aqui
+exigiria decodificar o conteúdo de `std::string` no layout `libc++`
+(SSO curto vs. modo longo) pra filtrar só o cat_id 426 sem afetar as
+outras ~180+ unidades — um erro de offset no parsing da string
+corrompe/crasha o carregamento de QUALQUER textura do jogo, não só a
+do Mecha-Bun, e essa função é chamada possivelmente milhares de vezes
+por sessão (hot-path). Sem capacidade de testar em device (autorização
+ao vivo do usuário, não dada), implementar esse hook às cegas é risco
+real demais — mesma disciplina do D17. Assinatura documentada aqui
+pronta pra retomar quando houver via de teste segura.
+
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
 **Engenharia reversa completa e honesta, não abandono por preguiça.**
