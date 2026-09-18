@@ -185,11 +185,30 @@ na transição de 3px e no resgate de perna cinza dessaturada conectada
 ao sujeito; decontaminação de fringe via estimativa premultiplicada).
 Trocou a arte, roda de novo.
 
-**Escopo honesto**: os PNGs vivem só aqui no mod. Pra aparecerem no
-jogo falta o passo de entrega (redirect de arquivo no loader ou
-repack do pack de assets baixado — os icons não existem no
-install_pack, verificado: 199 assets, zero `uni*`/`udi*`). Não feito
-nesta etapa.
+**Entrega pro jogo — hook implementado, instalação MANUAL**: o mod
+agora tem hook de `fopen` que redireciona `uni426_s00.png`/
+`udi426_s.png` pra `/data/local/tmp/bc_mods/mechabun_assets/` (mesmo
+diretório onde os `.so` de mod já são instalados pelo loader). O hook
+só redireciona o path — **nada copia os PNGs pra lá sozinho**. Passo
+manual obrigatório (um comando mkdir + um comando de cópia, NÃO
+executados por este agente — exigem device real):
+
+```
+# adb (host, a partir da raiz do repo; device com USB debugging)
+adb shell mkdir -p /data/local/tmp/bc_mods/mechabun_assets
+adb push mods/mechabun/assets/uni426_s00.png mods/mechabun/assets/udi426_s.png /data/local/tmp/bc_mods/mechabun_assets/
+
+# termux (alternativa: arquivos já no device, ex. /sdcard/Download;
+# escrever em /data/local/tmp exige o mesmo canal de privilégio que o
+# companion usa pros .so — se o cp falhar por permissão, use adb push)
+mkdir -p /data/local/tmp/bc_mods/mechabun_assets
+cp /sdcard/Download/uni426_s00.png /sdcard/Download/udi426_s.png /data/local/tmp/bc_mods/mechabun_assets/
+```
+
+Os icons não existem no install_pack do jogo (verificado: 199 assets,
+zero `uni*`/`udi*`) — sem os 2 arquivos no path, o redirect não tem o
+que servir e o slot fica com o comportamento default de asset
+ausente.
 
 **Achado real pro hook de entrega** (RE feita, hook ainda não
 implementado): `FUN_00744998` (endereço real, `libnative-lib.so` JP
