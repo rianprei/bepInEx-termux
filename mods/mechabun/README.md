@@ -89,7 +89,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | D14 | Warp Immunity | ✅ implementado |
 | D15 | Shrug Off | ✅ **implementado via D8** — mesma mecânica interna, ver abaixo |
 | D16 | Ultra Form | ✅ **implementado como tier de stats na True Form** — ver abaixo |
-| D12 (parte 2) | Backswing 12f→6f | ⏳ investigação de escopo grande, não fechada |
+| D12 (parte 2) | Backswing 12f→6f | ❌ RE esgotada (2 vias descartadas), sem hook seguro achado — ver abaixo |
 | D17 | Talents oficiais | ⏳ RE real feita, achado real, não implementado por risco — ver abaixo |
 
 ### D15 Shrug Off = D8 Dodge (achado real, não aproximação)
@@ -208,7 +208,8 @@ cp /sdcard/Download/uni426_s00.png /sdcard/Download/udi426_s.png /data/local/tmp
 Os icons não existem no install_pack do jogo (verificado: 199 assets,
 zero `uni*`/`udi*`) — sem os 2 arquivos no path, o redirect não tem o
 que servir e o slot fica com o comportamento default de asset
-ausente.
+ausente. Detalhes do hook de `fopen` (implementação, riscos, limites)
+na seção D16.3 abaixo.
 
 **Achado real pro hook de entrega** (RE feita, hook ainda não
 implementado): `FUN_00744998` (endereço real, `libnative-lib.so` JP
@@ -478,8 +479,18 @@ de código)**:
   pra pular/acelerar só a janela de backswing do Mecha-Bun — exigiria
   RE do motor de animação (escopo comparável ou maior que este mod
   inteiro, hot-path compartilhado por toda animação do jogo, mesma
-  categoria de risco do D17/D16.1). Nenhuma das duas fechada nesta
-  sessão.
+  categoria de risco do D17/D16.1). **Opção (1) descartada nesta
+  revisão** — rastreio real (callees do loader até profundidade 8 +
+  callers até profundidade 3, ~67 funções examinadas no total) não
+  achou `fopen`/`AAssetManager_open` em NENHUM ponto adjacente ao
+  loader de `.maanim` (nem acima, nem abaixo na cadeia de chamadas) —
+  diferente do deploy icon, que tinha `fopen` alcançável e virou hook
+  real (ver D16.1). Os bytes do `.maanim` chegam por outro subsistema
+  (asset manager com dispatch virtual ou buffer pré-carregado,
+  invisível a xref estático). Opção (2) segue genuinamente em aberto,
+  mas exigiria RE do motor de animação do zero — não orçado nesta
+  sessão. **D12 (backswing) permanece fechado por falta de ponto de
+  hook seguro, RE honesta esgotada nas duas frentes plausíveis.**
 
 **Não feito, confirmado limitação real (verificado direto no tbcml,
 não suposição herdada)**:
