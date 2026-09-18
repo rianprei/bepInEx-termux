@@ -44,6 +44,16 @@
 //   - Imunidades (wave/knockback/surge) e Behemoth Slayer: bool flags
 //     diretos, sem ambiguidade de escala — alta confiança, é só setar 1.
 //
+//   - Mini-wave (D6), Strengthen (D7), Dodge (D8): CONFIRMADO via tbcml
+//     (unit.py classes Wave/Strengthen/Dodge, cats.py:assign linhas
+//     349/350/362) — raw_data[35]=wave.prob, [36]=wave.level,
+//     [94]=wave.is_mini; [40]=strengthen.hp_percent,
+//     [41]=strengthen.multiplier_percent; [84]=dodge.prob,
+//     [85]=dodge.time (frames). `Prob` é percentual direto (classe
+//     `Prob`, unit.py:164-181, sem wrapper) — valores no design ideal
+//     (10%, 50%, 150%, 20%, 1s=30 frames) são atribuídos direto, sem
+//     conversão nenhuma precisar.
+//
 // NÃO FEITO (confirmado limitação real, não preguiça):
 //   - Backswing: NÃO existe como campo CSV separado no schema real
 //     (tbcml só tem "foreswing", índice 13, do attack_1) — o "backswing"
@@ -74,6 +84,13 @@
 #define COL_KNOCKBACK_IMMUNITY 48
 #define COL_SURGE_IMMUNITY 91
 #define COL_BEHEMOTH_SLAYER 105
+#define COL_WAVE_PROB 35
+#define COL_WAVE_LEVEL 36
+#define COL_WAVE_IS_MINI 94
+#define COL_STRENGTHEN_HP_PERCENT 40
+#define COL_STRENGTHEN_MULT_PERCENT 41
+#define COL_DODGE_PROB 84
+#define COL_DODGE_TIME_FRAMES 85
 
 typedef void (*orig_load_unit_fn)(long big_data, int unit_id);
 static orig_load_unit_fn g_orig = nullptr;
@@ -109,6 +126,12 @@ static void set_bool_field(long form_base, int col) {
     *field_ptr(form_base, col) = 1;
 }
 
+// Atribui valor direto (percentual/frames já na unidade certa, sem
+// escala — Prob e Frames do tbcml não têm wrapper de conversão).
+static void set_field(long form_base, int col, int32_t value) {
+    *field_ptr(form_base, col) = value;
+}
+
 static void hooked_load_unit(long big_data, int unit_id) {
     g_orig(big_data, unit_id);  // deixa o parse original do CSV rodar
     if (unit_id != MECHABUN_UNIT_ID) return;
@@ -133,12 +156,25 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_KNOCKBACK_IMMUNITY);
         set_bool_field(fb, COL_SURGE_IMMUNITY);
         set_bool_field(fb, COL_BEHEMOTH_SLAYER);
+
+        // D6 Mini-wave: 10% chance, nível 1, variante mini.
+        set_field(fb, COL_WAVE_PROB, 10);
+        set_field(fb, COL_WAVE_LEVEL, 1);
+        set_bool_field(fb, COL_WAVE_IS_MINI);
+
+        // D7 Strengthen: ativa a 50% de HP, +50% de dano (150%).
+        set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
+        set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 150);
+
+        // D8 Dodge: 20% de chance, esquiva por 1s (30 frames a 30fps).
+        set_field(fb, COL_DODGE_PROB, 20);
+        set_field(fb, COL_DODGE_TIME_FRAMES, 30);
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                     "[mechabun] design ideal comunitario aplicado (HP/ATK "
                     "+80%, range/recarga/freq ajustados, 3 imunidades + "
-                    "behemoth slayer ativados)");
+                    "behemoth slayer + mini-wave + strengthen + dodge)");
     }
 }
 

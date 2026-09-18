@@ -45,6 +45,9 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Knockback Immunity | 48 | seta 1 |
 | Surge Immunity | 91 | seta 1 |
 | Behemoth Slayer | 105 | seta 1 |
+| Wave prob/level/mini | 35/36/94 | 10% / lv1 / mini=1 (D6) |
+| Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) |
+| Dodge prob/frames | 84/85 | 20% / 30f=1s (D8) |
 
 ## Escopo honesto
 
@@ -63,6 +66,10 @@ suposição rotulada**:
 - Imunidades e Behemoth Slayer — bool flags diretos (`tbcml`
   `unit_bool()` = `bool(value)`, 0=false/qualquer-não-zero=true), sem
   ambiguidade.
+- Mini-wave (D6), Strengthen (D7), Dodge (D8) — `tbcml` (`unit.py`
+  classes `Wave`/`Strengthen`/`Dodge`) confirma os índices e que `Prob`
+  é percentual direto (`unit.py:164-181`, sem wrapper) — valores do
+  design ideal atribuídos sem nenhuma conversão precisar.
 
 Resta uma incerteza real, mas de escopo bem menor: o valor "atual" de
 190/32f/84.5s (usado como referência do "antes" pra calcular a razão de
