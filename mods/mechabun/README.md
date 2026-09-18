@@ -245,6 +245,24 @@ o retorno de `FUN_00493f70`, ou no caller `FUN_0073da38`). Parado
 aqui por disciplina de escopo — achar o load real exigiria mais uma
 rodada de RE não orçada nesta sessão.
 
+**Atualização — achado maior nesta revisão**: rastreado mais fundo via
+vtable. O objeto lazy criado em `FUN_00493f70`
+(`operator_new(0x50)`, vtable `00bca008`) é um wrapper de
+`std::function`. RTTI confirma via símbolo mangled REAL sobrevivente
+no binário (não inferido — string literal achada e decompilada):
+`_ZN12TextureCache9loadAsyncERKNSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEES8_N3gfx10FilterModeEEUlR13TextureLoaderE_`,
+que demangla pra `TextureCache::loadAsync(std::string const&,
+std::string const&, gfx::FilterMode, lambda(TextureLoader&))` — prova
+que a engine usa uma classe `TextureCache` real (nome de classe
+sobrevivente, não ofuscado; padrão idêntico ao cocos2d-x). Esse é o
+load de textura de verdade. **Não achado ainda**: o endereço concreto
+da função `TextureCache::loadAsync` em si — a string é só o typeinfo
+name (RTTI), sem xref de código direto encontrado (endereço provável
+computado via relocation/adrp não capturado pela análise padrão de
+xref do Ghidra). Pesquisa de engine (cocos2d-x `TextureCache` é API
+pública documentada) pode ajudar a confirmar assinatura/offset
+esperado se essa RE for retomada.
+
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
 **Engenharia reversa completa e honesta, não abandono por preguiça.**
