@@ -229,6 +229,22 @@ todo tipo de asset do jogo — hookar nesse nível exige filtro preciso
 por filename pra não afetar o cache de mais nada; ir mais fundo sem
 esse filtro pronto é escopo não fechado igual ao D17.
 
+**Fechamento desse ramo específico**: os 6 callees restantes de
+`FUN_00493f70` foram todos decompilados — `FUN_004092e0` (cópia de
+string small-buffer), `FUN_00409350` (rebalanceamento de árvore
+rubro-negra libc++, mesmo padrão do D17), `FUN_004162b4` (lookup em
+mapa via `memcmp` de chave), `FUN_009bd700` (dispatch de callback
+com verificação `pthread_self`), `FUN_004966bc` (destructor de nó
+par), `FUN_0049674c` (move-assign de par tipo `<string,string>`).
+**Nenhum tem qualquer I/O de arquivo** — a cadeia inteira
+`FUN_00744998 → FUN_00493f70 → (6 callees)` é só gerência de cache em
+memória (`std::map`-like). O load real de arquivo (fopen/
+AAssetManager) não está nesse ramo — fica em outro ponto ainda não
+localizado (candidato mais provável: de volta em `FUN_00744998` após
+o retorno de `FUN_00493f70`, ou no caller `FUN_0073da38`). Parado
+aqui por disciplina de escopo — achar o load real exigiria mais uma
+rodada de RE não orçada nesta sessão.
+
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
 **Engenharia reversa completa e honesta, não abandono por preguiça.**
