@@ -134,6 +134,8 @@
 // prova forte de que 426 e o ID certo e 425 nunca foi.
 
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include "bc_mod_api.h"
 
 #define MECHABUN_UNIT_ID 426
@@ -290,6 +292,32 @@ static void hooked_load_unit(long big_data, int unit_id) {
     }
 }
 
+// D16.1 — redirect de deploy/upgrade icon (fopen hook, mod-only, zero
+// arquivo do jogo tocado). fopen é símbolo importado real (PLT), ABI
+// estável (const char*, const char*), risco muito menor que decifrar
+// std::string de libc++ dentro de TextureCache::loadAsync (ver README
+// seção D16.1 pra essa cadeia descartada por risco). Filtro por
+// substring simples no path — se não bater, chama fopen original sem
+// nenhuma modificação; hot-path (fopen é chamado o tempo todo pelo
+// jogo inteiro), mas o filtro em si é uma comparação de string barata
+// e sem estado, sem parsing de struct opaca.
+typedef FILE *(*orig_fopen_fn)(const char *path, const char *mode);
+static orig_fopen_fn g_orig_fopen = nullptr;
+
+#define MECHABUN_ASSET_DIR "/data/local/tmp/bc_mods/mechabun_assets/"
+
+static FILE *hooked_fopen(const char *path, const char *mode) {
+    if (path != nullptr) {
+        if (strstr(path, "uni426_s00.png") != nullptr) {
+            return g_orig_fopen(MECHABUN_ASSET_DIR "uni426_s00.png", mode);
+        }
+        if (strstr(path, "udi426_s.png") != nullptr) {
+            return g_orig_fopen(MECHABUN_ASSET_DIR "udi426_s.png", mode);
+        }
+    }
+    return g_orig_fopen(path, mode);
+}
+
 extern "C" BC_MOD_EXPORT bool bc_mod_register(const bc_mod_api *api) {
     if (api == nullptr || api->version < 3 || api->install_hook == nullptr ||
         api->resolve_pattern == nullptr) {
@@ -310,5 +338,25 @@ extern "C" BC_MOD_EXPORT bool bc_mod_register(const bc_mod_api *api) {
         return false;
     }
     api->log(BC_LOG_INFO, "[mechabun] hook instalado, aguardando load do unit 427");
+
+    // D16.1 icon redirect: opcional, não derruba o mod principal se
+    // falhar (resolve_symbol pode não existir em loader mais antigo,
+    // ou fopen pode não ser a função real usada pelo loader de
+    // textura — ver README D16.1 pra ressalvas). Instala só se tudo
+    // bater; senão loga e segue com o hook de stats já garantido.
+    if (api->resolve_symbol != nullptr) {
+        void *fopen_target = api->resolve_symbol("fopen");
+        if (fopen_target != nullptr &&
+            api->install_hook(fopen_target, (void *)hooked_fopen,
+                               (void **)&g_orig_fopen)) {
+            api->log(BC_LOG_INFO,
+                       "[mechabun] D16.1: hook de fopen instalado (redirect "
+                       "de deploy/upgrade icon do Mecha-Bun)");
+        } else {
+            api->log(BC_LOG_WARN,
+                       "[mechabun] D16.1: fopen nao resolvido/hookado - "
+                       "icons custom nao vao aparecer, resto do mod segue ok");
+        }
+    }
     return true;
 }
