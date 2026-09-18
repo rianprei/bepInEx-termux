@@ -69,8 +69,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 
 ## Cobertura do desejo da comunidade (D1-D17)
 
-13 de 17 implementados (D15 resolvido nesta revisão — era o mesmo
-mecanismo do D8, não item separado). Mapeamento completo:
+16 de 17 implementados/resolvidos. Mapeamento completo:
 
 | # | Desejo | Status |
 |---|---|---|
@@ -89,9 +88,9 @@ mecanismo do D8, não item separado). Mapeamento completo:
 | D13 | Explosion Immunity | ✅ implementado |
 | D14 | Warp Immunity | ✅ implementado |
 | D15 | Shrug Off | ✅ **implementado via D8** — mesma mecânica interna, ver abaixo |
-| D12 (parte 2) | Backswing 12f→6f | ⏳ em investigação ativa (hook de animação), ver abaixo |
-| D16 | Ultra Form | ❌ jogo não tem essa forma ainda, ver abaixo |
-| D17 | Talents oficiais | ❌ redundante, ver abaixo |
+| D16 | Ultra Form | ✅ **implementado como tier de stats na True Form** — ver abaixo |
+| D12 (parte 2) | Backswing 12f→6f | ⏳ investigação de escopo grande, não fechada |
+| D17 | Talents oficiais | ⏳ RE real feita, achado real, não implementado por risco — ver abaixo |
 
 ### D15 Shrug Off = D8 Dodge (achado real, não aproximação)
 
@@ -112,6 +111,87 @@ comunidade.md`) nunca cita "Shrug Off" como campo real do jogo —
 confirmado também que a wiki/comunidade não documenta esse termo como
 mecânica existente (só aparece como "nova ability custom" no PR
 original). D15 não precisa código novo — já está satisfeito.
+
+### D16 Ultra Form — implementado como tier de stats (não nova forma)
+
+Confirmado via wiki oficial: "Ultra Forms are currently exclusive to
+Uber Rare Cats... Mecha-Bun is a Special Cat, not an Uber Rare Cat" —
+Ultra Form não é uma mecânica disponível pra essa classe de raridade
+no jogo vanilla, não é falta de dado por acaso. Dado real
+(`unit427.csv`) confirma só 3 formas hoje (Normal/Evolved/True).
+
+Solução real, 100% dentro do mod (zero arquivo do jogo tocado):
+aplica os números-alvo do "Ultra" (HP 520.000, Strong Against
+Floating/Relic/Aku) direto na **True Form** (índice de forma 2) em vez
+de fabricar uma 4ª forma inexistente:
+- HP: raw da True Form escalado por `325/54` (fração exata derivada de
+  520000/86400 — mesma lógica proporcional dos outros campos: curva de
+  level é multiplicativa sobre o raw, razão final bate o alvo
+  independente da fórmula exata da curva).
+- Strong Against Floating/Relic/Aku: índices 23/16/96. Mecha-Bun já
+  nascia com `strong=1` e `target_relic=1` nativos (confirmado no raw
+  real) — só faltava `target_floating`/`target_aku`, agora setados.
+
+O que se perde: apresentação (4ª aba no cat-guide, sprite/animação
+nova) — conteúdo que não existe no pack do jogo de qualquer forma,
+nenhum patch de memória fabricaria isso. Pesquisado ativamente (web +
+GameBanana) se existe skin/reskin pronto pra usar — não existe nenhum.
+Usuário forneceu arte-conceito fã-feita (ilustração de pose única,
+`fan-made-ultimate-mecha-bunbun-mkx...png`) — confirmado (2 agentes
+independentes) que o jogo não tem slot de retrato/galeria estático
+onde essa arte pudesse entrar sem rig completo (imgcut/mamodel/maanim,
+corpo fatiado em partes); único uso real seria recortar o busto pro
+ícone de deploy 128×128 (`uni{cat_id}_{forma}00.png`), não pro sprite
+de batalha em si.
+
+### D17 Talents oficiais — RE real completa, não implementado por risco real
+
+**Engenharia reversa completa e honesta, não abandono por preguiça.**
+Achado via decompile direto (Ghidra) de `FUN_006b2d68` (endereço real
+do binário JP 15.6.0, xref confirmado da string "SkillAcquisition.csv"):
+
+- `SkillAcquisition.csv` é config estática carregada do disco todo
+  boot (mesma categoria de `unit427.csv`), **não é save do jogador** —
+  confirmado (tbcml armazena `self.talents` igual `self.unit_buy`,
+  nenhuma referência a `SaveData` em lugar nenhum do código).
+- Layout de struct em memória confirmado por completo: nó de árvore
+  de 0x1e8 bytes — 36 bytes de bookkeeping (ponteiros
+  esquerda/direita/pai + chave `cat_id` no offset 0x1c) + 8 grupos
+  (habilidades A-H) × 56 bytes cada (14 campos int32/grupo: abilityID,
+  MAXLv, min/max×4, textID, LvID, nameID, limit — bate exato com os
+  114 campos do CSV real).
+- A árvore inteira vive em `param_1 + 0x233000` dentro do singleton
+  principal do jogo — **não é array simples, é uma árvore binária
+  balanceada** (`std::map`/`std::__ndk1::__tree`, libc++, com
+  campos `__left_`/`__right_`/`__parent_`/`__is_black_` confirmados
+  contra o código-fonte real da LLVM).
+- 9 de 10 ability IDs reais dos efeitos do design ideal confirmados
+  (cruzando `SkillAcquisition.csv` real com `TalentAbilityType` do
+  tbcml): Surge Immunity=55, Wave Immunity=48, Knockback Immunity=47,
+  HP Up=32, Cooldown Down=26, Mini-wave=62, Strengthen=10, Dodge=51,
+  Behemoth Slayer=64. Range Up não tem talento real no jogo vanilla
+  (confirmado, não fabricado).
+
+**Por que não foi implementado**: cat_id 426 (Mecha-Bun) não tem linha
+em `SkillAcquisition.csv` hoje — pra existir de verdade, precisaria
+INSERIR um nó novo nessa árvore balanceada compartilhada por TODAS as
+180 unidades reais que já têm talento. Isso exige replicar
+corretamente o algoritmo de rebalanceamento red-black da libc++
+(rotações, cor de nó) — um erro sutil não afeta só o Mecha-Bun, pode
+corromper a estrutura de talento de QUALQUER outra unidade, com
+sintoma só visível em teste extensivo em device (que não pode ser
+feito sem autorização explícita do usuário a cada etapa). Achar a
+função de CONSULTA oficial (caminho mais seguro, sem tocar a árvore)
+virou busca sem limite claro: o offset base `0x233000` é referenciado
+por 59 funções diferentes só nesse binário (a maioria mexe em outras
+tabelas de dado não-relacionadas que vivem na mesma região de
+memória), inviável de rastrear uma-a-uma manualmente.
+
+Decisão de engenharia: risco de corrupção de estrutura compartilhada
+sem forma de testar com segurança > valor de entregar D17. Achado
+documentado por completo pra retomar no futuro se surgir um caminho
+mais seguro (ex.: achar a função de consulta oficial com mais tempo,
+ou confirmar via teste real em device com autorização).
 
 ## Escopo honesto
 
