@@ -209,7 +209,8 @@ Os icons não existem no install_pack do jogo (verificado: 199 assets,
 zero `uni*`/`udi*`) — sem os 2 arquivos no path, o redirect não tem o
 que servir e o slot fica com o comportamento default de asset
 ausente. Detalhes do hook de `fopen` (implementação, riscos, limites)
-na seção D16.3 abaixo.
+no parágrafo "Solução real implementada por outro caminho" no fim
+desta seção.
 
 **Achado real pro hook de entrega** (RE feita, hook ainda não
 implementado): `FUN_00744998` (endereço real, `libnative-lib.so` JP
@@ -355,6 +356,19 @@ device** — comportamento real (se `fopen` é de fato a função usada
 pelo loader de icon, e se o path de redirect existe/tem permissão de
 leitura no device) só confirma com teste real, aguardando autorização
 do usuário.
+
+**Revisão independente (kilo, sessão separada)**: análise estática do
+código do hook — build limpo confirmado de novo (segunda compilação
+independente), zero buffer overflow (não escreve em buffer, só
+`strstr` + `fopen` original com string literal ou path original), zero
+null-deref (`path != nullptr` checado antes de `strstr`), zero
+recursão infinita (se o path já for o alvo do redirect, `strstr` casa
+de novo mas a chamada final é sempre uma única `g_orig_fopen`, sem
+looping), thread-safety ok (`g_orig_fopen` setado uma vez em
+`bc_mod_register` antes de qualquer hook ativo, só leitura depois),
+overhead de hot-path desprezível (2 `strstr` por `fopen`,
+nanossegundos). Nenhum bug achado nas duas revisões independentes —
+falta só validação de comportamento real em device.
 
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
