@@ -144,6 +144,72 @@ corpo fatiado em partes); único uso real seria recortar o busto pro
 ícone de deploy 128×128 (`uni{cat_id}_{forma}00.png`), não pro sprite
 de batalha em si.
 
+### D16.1 Icons estáticos gerados da arte fan-made (deploy + upgrade)
+
+Segunda passada de verificação (sessão Freebuff, independente da de 2
+agentes acima) confirmou a conclusão e achou **um slot a mais** que ela
+não citou: `udi{cat_id}_{form}.png` (**upgrade icon**, tela de upgrade
+da unidade), carregado junto do deploy em `read_icons()` (tbcml
+`cats.py:1349-1350`). São esses — e só esses — os 2 slots de imagem
+estática por unidade no jogo: loading screen é textura global única
+(`download.png`, `loading_screen.py:22`), banner de gacha é imagem de
+item de shop (`gatyaitemD_{id}_f/z.png`, `gatyaitem.py:217`), nenhum
+é por unidade.
+
+**Arquivos gerados** (nesta pasta `assets/`, zero arquivo do jogo
+tocado), a partir da arte fan-made do usuário:
+
+| Arquivo | Slot | Dimensão | Conteúdo |
+|---|---|---|---|
+| `uni426_s00.png` | deploy icon (battle) | 128×128 | sujeito recortado composto dentro da janela oficial (14,26)-(113,101) do frame `uni_s.png` do tbcml, bottom-aligned |
+| `udi426_s.png` | upgrade icon (menu) | 294×111 | sujeito sobre plate `udi_s.png` ×3.5 colada em (13,1), crop (13,1,307,112) — pipeline exato `format_bcu_upgrade_icon_s`+`crop_upgrade_icon` (`cats.py:1420/1433`) |
+
+**Convenção de nome** (tbcml `cats.py:1240/1243`, `get_cat_id_str` =
+`PaddedInt(cat_id, 3)`):
+- deploy: `uni{cat_id:03d}_{form}00.png` → cat_id 426 True Form =
+  `uni426_s00.png`
+- upgrade: `udi{cat_id:03d}_{form}.png` → cat_id 426 True Form =
+  `udi426_s.png`
+- formas: `f`=Normal, `c`=Evolved, `s`=True, `u`=Ultra (`CatFormType`,
+  `cats.py:31-37`); Mecha-Bun só tem as 3 primeiras (ver D16)
+- nota: nos stats o arquivo é `unit{cat_id+1}.csv` (unit427.csv), mas
+  nos icons NÃO tem +1 — `uni426`/`udi426` direto (padding 3 dígitos,
+  ex.: cat_id 9 → `uni009_f00.png`)
+
+**Geração reproduzível**: `gen_icons.py` nesta pasta (roda com a venv
+battlecats: `~/.venvs/battlecats-mod/bin/python gen_icons.py`).
+Chroma-key do fundo teal (flood-fill das bordas tolerante a gradiente
+radial — modelo plano de 1º grau falha no spotlight dessa arte;
+bandas autoritativas flood=sujeito/bg-profundo com decisão por cor só
+na transição de 3px e no resgate de perna cinza dessaturada conectada
+ao sujeito; decontaminação de fringe via estimativa premultiplicada).
+Trocou a arte, roda de novo.
+
+**Escopo honesto**: os PNGs vivem só aqui no mod. Pra aparecerem no
+jogo falta o passo de entrega (redirect de arquivo no loader ou
+repack do pack de assets baixado — os icons não existem no
+install_pack, verificado: 199 assets, zero `uni*`/`udi*`). Não feito
+nesta etapa.
+
+**Achado real pro hook de entrega** (RE feita, hook ainda não
+implementado): `FUN_00744998` (endereço real, `libnative-lib.so` JP
+15.6.0) é a função que resolve `cat_id` → filename do deploy icon.
+Recebe o `cat_id` em `param_1[4]`, monta a string via padrão
+`uni%03d_%@%02d.png` (string real no binário, endereço `0029db73`),
+com fallback pra ícone genérico numérico (`FUN_004c80e8`) só em cache
+miss (`*param_1==0`). Duas irmãs confirmadas com mesmo padrão de
+código: `FUN_004c80e8`/`FUN_004c7b2c` (usam a mesma tabela XOR-obfuscada
+de índice por `cat_id`, offset `+0x4af08`, e a mesma string
+`uni%03d_m%02d.png`). Candidato de hook: `install_hook` em
+`FUN_00744998`, interceptar quando `param_1[4] == 426` e redirecionar
+o path resultante pro asset do mod (`uni426_s00.png`). **Não
+implementado ainda** — falta confirmar onde o filename resultante vira
+`fopen`/`AAssetManager_open` de fato (essa função só monta a string,
+não abre o arquivo), pra decidir se o hook fica em `FUN_00744998`
+(troca o cat_id resolvido) ou mais adiante na cadeia (troca só o load
+de I/O, mais seguro pra não afetar cache/resolução de outras 180+
+unidades).
+
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
 **Engenharia reversa completa e honesta, não abandono por preguiça.**
