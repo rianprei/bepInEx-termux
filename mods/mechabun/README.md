@@ -421,12 +421,24 @@ de código)**:
 **Em investigação ativa (não abandonado)**:
 - Backswing (D12, metade) — NÃO existe como campo CSV separado no
   schema real do tbcml (só existe "foreswing", índice 13). Confirmado
-  que o playback de animação usa nomenclatura de engine genérica
-  (`%s_entry.maanim`, tipo cocos2d) — não é dado isolado por unidade.
-  Hookar isso com segurança exigiria RE do sistema de animação do
-  motor (escopo comparável ou maior que este mod inteiro). Pesquisa
-  dedicada em andamento pra achar ponto de hook seguro antes de
-  desistir.
+  via decompile direto de `FUN_0044008c` (loader real de arquivo
+  `%s_entry.maanim`, endereço real do binário JP 15.6.0): a duração da
+  recuperação pós-ataque (backswing) vive inteiramente dentro dos
+  keyframes do arquivo `.maanim` da animação de ataque — não é um
+  campo numérico isolado por unidade, é conteúdo do arquivo de
+  animação em si. **Achado consolidado nesta revisão**: isso é o
+  MESMO bloqueio técnico da entrega dos icons (D16.1) — falta o
+  mecanismo real de override de asset (injetar arquivo do mod sem
+  tocar o pack original do jogo). Duas soluções possíveis, nenhuma
+  fechada: (1) achar o ponto de I/O real por trás de
+  `TextureCache::loadAsync`/loaders de `.maanim` que aceite redirecionar
+  pra um arquivo do mod (ver seção D16.1 acima — mesma investigação);
+  (2) hookar o avanço do contador de frame de animação em tempo real
+  pra pular/acelerar só a janela de backswing do Mecha-Bun — exigiria
+  RE do motor de animação (escopo comparável ou maior que este mod
+  inteiro, hot-path compartilhado por toda animação do jogo, mesma
+  categoria de risco do D17/D16.1). Nenhuma das duas fechada nesta
+  sessão.
 
 **Não feito, confirmado limitação real (verificado direto no tbcml,
 não suposição herdada)**:
