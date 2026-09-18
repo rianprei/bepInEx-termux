@@ -215,13 +215,19 @@ Rastreado um nível a mais: `FUN_00744998` chama `FUN_00493f70`
 filename-key num container tipo mapa (`FUN_0041607c`), com resultado
 guardado via `__shared_weak_count` (contagem de referência
 compartilhada, padrão cache de textura/imagem usado pra QUALQUER
-asset do jogo, não só icons). Em cache miss, chama `FUN_0049631c`
-(endereço real, ainda não decompilado) — esse é o próximo candidato
-real pro load de arquivo de fato. Parado neste ponto por disciplina
-de risco: `FUN_00493f70` é compartilhado por todo tipo de asset
-(sprite de batalha, UI, som possivelmente) — hookar nesse nível exige
-filtro preciso por filename pra não afetar o cache de mais nada; ir
-mais fundo sem esse filtro pronto é escopo não fechado igual ao D17.
+asset do jogo, não só icons). Em cache miss, chama `FUN_0049631c`.
+**Correção após decompilar**: essa função NÃO é o load de arquivo — é
+init genérico de objeto interno de engine (aloca com vtable
+`PTR_FUN_00bc9f78`, chama método virtual por índice, sem nenhuma
+referência a filename/string). Beco sem saída nessa direção
+específica — o load real de arquivo fica em outro callee de
+`FUN_00493f70` ainda não identificado (candidatos restantes não
+rastreados: `FUN_004092e0`, `FUN_00409350`, `FUN_004162b4`,
+`FUN_009bd700`, `FUN_004966bc`, `FUN_0049674c`). Parado neste ponto
+por disciplina de risco/tempo: `FUN_00493f70` é compartilhado por
+todo tipo de asset do jogo — hookar nesse nível exige filtro preciso
+por filename pra não afetar o cache de mais nada; ir mais fundo sem
+esse filtro pronto é escopo não fechado igual ao D17.
 
 ### D17 Talents oficiais — RE real completa, não implementado por risco real
 
