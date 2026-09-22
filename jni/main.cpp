@@ -1339,7 +1339,7 @@ static void install_all() {
 
 // Espera a lib nativa aparecer (poll em dl_iterate_phdr, deadline real ~timeout_ms).
 // Usa clock monotônico (não wall-clock), então o limite não estoura em
-// suspensão/scheduler lag — o "max ~5s" é garantido, não aproximado.
+// suspensão/scheduler lag — o "max ~timeout_ms" é garantido, não aproximado.
 struct LibPollCtx { const char *libname; std::atomic<int> found{0}; };
 static bool wait_lib_loaded(const char *libname, int timeout_ms) {
     LibPollCtx ctx{libname};
@@ -1377,9 +1377,19 @@ static void watch_throttle(const char *key, const struct bc_mod_entry *old_val,
 }
 
 // Thread de espera + instalação
+// TARGET_LIB_WAIT_MS: achado real em device (2026-09-22) -- timeout de 5s
+// original era curto demais: num boot observado a lib apareceu so 1.5s
+// depois do timeout (quase pegou); em OUTRO boot, no mesmo device, a lib
+// simplesmente nao carregou nem apos varias dezenas de segundos (app fica
+// em splash/menu antes de inicializar o engine nativo, dependendo do
+// caminho de boot). Timeout curto = mod permanentemente dormant nesse
+// processo, sem segunda chance (thread roda 1x por spawn). 60s cobre os
+// dois casos observados sem custo real -- o poll (dl_iterate_phdr a cada
+// 8ms) e' barato e roda numa thread dedicada, nao bloqueia nada mais.
+#define TARGET_LIB_WAIT_MS 60000
 static void *event_thread(void *) {
-    if (!wait_lib_loaded(TARGET_LIB, 5000)) {
-        LOGE("libnative-lib não apareceu em 5s");
+    if (!wait_lib_loaded(TARGET_LIB, TARGET_LIB_WAIT_MS)) {
+        LOGE("libnative-lib não apareceu em %ds", TARGET_LIB_WAIT_MS / 1000);
         return nullptr;
     }
     LOGI("libnative-lib.so detected — instalando hooks");

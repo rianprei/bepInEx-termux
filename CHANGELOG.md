@@ -4,6 +4,77 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
+## v0.3.3 — 2026-09-22
+
+### Fixed
+- **`libnative-lib` não carrega a tempo em alguns boots**: `wait_lib_loaded`
+  tinha timeout fixo de 5s antes de desistir permanentemente pro resto da
+  vida daquele processo (mod fica dormant, sem segunda chance). Achado real
+  em device: num boot a lib apareceu só 1.5s depois do timeout (quase
+  pegou); em outro boot, no mesmo device, não carregou nem depois de várias
+  dezenas de segundos (app fica em splash/menu antes de inicializar o
+  engine nativo, dependendo do caminho de boot). Timeout subiu pra 60s —
+  poll (`dl_iterate_phdr` a cada 8ms) é barato numa thread dedicada, não
+  bloqueia nada mais.
+
+## v0.3.2 — 2026-09-22
+
+Revisão forense de 5 agentes em paralelo (OpenCode, hermes, freebuff,
+devin, kilo), cada um com ângulo diferente. Ver mensagem do commit
+`1955810` pra lista completa dos 18 achados reais corrigidos (bugs de
+código, docs/consistência, scripts shell/python) — resumo abaixo.
+
+### Fixed
+- `qsort_strcmp` (loader de mods dinâmicos) deferenciava `char[256]` como
+  `char**` — crash real com 2+ mods dinâmicos instalados.
+- `write()` de snapshot aceitava short-write parcial como sucesso.
+- Registro de callback de hook (`hook_register_prefix/postfix_by_slot`)
+  aceitava função nula sem checar — null-call garantido no dispatcher.
+- `entry_called` do loader dinâmico virava `true` mesmo quando a entry do
+  mod nunca foi chamada de fato (`run_entry == nullptr`).
+- `consecutive_errors` do accept loop do companion nunca resetava — matava
+  o daemon após 21 falhas *totais* na vida do processo, não consecutivas.
+- 2 handlers do companion (`toggle_mod`/`set_mod`) tinham um caminho de
+  erro que não respondia nada ao cliente — travava até timeout de 3s.
+- Redirect de ícone (D16.1) do Mecha-Bun não tinha o mesmo fallback pro
+  original que o redirect do pack (D12) já tinha — ícone ausente no
+  device quebrava o `fopen`, retornando `NULL` pro jogo.
+- 2 links markdown quebrados pro `NOTICE.md`; `.gitignore` com `obj/`
+  duplicado; 4 scripts Python com shebang de execução direta sem `+x`.
+- `bepin-alert.sh`: substring bash-only rodando sob shebang `sh` (dash) —
+  `Bad substitution` real no Termux; `bepin-watchdog.sh`: sem trap pro
+  wake-lock, sem checar `logger`/`python3` ausentes antes de reportar
+  status errado do companion.
+- `deploy.sh` do mechabun: `TERMUX_PY` hardcoded, `stat -c%s` sem fallback
+  BSD, resposta do companion não validada antes de declarar sucesso,
+  arquivos residuais deixados no device após deploy.
+- `d12_transform.py`: 2 validações críticas via `assert` (removido com
+  `python -O`) viraram `raise` explícito.
+
+### Changed
+- Grafia do nome do projeto normalizada pra `bepInEx-termux` em prosa/
+  comentários (mantido o slug real do repo GitHub, `bepinEx-termux`, nos 2
+  scripts Termux que resolvem o path de clone real no disco).
+- Offset de struct no README do mod citado sem contexto de build,
+  corrigido com nota do valor real pro device de teste.
+- Contagem de assertions do README raiz corrigida (232, confirmado
+  rodando o test harness de verdade).
+
+## v0.3.1 — 2026-09-21
+
+### Changed
+- `mods/mechabun/assets/` (ícones + script gerador) movido pra
+  `mods/mechabun/tools/` — repo mais limpo, MD5 dos PNGs idêntico,
+  `deploy.sh` atualizado pro novo caminho, recurso visual (redirect D16.1)
+  funciona igual num clone novo.
+- Mod Mecha-Bun reposicionado na documentação como mod de teste/prova de
+  conceito da infra do bepInEx-termux, não mod de buff pra jogar — zero
+  conteúdo técnico alterado (known issues, offsets, tabela D1-D17).
+
+### Fixed
+- Exemplo de comando `adb push` no README do mod ainda citava o path
+  antigo `assets/`.
+
 ## v0.3.0 — 2026-09-21
 
 ### Added
