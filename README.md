@@ -308,7 +308,7 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 55 casos de teste (232
+gameplay real, zero crash/ANR. Bateria de 55 casos de teste (234
 assertions, contagem real reverificada — compilar e rodar
 `test/selftest_harness.cpp` confirma) do hook lifecycle, do loader de mods dinâmico e do AOB
 pattern scan (`test/selftest_harness.cpp`, 0

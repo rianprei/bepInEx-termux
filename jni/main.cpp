@@ -53,7 +53,7 @@ using zygisk::AppSpecializeArgs;
 using zygisk::Option;
 
 #define LOG_TAG "BCPOC"
-#define BC_LOADER_VERSION "v0.3.4"
+#define BC_LOADER_VERSION "v0.3.6"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
@@ -1168,13 +1168,15 @@ static void load_dynamic_mods() {
     // (sem limite de slot avisado, HOOK_MAX_CALLBACKS=4 por hook), causando
     // dispatch duplicado (ex.: hook de stats aplicando 2x por frame) e,
     // após reloads repetidos, falha silenciosa ao esgotar os 4 slots.
-    // Reset completo aqui casa com a semântica documentada da função
-    // ("re-executando load_dynamic_mods()" no caller) — rebuild total do
-    // zero, não incremental.
-    memset(g_hook_callbacks, 0, sizeof(g_hook_callbacks));
-
     DIR *dir = opendir(BC_MODS_DIR);
     if (dir == nullptr) {
+        // achado real (revisão OpenCode, pós-v0.3.5): opendir pode falhar por
+        // motivo TRANSIENTE (EMFILE, permissão temporária, I/O) sem que os
+        // mods no disco tenham mudado — se o reset de g_hook_callbacks
+        // acontecesse aqui em cima (como na v0.3.5), um mod já ativo perderia
+        // os hooks numa falha passageira, sem re-registro nenhum depois.
+        // Reset fica mais abaixo, só quando a função REALMENTE vai
+        // reconstruir a partir do que achou no disco.
         LOGI("mod loader: %s ausente ou sem acesso — sem mods dinâmicos (normal se não usa)",
              BC_MODS_DIR);
         return;
@@ -1195,6 +1197,17 @@ static void load_dynamic_mods() {
         LOGI("mod loader: %s sem .so — nada pra carregar", BC_MODS_DIR);
         return;
     }
+
+    // achado real (revisão kilo, v0.3.5): esta função é re-executada inteira
+    // a cada sinal de reload_mods (mesmo processo, mesmo dlopen path/handle
+    // já ativo em cache) — sem isto, bc_mod_register() de um mod já
+    // carregado rodava de novo e reempilhava os MESMOS callbacks em
+    // g_hook_callbacks (sem limite de slot avisado, HOOK_MAX_CALLBACKS=4
+    // por hook), causando dispatch duplicado e, após reloads repetidos,
+    // falha silenciosa ao esgotar os 4 slots. Reset só aqui (não no topo da
+    // função) — só roda quando os dois early-returns acima NÃO dispararam,
+    // ou seja, só quando há pelo menos 1 .so real pra (re)carregar.
+    memset(g_hook_callbacks, 0, sizeof(g_hook_callbacks));
 
     // Ordem de descoberta determinística (arquivo) só como desempate — a
     // ordem de CARGA real vem do grafo de dependência (bc_mod_graph_sort),

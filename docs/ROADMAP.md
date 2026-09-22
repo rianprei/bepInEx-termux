@@ -1,6 +1,6 @@
 Ver também: [ROADMAP-COMPETITORS.md](ROADMAP-COMPETITORS.md) — pesquisa de concorrência (fechada, 4/4).
 
-# bepInEx-termux — Termux-centrico: Roadmap + TODOs
+# bepInEx-termux — Termux-centrico: Roadmap (fechado, 11/11)
 
 **Escopo reduzido (2026-09-16):** watchdog Termux:Boot, atalhos Termux:Widget,
 notificação por Termux:API e CLI `bepin` unificado foram descartados a

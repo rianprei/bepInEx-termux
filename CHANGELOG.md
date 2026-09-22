@@ -4,6 +4,45 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
+## v0.3.6 — 2026-09-22
+
+Segunda rodada de revisão: OpenCode + hermes em paralelo (achados
+verificados um pelo outro via freebuff antes de aplicar).
+
+### Fixed
+- **`BC_LOADER_VERSION` desincronizada da tag** (`jni/main.cpp`): v0.3.5
+  foi taggeada com a string ainda em `v0.3.4` (mesmo erro do v0.3.0→v0.3.4
+  se repetindo — a string nunca mais bateu com a tag do dia em que subiu).
+  Agora em `v0.3.6`, casando com esta tag.
+- **Regressão real introduzida pelo próprio fix do v0.3.5**
+  (`jni/main.cpp`, `load_dynamic_mods`): o `memset(g_hook_callbacks, ...)`
+  que resolveu o double-registro em reload rodava ANTES do `opendir()` —
+  se o diretório de mods falhasse por motivo transiente (não só "mods
+  removidos": `EMFILE`, permissão passageira, I/O), a função zerava os
+  callbacks de mods já ativos e retornava sem re-registrar nada. Reset
+  movido pra depois dos dois early-returns — só dispara quando a função
+  vai de fato reconstruir a partir do que achou no disco.
+- **`README.md`**: contagem de assertions do harness (232 → **234**,
+  desatualizada desde os 2 casos novos do v0.3.5).
+- **`docs/ROADMAP.md`**: título "Roadmap + TODOs" não batia mais com o
+  conteúdo (11/11 itens fechados, 0 pendente) — retitulado.
+- **`mods/mechabun/deploy.sh`**: `PACK_SRC_ORIGINAL` não tem mais default
+  de path pessoal hardcoded (repo é público) — vazio por padrão, só
+  funciona com a env setada explicitamente; mesmo comportamento prático
+  de "arquivo ausente" pra quem não é o autor original.
+
+### Verificado sem ação (achados já corretos, confirmado por 2 revisores)
+- Offset `0x9e568`/`0x9e318` no README do mod: já correto (build-id JP
+  explícito + correção em negrito na mesma frase + cross-ref).
+- `bc_repatch_hook`: lógica de referência deliberada, testada pelo
+  harness; `main.cpp` usa implementação própria documentada.
+- Menção a "5 TODOs" do `symbol_scan.cpp` no CHANGELOG v0.3.5: descrição
+  histórica dentro da própria entrada que anuncia a deleção do arquivo,
+  não referência órfã.
+
+Build (`ndk-build -B -j4`, via agente com NDK real): 0 warnings além do
+benigno conhecido. Host harness: 234/234 assertions.
+
 ## v0.3.5 — 2026-09-22
 
 Revisão forense de 5 agentes (OpenCode, hermes, freebuff, devin, kilo) +

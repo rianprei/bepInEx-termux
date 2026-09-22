@@ -85,10 +85,14 @@ fi
 # original (nunca modificado) -- evita versionar/depender de um binario
 # de 57MB que pode ficar stale. Sem o pack no device, o hook de fopen cai
 # no fallback pro original (sem redirect, mod funciona igual sem D12).
-# Overridable via env (repo é público; o default abaixo é a máquina do autor).
-PACK_SRC_ORIGINAL="${PACK_SRC_ORIGINAL:-/home/rianprei/battlecats-mods/BCData/en_server/ImageDataServer_100600_00_en.pack}"
+# achado de review (hermes): default anterior era o path pessoal do autor
+# hardcoded -- repo é público, sem sentido vazar estrutura de disco de quem
+# manteve o projeto. Sem a env setada, PACK_SRC_ORIGINAL fica vazio e o
+# passo abaixo é pulado de forma limpa (mesmo comportamento de "arquivo
+# ausente" que já existia).
+PACK_SRC_ORIGINAL="${PACK_SRC_ORIGINAL:-}"
 PACK_BUILD="$(dirname "$0")/build/ImageDataServer_100600_00_en.pack"
-if [ -f "$PACK_SRC_ORIGINAL" ]; then
+if [ -n "$PACK_SRC_ORIGINAL" ] && [ -f "$PACK_SRC_ORIGINAL" ]; then
     read -r -p "Tambem gerar e enviar pack D12 (animacao True Form)? (digite 'sim') " CONFIRM_D12
     if [ "$CONFIRM_D12" = "sim" ]; then
         mkdir -p "$(dirname "$PACK_BUILD")"
