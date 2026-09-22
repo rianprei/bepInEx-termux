@@ -65,6 +65,12 @@ def scale_frames(text: str, ratio_num: int, ratio_den: int) -> str:
         kf_count = int(lines[i]); out.append(lines[i]); i += 1
         for _ in range(kf_count):
             fields = lines[i].split(",")
+            # achado de review: round() do Python usa banker's rounding
+            # (arredonda .5 pro par mais proximo, nao sempre pra cima) --
+            # com ratio 26/32, ties acontecem em frames == 4 (mod 16) e
+            # arredondam pra baixo nesse caso. Aceito deliberadamente (erro
+            # de <=1 frame, imperceptivel em animacao) -- documentado aqui
+            # pra nao ser confundido com bug se alguem notar o padrao.
             fields[0] = str(round(int(fields[0]) * ratio_num / ratio_den))
             out.append(",".join(fields))
             i += 1
@@ -94,10 +100,17 @@ def build_patched_pack(out_path: str) -> int:
         new_plain = new_text.encode("utf-8")
 
     new_ct = aes_ecb_encrypt(PACK_KEY, pad_to(new_plain, size))
-    assert len(new_ct) == size
+    # achado de review: assert e' removido inteiro com `python -O` -- essas
+    # 2 checagens sao a unica garantia de que o pack gerado nao esta
+    # corrompido antes de ir pro device (defesa em profundidade: o C++
+    # (MECHABUN_D12_PACK_EXPECTED_SIZE) confere de novo, mas nao deveria
+    # ser a UNICA linha de defesa). if/raise explicito nao depende de flag.
+    if len(new_ct) != size:
+        raise ValueError(f"tamanho do ciphertext mudou: {len(new_ct)} != {size}")
 
     # round-trip check before trusting the patch
-    assert unpad(aes_ecb_decrypt(PACK_KEY, new_ct)).decode("utf-8") == new_text
+    if unpad(aes_ecb_decrypt(PACK_KEY, new_ct)).decode("utf-8") != new_text:
+        raise ValueError("round-trip check falhou: decrypt(encrypt(x)) != x")
 
     pack_data[offset:offset + size] = new_ct
     with open(out_path, "wb") as f:

@@ -74,7 +74,12 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
   design "Range 190→250" usada pelo mod desde o início.
 - Função que carrega esse CSV (assinatura AOB de 48 bytes, verificada
   única no binário inteiro) popula uma struct em
-  `bigData + (unitId+2)*0x760 + 0x9e568` — **atenção**: o offset de
+  `bigData + (unitId+2)*0x760 + 0x9e568` (valor RE'd no dump JP 15.6.0,
+  build-id `b94cc0da...` — **o device de teste real usa um build
+  diferente, onde esse offset final é `0x9e318`, não `0x9e568`; ver
+  `STAT_BLOCK_OFF` em `mechabun_mod.cpp` e o "Changed" do CHANGELOG.md**.
+  A parte `(unitId+2)*0x760` do endereçamento não mudou entre builds) —
+  **atenção**: o offset de
   endereçamento do struct usa `unitId+2`, não `unitId` puro (achado via
   decompile real: a função faz `param_2 = param_2 + 2` antes de
   multiplicar pelo stride); o nome do arquivo usa `unitId+1`. Dois

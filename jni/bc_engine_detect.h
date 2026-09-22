@@ -1,6 +1,6 @@
 // bc_engine_detect.h — detecta se o processo atual roda engine Cocos2d-x,
 // SEM saber o nome do jogo de antemão. Parte da generalização pedida pelo
-// usuário (2026-09-16): "bepin-termux tem que se adaptar ao máximo a
+// usuário (2026-09-16): "bepInEx-termux tem que se adaptar ao máximo a
 // qualquer jogo Cocos2d-x, não importa o jogo".
 //
 // Cascata de 3 sinais (pesquisa real hermes, clone de cocos2d/cocos2d-x

@@ -523,7 +523,14 @@ static void handle_toggle_mod(int fd, const char *arg) {
     for (int i = 0; i < BC_SCHEMA_N; i++) {
         if (strcmp(entries[i].name, arg) == 0) { slot = i; break; }
     }
-    if (slot < 0) return;  // impossível (schema completo), mas fail-closed
+    if (slot < 0) {
+        // achado de review: retornava sem responder nada — cliente ficava
+        // travado até o SO_RCVTIMEO/SO_SNDTIMEO de 3s estourar, em vez de
+        // saber na hora que algo bateu no caminho "impossível".
+        const char *e = "error: unknown key (schema mismatch)\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
     bool now_on = !entries[slot].b;
     entries[slot].b = now_on;
     entries[slot].present = true;
@@ -570,7 +577,13 @@ static void handle_set_mod(int fd, const char *name, const char *value) {
     for (int i = 0; i < BC_SCHEMA_N; i++) {
         if (strcmp(entries[i].name, name) == 0) { slot = i; break; }
     }
-    if (slot < 0) return;
+    if (slot < 0) {
+        // mesmo achado de review do handle_toggle_mod: fail-closed sem
+        // resposta deixava o cliente travado até o timeout de 3s.
+        const char *e = "error: unknown key (schema mismatch)\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
     switch (sc->type) {
         case BC_MOD_BOOL: {
             bool b;
@@ -896,6 +909,12 @@ static void *termux_accept_loop(void *) {
     // Loop de aceitação (indefinido até o daemon ser morto)
     while (1) {
         // SOCK_CLOEXEC: fd não vaza pra processos filho.
+        // static aqui fora (não só dentro do if de erro) porque precisa
+        // ser zerado no caminho de SUCESSO logo abaixo — achado de review:
+        // antes só incrementava e nunca resetava, então não contava falhas
+        // CONSECUTIVAS de verdade, e sim o total na vida inteira do daemon,
+        // matando-o depois de 21 falhas transitórias espalhadas em dias.
+        static int consecutive_errors = 0;
         int client = accept4(termux_server, NULL, NULL, SOCK_CLOEXEC);
         if (client < 0) {
             if (errno == EINTR) continue;
@@ -905,7 +924,6 @@ static void *termux_accept_loop(void *) {
             // 100ms de espera dá tempo do kernel liberar recurso; depois
             // de muitas falhas seguidas o processo está mesmo quebrado,
             // então derruba o daemon (mesmo padrão do fix EADDRINUSE).
-            static int consecutive_errors = 0;
             LOGE("accept() failed: %s", strerror(errno));
             if (++consecutive_errors > 20) {
                 LOGE("accept() falhando persistentemente (%d erros seguidos) — daemon encerrando", consecutive_errors);

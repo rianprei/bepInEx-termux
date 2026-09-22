@@ -5,4 +5,3 @@ __pycache__/
 bc-poc-v12-authuid.zip
 *.zip
 libs/
-obj/

@@ -4,7 +4,7 @@
 # por nenhum agente/script desta sessão — script preparado, execução fica
 # pra o usuário decidir e rodar manualmente quando quiser.
 #
-# Requer: device conectado via adb (adb devices), bepinEx-termux já
+# Requer: device conectado via adb (adb devices), bepInEx-termux já
 # instalado e companion rodando (mesmo UID shell/root do dispositivo).
 #
 # Uso: ./deploy.sh
@@ -18,7 +18,8 @@ if [ ! -f "$SO" ]; then
     exit 1
 fi
 
-SIZE=$(stat -c%s "$SO")
+# stat -c%s e' GNU (Linux); -f%z e' BSD/macOS -- tenta os dois.
+SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
 echo "Vai enviar $SO ($SIZE bytes) como $NAME pro device via adb shell."
 echo "Isso escreve em /data/local/tmp/bc_mods/ e sinaliza reload do loader."
 read -r -p "Confirma? (digite 'sim' pra continuar) " CONFIRM
@@ -28,7 +29,9 @@ if [ "$CONFIRM" != "sim" ]; then
 fi
 
 adb push "$SO" "/data/local/tmp/${NAME}.tmp"
-TERMUX_PY="/data/data/com.termux/files/usr/bin/python3"
+# achado de review: hardcoded, sem override -- path padrao do Termux, mas
+# pode divergir por instalacao/variante (F-Droid vs Play Store).
+TERMUX_PY="${TERMUX_PY:-/data/data/com.termux/files/usr/bin/python3}"
 PUSH_SCRIPT="$(mktemp)"
 cat > "$PUSH_SCRIPT" <<EOF
 import socket
@@ -41,7 +44,19 @@ print(s.recv(256).decode())
 EOF
 adb push "$PUSH_SCRIPT" "/data/local/tmp/push_mod.py"
 rm -f "$PUSH_SCRIPT"
-adb shell su -c "$TERMUX_PY /data/local/tmp/push_mod.py" < /dev/null
+# achado de review: antes nao validava a resposta do companion -- "Enviado"
+# aparecia mesmo se o companion respondesse "error: ..." (exit code da adb
+# shell continua 0, so imprime o texto). Agora falha visivelmente se a
+# resposta nao contiver "ok".
+RESPONSE="$(adb shell su -c "$TERMUX_PY /data/local/tmp/push_mod.py" < /dev/null)"
+echo "$RESPONSE"
+# achado de review: push_mod.py e o .tmp do .so ficavam residuais em
+# /data/local/tmp/ apos todo deploy -- limpa do lado do device tambem.
+adb shell "su -c 'rm -f /data/local/tmp/push_mod.py /data/local/tmp/${NAME}.tmp'" || true
+if ! echo "$RESPONSE" | grep -qi "ok"; then
+    echo "erro: companion nao confirmou sucesso (resposta acima) — mod pode nao ter sido adotado" >&2
+    exit 1
+fi
 
 echo "Enviado. Confira com: adb shell logcat -d | grep -i mechabun"
 

@@ -1,4 +1,4 @@
-// bc_mod_api.h — Contrato de API exposto pelo loader do bepin-termux a cada
+// bc_mod_api.h — Contrato de API exposto pelo loader do bepInEx-termux a cada
 // mod .so dinâmico (o "plugin system" do projeto). Este é o header que um
 // autor de mod inclui; o loader (main.cpp) implementa o struct e passa por
 // ponteiro ao entry point do mod.

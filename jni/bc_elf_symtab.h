@@ -1,6 +1,6 @@
 // bc_elf_symtab.h — enumeração de símbolos dinâmicos (.dynsym) de uma lib
 // já carregada em memória, sem dlopen/leitura de arquivo. Parte da
-// generalização do bepin-termux pra "qualquer jogo Cocos2d-x" (pedido do
+// generalização do bepInEx-termux pra "qualquer jogo Cocos2d-x" (pedido do
 // usuário, 2026-09-16): hoje hooka por NOME de símbolo hardcoded
 // (Java_jp_co_ponos_battlecats_MyActivity_appInit); pra jogo desconhecido
 // não dá pra saber o nome de antemão — a única saída é LISTAR os símbolos

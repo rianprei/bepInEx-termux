@@ -1,6 +1,6 @@
 Ver também: [ROADMAP-COMPETITORS.md](ROADMAP-COMPETITORS.md) — pesquisa de concorrência (fechada, 4/4).
 
-# bepin-termux — Termux-centrico: Roadmap + TODOs
+# bepInEx-termux — Termux-centrico: Roadmap + TODOs
 
 **Escopo reduzido (2026-09-16):** watchdog Termux:Boot, atalhos Termux:Widget,
 notificação por Termux:API e CLI `bepin` unificado foram descartados a
@@ -39,7 +39,7 @@ pedido do usuário — não fazem parte do objetivo real. O objetivo é só:
 ## Decisão de design (com base na pesquisa)
 
 Como a sessão RUN_COMMAND é terminal real interativo e o BepInEx no PC não
-aceita input nenhum, bepin-termux pode ir **além** da paridade: REPL na
+aceita input nenhum, bepInEx-termux pode ir **além** da paridade: REPL na
 mesma janela do stream (usuário digita `toggle_mod`/`set_mod`/etc enquanto
 vê o log ao vivo) — vantagem real sobre o PC, não invenção. Sem comando
 novo no companion: cada linha digitada abre uma conexão request/response

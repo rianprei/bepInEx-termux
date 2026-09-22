@@ -16,8 +16,8 @@
 #   python3 bc_log_viewer.py stream
 #
 # Para usar via adb forward (fora do device):
-#   adb forward tcp:9222 localabstract:bc_companion
-#   python3 bc_log_viewer.py --host localhost --port 9222 list_patches
+#   adb forward tcp:17654 localabstract:bc_companion
+#   python3 bc_log_viewer.py --host localhost --port 17654 list_patches
 
 import socket
 import sys

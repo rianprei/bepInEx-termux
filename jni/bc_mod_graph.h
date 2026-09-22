@@ -38,6 +38,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define BC_MOD_NAME_MAX 32     // mesmo limite do bc_mod_entry.name
 #define BC_MOD_DEPS_MAX 4      // máx. de requires/conflicts por mod (domínio pequeno)

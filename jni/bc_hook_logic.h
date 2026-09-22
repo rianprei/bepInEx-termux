@@ -67,7 +67,8 @@ static inline int hook_slot_by_name(const char *name) {
 // Registro (single-thread, antes de install_all). Retorna true/false.
 static inline bool hook_register_prefix_by_slot(HookCallbacks *cbs, int slot,
                                                 HookPrefixFn fn) {
-    if (cbs == nullptr || slot < 0 || slot >= BC_HOOK_NAMES_COUNT) return false;
+    if (cbs == nullptr || fn == nullptr) return false;
+    if (slot < 0 || slot >= BC_HOOK_NAMES_COUNT) return false;
     if (cbs[slot].prefix_n >= HOOK_MAX_CALLBACKS) return false;
     cbs[slot].prefix[cbs[slot].prefix_n++] = fn;
     return true;
@@ -78,7 +79,8 @@ static inline bool hook_register_prefix(HookCallbacks *g_cbs,
 }
 static inline bool hook_register_postfix_by_slot(HookCallbacks *cbs, int slot,
                                                  HookPostfixFn fn) {
-    if (cbs == nullptr || slot < 0 || slot >= BC_HOOK_NAMES_COUNT) return false;
+    if (cbs == nullptr || fn == nullptr) return false;
+    if (slot < 0 || slot >= BC_HOOK_NAMES_COUNT) return false;
     if (cbs[slot].postfix_n >= HOOK_MAX_CALLBACKS) return false;
     cbs[slot].postfix[cbs[slot].postfix_n++] = fn;
     return true;
@@ -93,6 +95,11 @@ static inline bool hook_register_postfix(HookCallbacks *g_cbs,
 // Prefix retorna false → pula orig. Postfix sempre roda e pode ajustar *ret.
 // prefix_ns/postfix_ns opcionais: recebem o overhead (o main.cpp soma em
 // g_hook_overhead_*; aqui só medimos se passado não-null).
+// ATENÇÃO (achado de review forense, não documentado antes): o loop de
+// prefixes abaixo usa `&& run_orig` na condição — um prefix que retorna
+// false não só pula o orig, também PARA de chamar os prefixes seguintes
+// no mesmo slot (curto-circuito). Múltiplos prefixes no mesmo hook não
+// são todos garantidos de rodar.
 static inline uintptr_t hook_dispatch(const char *name,
                                       const HookCallbacks *cb,
                                       jnifn_wide_t orig,
@@ -160,6 +167,16 @@ static inline int bc_unpatch_hook(HookState *states, const char *shortname,
 static inline int bc_repatch_hook(HookState *states, const char *shortname,
                                   HookInstallFn install, void *replacement,
                                   void **backup_storage) {
+    // ATENÇÃO (achado de review forense): esta função NÃO tem nenhum call
+    // site em produção (main.cpp nunca chama bc_repatch_hook) — só é
+    // exercitada por test/selftest_harness.cpp com um install() STUB que
+    // ignora o endereço alvo. O (void*)1 abaixo é um PLACEHOLDER, não um
+    // endereço real: se um futuro caller ligar isto a um install() de
+    // verdade (Dobby), vai tentar instalar hook no endereço 0x1 → SIGSEGV
+    // garantido. Antes de wirar esta função a produção, troque (void*)1
+    // pelo endereço real resolvido (ex.: s->resolved_addr já teria o valor
+    // certo se a resolução tivesse acontecido antes do unpatch — hoje não
+    // há como esta função descobrir um endereço novo sozinha).
     int idx = hook_slot_by_name(shortname);
     if (idx < 0) return -1;
     HookState *s = &states[idx];

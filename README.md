@@ -22,7 +22,7 @@ verificadas** (não memória, não hipótese):
 
 **1. Sobrevive a update de VERSÃO do jogo (hooking por assinatura, não RVA).**
 BepInEx/Harmony hooka por metadata .NET (`Type.GetMethod`), que sobrevive
-recompile porque nome/assinatura não mudam. bepin-termux (nativo, sem
+recompile porque nome/assinatura não mudam. bepInEx-termux (nativo, sem
 runtime gerenciado) usa AOB pattern scan (`jni/bc_pattern_scan.h`) como
 equivalente: procura os bytes da função, não o endereço. Prova real (não
 simulada): dados já capturados do próprio projeto (`tools/battlecats-offsets.json`)
@@ -42,7 +42,7 @@ jogo** (confirmado em instalação real local: `winhttp.dll` e
 `BepInEx\core\BepInEx.Preloader.dll`). Um update/verify-integrity da
 distribuidora (Steam etc.) pode sobrescrever ou remover esses arquivos —
 prática documentada na comunidade BepInEx: reinstalar/revalidar após
-update grande do jogo. bepin-termux é um módulo **Zygisk** (Magisk) que
+update grande do jogo. bepInEx-termux é um módulo **Zygisk** (Magisk) que
 vive fora do storage do app inteiramente (`/data/adb/modules/`) — hooka o
 processo em runtime, nunca escreve dentro do APK/pasta do app. Um update
 de APK (Play Store) não apaga nem precisa tocar no módulo; só pode mudar
@@ -54,7 +54,7 @@ são graváveis (`755`) por qualquer processo rodando como o mesmo usuário
 do SO — sem isolamento entre apps, sem autenticação, qualquer programa
 (inclusive malware) pode substituir uma DLL de plugin ou editar config sem
 pedir permissão nenhuma; é o modelo de permissão de desktop, não tem
-analogia melhor no PC. O canal de controle do bepin-termux
+analogia melhor no PC. O canal de controle do bepInEx-termux
 (`companion.cpp`, socket abstract `@bc_companion`) usa `SO_PEERCRED` —
 autenticação a nível de kernel, não forjável por processo userspace —
 aceitando só UID 0 (root), UID 2000 (shell/adb) ou o UID real do Termux
@@ -138,10 +138,10 @@ Ver
 
 ### 1.2. AOB pattern scan (`jni/bc_pattern_scan.h`) — resiliência a update do jogo
 
-Gap estrutural real entre bepin-termux e BepInEx PC: BepInEx/Harmony hooka
+Gap estrutural real entre bepInEx-termux e BepInEx PC: BepInEx/Harmony hooka
 por **metadata .NET** (`Type.GetMethod(nome, assinatura)`), sobrevive a
 recompiles porque nome/assinatura não mudam mesmo com o binário realocado.
-bepin-termux (Dobby) hooka por **endereço fixo** (RVA em `offsetsdb.h`),
+bepInEx-termux (Dobby) hooka por **endereço fixo** (RVA em `offsetsdb.h`),
 que quebra a cada update do jogo — não existe metadata gerenciada num
 binário nativo ARM64.
 
@@ -308,8 +308,9 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 55 casos de teste (228
-assertions) do hook lifecycle, do loader de mods dinâmico e do AOB
+gameplay real, zero crash/ANR. Bateria de 55 casos de teste (232
+assertions, contagem real reverificada — compilar e rodar
+`test/selftest_harness.cpp` confirma) do hook lifecycle, do loader de mods dinâmico e do AOB
 pattern scan (`test/selftest_harness.cpp`, 0
 falhas na última execução) cobrindo patch/unpatch/repatch, idempotência,
 race entre clientes concorrentes, stress test de 50 ciclos unpatch/repatch
@@ -358,11 +359,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 ## Créditos
 
 - [Dobby](https://github.com/jmpews/Dobby) (jmpews) — inline hook ARM64.
-  Ver [NOTICE.md](NOTICE.md).
+  Ver [NOTICE.md](docs/NOTICE.md).
 - [Zygisk](https://github.com/topjohnwu/Magisk) (topjohnwu/Magisk) —
   mecanismo de injeção em todo processo Zygote-forked.
 
 ## Licença
 
 MIT — ver [LICENSE](LICENSE). O binário redistribuído (`libdobby.a`) mantém
-a licença MIT original do projeto Dobby — ver [NOTICE.md](NOTICE.md).
+a licença MIT original do projeto Dobby — ver [NOTICE.md](docs/NOTICE.md).

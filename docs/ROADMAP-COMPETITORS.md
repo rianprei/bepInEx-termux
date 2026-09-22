@@ -1,4 +1,4 @@
-# Roadmap — bepin-termux vs concorrência real
+# Roadmap — bepInEx-termux vs concorrência real
 
 Pesquisa feita por 3 agentes (hermes, freebuff, OpenCode) via web search + GitHub API
 real (não estimativa). Metodologia: cada concorrente verificado por fonte primária
@@ -30,7 +30,7 @@ categoria específica, **Frida** é um projeto muito maior e mais maduro que
 qualquer coisa aqui catalogada (21,9k★, manutenção diária) — mas resolve um
 problema diferente (instrumentação/pesquisa de segurança geral via
 JS-bridge, não injeção de mod permanente tipo BepInEx/Zygisk); não é
-substituível 1:1 pelo bepin-termux nem vice-versa, categorias distintas,
+substituível 1:1 pelo bepInEx-termux nem vice-versa, categorias distintas,
 comparação direta seria enganosa. Nossa escolha de infraestrutura (Zygisk
 em vez de Riru) já está alinhada com o que sobreviveu no ecossistema — Riru
 foi descontinuado oficialmente a favor de Zygisk.

@@ -1,4 +1,4 @@
-// mechabun_mod.cpp — mod real pro bepinEx-termux: aplica o design "ideal
+// mechabun_mod.cpp — mod real pro bepInEx-termux: aplica o design "ideal
 // comunitário" do Mecha-Bun (#426) documentado em
 // battlecats-mecha-bun-ideal-comunidade.md.
 //
@@ -443,7 +443,13 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_WAVE_LEVEL, 1);
         set_bool_field(fb, COL_WAVE_IS_MINI);
 
-        // D7 Strengthen: ativa a 50% de HP, +50% de dano (150%).
+        // D7 Strengthen: ativa a 50% de HP, +50% de dano (total 150%).
+        // ATENCAO (achado de review, historico real no CHANGELOG): o campo
+        // COL_STRENGTHEN_MULT_PERCENT e' BONUS-percentual (cf. tbcml
+        // Strengthen.multiplier_percent), NAO o total -- por isso o valor
+        // abaixo fica em 50, nunca 150. Uma versao anterior deste mod usou
+        // 150 achando que era "dano total", e isso over-buffou 2.5x na
+        // pratica (ja corrigido, ver CHANGELOG "Changed"). Nao reverter.
         set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
         set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 50);
 
@@ -600,13 +606,19 @@ static orig_fopen_fn g_orig_fopen = nullptr;
 
 static FILE *hooked_fopen(const char *path, const char *mode) {
     if (path != nullptr) {
+        // achado de review forense: os 2 redirects de icon abaixo faziam
+        // return incondicional do fopen redirecionado, sem o mesmo
+        // fallback-pro-original que o pack (abaixo) ja tinha (achado de
+        // review rodada 2) -- se o icon custom nao foi deployado no
+        // device, isso retornava NULL pro jogo (fopen falha), em vez de
+        // cair pro fopen(path, mode) original no fim da funcao.
         if (strstr(path, "uni426_s00.png") != nullptr) {
-            return g_orig_fopen(MECHABUN_ASSET_DIR "uni426_s00.png", mode);
-        }
-        if (strstr(path, "udi426_s.png") != nullptr) {
-            return g_orig_fopen(MECHABUN_ASSET_DIR "udi426_s.png", mode);
-        }
-        if (strstr(path, MECHABUN_D12_PACK_NAME) != nullptr) {
+            FILE *f = g_orig_fopen(MECHABUN_ASSET_DIR "uni426_s00.png", mode);
+            if (f != nullptr) return f;
+        } else if (strstr(path, "udi426_s.png") != nullptr) {
+            FILE *f = g_orig_fopen(MECHABUN_ASSET_DIR "udi426_s.png", mode);
+            if (f != nullptr) return f;
+        } else if (strstr(path, MECHABUN_D12_PACK_NAME) != nullptr) {
             // Fallback: se o pack modificado nao foi deployado no device,
             // usa o original -- nunca retorna NULL pro jogo (achado de
             // review, rodada 2).

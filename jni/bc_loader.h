@@ -116,11 +116,14 @@ static inline bc_load_status bc_loader_load_one(const bc_loader_ops *ops,
         return BC_LOAD_ERR_NOSYM;
     }
     bool registered = true;
-    if (ops->run_entry != nullptr) registered = ops->run_entry(api, sym);
+    bool ran_entry = ops->run_entry != nullptr;
+    if (ran_entry) registered = ops->run_entry(api, sym);
     if (out != nullptr) {
         out->status = registered ? BC_LOAD_OK : BC_LOAD_INACTIVE;
         out->handle = h;
-        out->entry_called = true;
+        // achado de review: antes marcava true sempre, mesmo quando
+        // ops->run_entry era nullptr e a entry NUNCA foi chamada de fato.
+        out->entry_called = ran_entry;
         out->path = path;
     }
     return out != nullptr ? out->status : (registered ? BC_LOAD_OK : BC_LOAD_INACTIVE);

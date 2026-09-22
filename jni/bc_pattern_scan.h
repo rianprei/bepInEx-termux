@@ -1,11 +1,11 @@
 // bc_pattern_scan.h — AOB (array-of-bytes) signature scan, a resposta nativa
-// ao gap estrutural real entre bepin-termux e BepInEx PC:
+// ao gap estrutural real entre bepInEx-termux e BepInEx PC:
 //
 //   BepInEx/Harmony hooka por METADATA .NET (Type.GetMethod(name, sig)) —
 //   sobrevive recompile porque nomes/assinaturas de método não mudam mesmo
 //   quando o compilador realoca tudo (AccessTools.cs:596, PatchTools.cs).
 //
-//   bepin-termux (Dobby) hooka por ENDEREÇO FIXO (offsetsdb.h, RVA por
+//   bepInEx-termux (Dobby) hooka por ENDEREÇO FIXO (offsetsdb.h, RVA por
 //   versão do jogo) — quebra a cada update, porque não existe metadata
 //   gerenciada num binário nativo ARM64.
 //

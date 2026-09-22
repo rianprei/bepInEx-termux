@@ -1030,7 +1030,10 @@ static void write_patches_snapshot(unsigned seq) {
     int tfd = mkstemp(tmp);
     if (tfd < 0) return;
     ssize_t w = write(tfd, content, (size_t)hw);
-    if (w >= 0 && fsync(tfd) == 0)
+    // w == hw (não só w >= 0): write() pode fazer short-write parcial e
+    // ainda retornar >= 0 — aceitar isso publicaria um snapshot truncado
+    // via rename atômico, quebrando a garantia que o comentário promete.
+    if (w == (ssize_t)hw && fsync(tfd) == 0)
         rename(tmp, BC_PATCHES_PATH);  // rename é atômico em POSIX
     else
         unlink(tmp);
@@ -1119,7 +1122,12 @@ static bool mod_entry_runner(void *api, void *sym) {
 }
 
 static int qsort_strcmp(const void *a, const void *b) {
-    return strcmp(*(const char *const *)a, *(const char *const *)b);
+    // a/b sao ponteiros pra ELEMENTOS do array names[64][256] (char[256]
+    // cada), nao ponteiros pra char* -- achado de review forense: a
+    // dereferencia extra (const char *const *) lia os 8 primeiros bytes
+    // do nome do arquivo como se fossem um ENDERECO e tentava ler string
+    // dali, crash garantido com 2+ mods (qsort so compara com 1+ elemento).
+    return strcmp((const char *)a, (const char *)b);
 }
 
 // Carrega o manifest (bc_mod_manifest) de um .so já dlopen'd, se exportado.
