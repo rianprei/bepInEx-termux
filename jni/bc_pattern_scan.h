@@ -45,6 +45,10 @@ extern "C" {
 // mask[i] == 0  → byte[i] é wildcard, casa qualquer valor (bytes de endereço
 //                 relativo — ex.: operando de adrp/bl mudam entre builds)
 // mask[i] != 0  → byte[i] tem que casar exatamente pattern[i]
+// Nota (achado no review do OpenCode): é 0/não-zero, NÃO a convenção de
+// string "xx??xx" de Cheat Engine/Frida — preencher mask com os bytes
+// ASCII 'x'(0x78)/'?'(0x3F) funcionaria por acidente (ambos não-zero),
+// não por design. Use 0 e 1 explícitos.
 typedef struct bc_pattern {
     uint8_t bytes[BC_PATTERN_MAX_BYTES];
     uint8_t mask[BC_PATTERN_MAX_BYTES];

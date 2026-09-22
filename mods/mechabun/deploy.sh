@@ -28,16 +28,20 @@ if [ "$CONFIRM" != "sim" ]; then
 fi
 
 adb push "$SO" "/data/local/tmp/${NAME}.tmp"
-adb shell "run-as $(adb shell getprop debug.bc_poc.termux_pkg 2>/dev/null || echo com.termux) \
-    python3 -c \"
+TERMUX_PY="/data/data/com.termux/files/usr/bin/python3"
+PUSH_SCRIPT="$(mktemp)"
+cat > "$PUSH_SCRIPT" <<EOF
 import socket
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect('\\0bc_companion')
+s.connect('\0bc_companion')
 s.sendall(b'push_mod ${NAME} ${SIZE}\n')
 with open('/data/local/tmp/${NAME}.tmp', 'rb') as f:
     s.sendall(f.read())
 print(s.recv(256).decode())
-\""
+EOF
+adb push "$PUSH_SCRIPT" "/data/local/tmp/push_mod.py"
+rm -f "$PUSH_SCRIPT"
+adb shell su -c "$TERMUX_PY /data/local/tmp/push_mod.py" < /dev/null
 
 echo "Enviado. Confira com: adb shell logcat -d | grep -i mechabun"
 
@@ -57,5 +61,26 @@ if [ -f "$ICON1" ] && [ -f "$ICON2" ]; then
         echo "Icons enviados."
     else
         echo "Icons nao enviados (opcional, mod funciona igual sem eles)."
+    fi
+fi
+
+# D12 — pack de animacao (True Form attack, 426_s01, ciclo 32f->26f).
+# Regenerado a cada deploy via tools/d12_transform.py a partir do pack
+# original (nunca modificado) -- evita versionar/depender de um binario
+# de 57MB que pode ficar stale. Sem o pack no device, o hook de fopen cai
+# no fallback pro original (sem redirect, mod funciona igual sem D12).
+# Overridable via env (repo é público; o default abaixo é a máquina do autor).
+PACK_SRC_ORIGINAL="${PACK_SRC_ORIGINAL:-/home/rianprei/battlecats-mods/BCData/en_server/ImageDataServer_100600_00_en.pack}"
+PACK_BUILD="$(dirname "$0")/build/ImageDataServer_100600_00_en.pack"
+if [ -f "$PACK_SRC_ORIGINAL" ]; then
+    read -r -p "Tambem gerar e enviar pack D12 (animacao True Form)? (digite 'sim') " CONFIRM_D12
+    if [ "$CONFIRM_D12" = "sim" ]; then
+        mkdir -p "$(dirname "$PACK_BUILD")"
+        python3 "$(dirname "$0")/tools/d12_transform.py" "$PACK_BUILD"
+        adb push "$PACK_BUILD" "/data/local/tmp/pack_d12_tmp"
+        adb shell "su -c 'mv /data/local/tmp/pack_d12_tmp /data/local/tmp/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack && chmod 666 /data/local/tmp/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack'"
+        echo "Pack D12 enviado."
+    else
+        echo "Pack D12 nao enviado (fallback do hook usa pack original, sem redirect)."
     fi
 fi

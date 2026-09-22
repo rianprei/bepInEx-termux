@@ -5,7 +5,58 @@ de frame nem exemplo — mexe em stat de unidade real). Aplica o design
 "ideal comunitário" do Mecha-Bun (#426) documentado em
 `battlecats-mecha-bun-ideal-comunidade.md`.
 
-## Como funciona
+## Como o mod funciona, em partes
+
+**Parte 1 — Carregamento.** `.so` vai pra `/data/local/tmp/bc_mods/`. O
+framework `zygisk-bc-poc` injeta no processo do jogo via zygisk, `dlopen`
+o `.so`, chama `bc_mod_register(api)`. Essa função resolve a assinatura
+AOB do loader de unit CSV (`resolve_pattern`) e instala um hook nela via
+Dobby (`install_hook`) — tudo em memória do processo, nada no disco do
+jogo.
+
+**Parte 2 — Stats (D1-D14, D16).** O hook roda depois da função original
+(pega os dados já carregados), confere `unit_id == 426`, e sobrescreve
+campos `int32` direto na struct do jogo (offsets vindos do tbcml, fonte
+primária) — HP, ATK, range, recarga, imunidades, etc, nas até 3 formas
+que o Mecha-Bun realmente tem (Normal/Evolved/True). **ACHADO CRÍTICO:
+vários campos são escritos corretamente no struct mas NÃO TÊM LEITOR
+no jogo** — D3 (range), D5 (recharge), D9 (behemoth slayer), D11 (sage
+slayer) e a parte de ATK do D2 **não fazem efeito em batalha real hoje**,
+apesar do mod escrever certo. Marcaram-se como "implementado no struct,
+mas SEM efeito confirmado em batalha real (root cause: struct sem leitor,
+ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente".
+Detalhe campo-a-campo na tabela "Índices reais" abaixo.
+
+**Parte 3 — Ícones (D16.1).** Um segundo hook, em `fopen`, intercepta os
+paths `uni426_s00.png` (ícone de deploy) e `udi426_s.png` (ícone de
+upgrade) e devolve arquivo de `/data/local/tmp/bc_mods/mechabun_assets/`
+em vez do original — imagens geradas a partir da arte fã-feita do
+usuário (`gen_icons.py`).
+
+**Parte 4 — Animação de ataque da True Form (D12).** O mesmo hook de
+`fopen` também intercepta o pack inteiro `ImageDataServer_100600_00_en.pack`
+e devolve uma cópia byte-idêntica ao original, exceto a janela cifrada de
+um único clipe (`426_s01.maanim`, a animação de ataque da True Form) —
+keyframes escalados por 26/32 pra encurtar o ciclo (32f→26f), pedido da
+comunidade. Todas as ~15.800 outras entradas do pack ficam intocadas.
+Gerado sob demanda por `tools/d12_transform.py` a partir do pack
+original (nunca sobrescrito).
+
+**Parte 5 — Deploy.** `deploy.sh`: `.so` vai via `push_mod` (socket do
+companion); ícones e pack D12 vão via `adb push` direto (arquivos
+estáticos, sem protocolo especial) — cada passo pede confirmação
+separada, nada roda sozinho.
+
+**Parte 6 — Failsafes.** Guarda de idempotência evita double-hook num
+hot-reload; se os assets (ícones/pack) não estiverem no device, os
+hooks caem no arquivo original sem crashar; o pack D12 tem checagem de
+tamanho antes de ser confiado (pega push incompleto/corrompido).
+
+Zero arquivo do jogo (APK/OBB/save) é escrito em qualquer parte deste
+fluxo — tudo acontece por redirecionamento de `fopen` pra cópias
+próprias do mod.
+
+## Como funciona (engenharia reversa — detalhe histórico)
 
 Engenharia reversa real (Ghidra 12.1 headless + radare2, `libnative-lib.so`
 JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
@@ -47,25 +98,25 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 
 ## Índices reais (fonte: tbcml, não mais o doc com erro)
 
-| Campo | Índice | Ação |
-|---|---|---|
-| HP | 0 | ×1.8 (+80%) |
-| ATK | 3 | ×1.8 (+80%) |
-| Speed | 2 | não mexido (design mantém) |
-| Attack Interval | 4 | ×26/32 (32f→26f) |
-| Range | 5 | ×250/190 (190→250) |
-| Recharge | 7 | ×2136/2536 (-400f) |
-| Wave Immunity | 46 | seta 1 |
-| Knockback Immunity | 48 | seta 1 |
-| Surge Immunity | 91 | seta 1 |
-| Behemoth Slayer | 105 | seta 1 |
-| Wave prob/level/mini | 35/36/94 | 10% / lv1 / mini=1 (D6) |
-| Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) |
-| Dodge prob/frames | 84/85 | 20% / 30f=1s (D8) |
-| Sage Slayer | 111 | seta 1 (D11) |
-| Explosion Immunity | 116 | seta 1 (D13) |
-| Warp Immunity | 75 | seta 1 (D14) |
-| Toxic Immunity | 90 | seta 1 (opcional, design 3.2) |
+| Campo | Índice | Ação | Leitor confirmado |
+|---|---|---|---|
+| HP | 0 | ×1.8 (+80%) para forms 0/1; ×325/54 (~6.02×) para True Form (D16) | ✅ |
+| ATK | 3 | ×1.8 (+80%) | ❌ **SEM LEITOR** — não afeta dano real |
+| Speed | 2 | não mexido (design mantém) | ✅ |
+| Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
+| Range | 5 | ×250/190 (190→250) | ❌ **SEM LEITOR** — D3 sem efeito |
+| Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
+| Wave Immunity | 46 | seta 1 | ✅ |
+| Knockback Immunity | 48 | seta 1 | ✅ |
+| Surge Immunity | 91 | seta 1 | ✅ |
+| Behemoth Slayer | 105 | seta 1 | ❌ **SEM LEITOR** — D9 sem efeito |
+| Wave prob/level/mini | 35/36/94 | 10% / lv1 / mini=1 (D6) | ✅ |
+| Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
+| Dodge prob/frames | 84/85 | 20% / 30f=1s (D8) | ✅ |
+| Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
+| Explosion Immunity | 116 | seta 1 | ✅ |
+| Warp Immunity | 75 | seta 1 | ✅ |
+| Toxic Immunity | 90 | seta 1 (opcional, design 3.2) | ✅ |
 
 ## Cobertura do desejo da comunidade (D1-D17)
 
@@ -75,15 +126,15 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 |---|---|---|
 | D1 | Surge Immunity | ✅ implementado |
 | D2 | HP Up 80% | ✅ implementado |
-| D3 | Range +60 | ✅ implementado |
+| D3 | Range +60 | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D4 | Knockback Immunity | ✅ implementado |
-| D5 | Cooldown -400f | ✅ implementado |
+| D5 | Cooldown -400f | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D6 | Mini-wave | ✅ implementado |
 | D7 | Strengthen 50%@50%HP | ✅ implementado |
 | D8 | Dodge 20%/1s | ✅ implementado |
-| D9 | Behemoth Slayer | ✅ implementado |
+| D9 | Behemoth Slayer | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D10 | Wave Immunity | ✅ implementado |
-| D11 | Sage Slayer | ✅ implementado |
+| D11 | Sage Slayer | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D12 | Attack Speed Up | ✅ implementado (metade — ver Backswing abaixo) |
 | D13 | Explosion Immunity | ✅ implementado |
 | D14 | Warp Immunity | ✅ implementado |
@@ -426,21 +477,32 @@ suposição rotulada**:
 - HP, ATK — multiplicar o raw por 1.8 propaga +80% pro stat final
   calculado pelo jogo, seja qual for a curva de `unitlevel.csv` aplicada
   depois (curva multiplicativa preserva proporção).
-- Attack Interval, Recharge — **fórmula confirmada exata** via tbcml
+  **⚠️ SEM LEITOR CONFIRMADO** — ATK escrito no struct mas **não afeta
+  dano real** (D2 é apenas HP Up 80%; ATK não tem leitor no jogo,
+  ver `context/battlecats-mechabun-atk-dead-struct.md`).
+- Recharge — **fórmula confirmada exata** via tbcml
   (`unit.py:126-136`, `Frames.from_pair_frames`): frames reais = raw × 2
   ("pair frames"). Não é suposição — é o código de conversão real da
   lib de modding, transform linear provado.
+  **⚠️ SEM LEITOR CONFIRMADO** — D5 (recharge) escrito no struct mas sem
+  efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
 - Range — **confirmado sem transform** via tbcml (`cats.py:332`,
   `self.range = raw_data[5]`, sem wrapper nenhum): valor final = raw
   direto. Escalar raw por 250/190 dá final=250 exato, não aproximado.
+  **⚠️ SEM LEITOR CONFIRMADO** — D3 (range) escrito no struct mas sem
+  efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
 - Imunidades e Behemoth Slayer — bool flags diretos (`tbcml`
   `unit_bool()` = `bool(value)`, 0=false/qualquer-não-zero=true), sem
   ambiguidade.
+  **⚠️ SEM LEITOR CONFIRMADO** — D9 (behemoth slayer) escrito no struct mas sem
+  efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
 - Sage Slayer (D11, índice 111) e Explosion Immunity (D13, índice 116)
   — confirmados via pesquisa dedicada (OpenCodePOCOC75) contra tbcml e
   dados reais de outras unidades (BCData `unit781.csv` col 111=1,
   `unit780`/`unit784.csv` col 116), mesmo padrão bool das outras
   imunidades.
+  **⚠️ SEM LEITOR CONFIRMADO** — D11 (sage slayer) escrito no struct mas sem
+  efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
 - Mini-wave (D6), Strengthen (D7), Dodge (D8) — `tbcml` (`unit.py`
   classes `Wave`/`Strengthen`/`Dodge`) confirma os índices e que `Prob`
   é percentual direto (`unit.py:164-181`, sem wrapper) — valores do

@@ -243,6 +243,17 @@ padrão, mesmo comportamento confirmado em `DiskLogListener.cs`). Log
 nativo do próprio jogo (não só do módulo) é unificado no mesmo arquivo via
 bridge de `logcat` — ver `ROADMAP.md` Fase 3.
 
+### Formato das linhas de log
+
+`[HH:MM:SS] [Nível   :    Fonte] corpo` — nível alinhado à esquerda em 7,
+fonte à direita em 10, mesmo layout do `LogEventArgs.ToString()` do BepInEx
+(`[Level,-7:Source,10]`). Duas diferenças deliberadas: (1) timestamp na
+frente (BepInEx não mostra hora em nenhum sink real); (2) cada mod dinâmico
+loga com seu próprio nome como fonte (equivalente ao `ManualLogSource` por
+plugin do BepInEx), extraído da convenção `"[nome] mensagem"`. Níveis
+`Fatal|Error|Warning|Message|Info` por padrão, sem `Debug` — mesmos defaults
+de `[Logging.Console]`/`[Logging.Disk]` do BepInEx.
+
 ## Build
 
 Requer o NDK (usei o bundle do próprio Magisk, mas qualquer NDK recente

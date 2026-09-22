@@ -436,6 +436,13 @@ static FILE *g_log_file = nullptr;
 // concorrentes se sobrescrevendo em vez de acrescentar. pthread_once
 // garante exatamente 1 execução real, concorrentes esperam a 1ª terminar.
 static pthread_once_t g_log_file_once = PTHREAD_ONCE_INIT;
+// Trava o par fwrite+fflush em log_file_write — hooks disparam de varias
+// threads do jogo, sem isso duas linhas podem se intercalar no arquivo
+// (achado real na revisao, antes catalogado como aceitavel/cosmetico;
+// usuario pediu pra corrigir tambem esses). pthread_mutex_t puro, NAO
+// std::mutex — <mutex> puxa runtime C++ estatico com APP_STL=c++_static
+// e inflou o .so do mechabun de 9KB pra 333KB nessa mesma sessao.
+static pthread_mutex_t g_log_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void log_file_open() {
     char path[64];
@@ -454,13 +461,18 @@ static void log_file_open() {
 static void log_file_write(const char *line, int len) {
     pthread_once(&g_log_file_once, log_file_open);
     if (g_log_file == nullptr) return;
-    // fwrite/fflush em si não são thread-safe pra chamadas concorrentes no
-    // MESMO FILE* (podem intercalar bytes de linhas diferentes) — aceitável
-    // aqui: pior caso é uma linha de log espremida com outra, nunca corrompe
-    // o arquivo/crasha, e o stream ao vivo (canal principal) não tem esse
-    // problema (send() é atômico por datagrama para linhas desse tamanho).
+    // fwrite/fflush no MESMO FILE* de threads diferentes podem intercalar
+    // bytes de linhas distintas — trava o par pra cada chamada ser atomica.
+    // (Achado na revisao: o stream ao vivo usa SOCK_STREAM, nao SOCK_DGRAM
+    // -- companion.cpp setup_abstract_socket() -- entao "atomico por
+    // datagrama" era termo errado. O motivo real de nao intercalar e que
+    // um unico send() que cabe inteiro no buffer do socket copia sob o lock
+    // interno do kernel pro socket, sem interrupcao por outro send()
+    // concorrente na MESMA linha; nao e' garantia POSIX de datagrama.)
+    pthread_mutex_lock(&g_log_file_mutex);
     fwrite(line, 1, (size_t)len, g_log_file);
     fflush(g_log_file);
+    pthread_mutex_unlock(&g_log_file_mutex);
 }
 
 static void stream_send_prefixed(const char *level, const char *source,
@@ -474,12 +486,15 @@ static void stream_send_prefixed(const char *level, const char *source,
     time_t now = time(nullptr);
     struct tm tmv;
     localtime_r(&now, &tmv);
-    char line[224];
+    char line[448];
     // Formato "[Nível,-7:Fonte,10]" — real, fonte: BepInEx LogEventArgs.cs
     // (nível alinhado à esquerda em 7, fonte alinhada à direita em 10).
-    // Timestamp é melhoria nossa sobre o original (BepInEx console não
-    // mostra hora ao vivo, só o LogOutput.log grava — aqui vem de graça
-    // porque estamos streamando por rede, não lendo arquivo depois).
+    // Timestamp é melhoria nossa sobre o original — BepInEx NÃO mostra hora
+    // em nenhum sink real (nem ConsoleLogListener.cs nem DiskLogListener.cs;
+    // os dois usam eventArgs.ToString()/ToStringLine(), sem hora). Aqui vai
+    // pros dois (stream + disco) de propósito: já temos a wall-clock à mão
+    // e queremos correlacionar linha do mod com o logcat do jogo (que já
+    // tem timestamp próprio) sem precisar casar por ordem de chegada.
     int len = snprintf(line, sizeof(line), "[%02d:%02d:%02d] [%-7s:%10s] %s\n",
                        tmv.tm_hour, tmv.tm_min, tmv.tm_sec, level, source, body);
     if (len < 0) return;
@@ -581,13 +596,30 @@ static void publish_event(const char *name, unsigned n,
 
 // Streaming de linha livre (chamada fria — build-id mismatch, DORMANT) —
 // aceita formato printf. Usa vsnprintf, custo aceitável fora do hot path.
+// body[384]: mensagens reais de erro (ex. STAT_BLOCK_OFF mismatch) passam
+// de 300 chars — 160 truncava (achado real, confirmado no capture ao vivo).
+static void publish_log_v(const char *level, const char *source, const char *fmt, va_list ap) {
+    char body[384];
+    vsnprintf(body, sizeof(body), fmt, ap);
+    stream_send_prefixed(level, source, body);
+}
+
 static void publish_log(const char *level, const char *fmt, ...) {
-    char body[160];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(body, sizeof(body), fmt, ap);
+    publish_log_v(level, "BCPOC", fmt, ap);
     va_end(ap);
-    stream_send_prefixed(level, "BCPOC", body);
+}
+
+// Como publish_log, mas com Source explícito — BepInEx real dá a cada
+// plugin seu próprio ManualLogSource nomeado (Logger.CreateLogSource),
+// em vez de um source genérico fixo pra tudo. Usar pro banner
+// ("Preloader") e pra mensagens já identificadas por mod/shortname.
+static void publish_log_src(const char *level, const char *source, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    publish_log_v(level, source, fmt, ap);
+    va_end(ap);
 }
 
 static uintptr_t hook_std(const char *name, jnifn_wide_t orig,
@@ -703,7 +735,7 @@ static void bc_log_mod_reject(const char *name, enum bc_mod_status st) {
         (st == BC_MOD_REJ_CYCLE)    ? "ciclo de requires (grupo insatisfazível)" :
                                       "status desconhecido";
     LOGE("[mod-graph] %s: NÃO carregado — %s", name, why);
-    publish_log("Error", "[mod-graph] %s rejeitado: %s", name, why);
+    publish_log_src("Error", name, "[mod-graph] rejeitado: %s", why);
 }
 
 // Resolve a ordem de carga dos PLANS[] respeitando requires/conflicts.
@@ -779,7 +811,7 @@ static bool try_install(HookPlan *p) {
     // ficar auditável no logcat.
     if (!hook_enabled(p->shortname)) {
         LOGI("[%s] desabilitado por config (bc_mods.conf) — pulando", p->shortname);
-        publish_log("Info", "[%s] desabilitado por config — pulando", p->shortname);
+        publish_log_src("Info", p->shortname, "desabilitado por config — pulando");
         return false;
     }
     // Pattern 12: SDK gate — skip hooks that require a newer Android than
@@ -835,7 +867,7 @@ static bool try_install(HookPlan *p) {
         return false;
     }
     LOGI("hook instalado: %s", p->shortname);
-    publish_log("Info", "[%s] hook instalado", p->shortname);
+    publish_log_src("Info", p->shortname, "hook instalado");
     return true;
 }
 
@@ -866,7 +898,7 @@ static bool unpatch_hook(const char *shortname) {
     }
     if (p == nullptr) {
         LOGW("[unpatch] hook desconhecido: %s", shortname);
-        publish_log("Warning", "[unpatch] hook desconhecido: %s", shortname);
+        publish_log_src("Warning", shortname, "[unpatch] hook desconhecido");
         return false;
     }
     // Reusa o endereço já resolvido (st.resolved_addr) — NUNCA re-resolve por
@@ -878,17 +910,17 @@ static bool unpatch_hook(const char *shortname) {
     if (rc < 0) {
         if (*p->backup == nullptr) {
             LOGI("[unpatch] %s: já desativado (backup null)", p->shortname);
-            publish_log("Info", "[%s] já desativado (backup null)", p->shortname);
+            publish_log_src("Info", p->shortname, "já desativado (backup null)");
             return true;  // idempotente
         }
         LOGE("[unpatch] %s: não desativou (sem resolved ou DobbyDestroy falhou)", p->shortname);
-        publish_log("Error", "[unpatch] %s: não desativou", p->shortname);
+        publish_log_src("Error", p->shortname, "[unpatch] não desativou");
         return false;
     }
     // Propagate state real de volta pro plano (header zerou o backup do slot).
     *p->backup = (jnifn_wide_t)(uintptr_t)st[hook_slot_by_name(shortname)].backup;
     LOGI("[unpatch] %s: hook removido (codepath original restaurado)", p->shortname);
-    publish_log("Info", "[%s] hook removido", p->shortname);
+    publish_log_src("Info", p->shortname, "hook removido");
     return true;
 }
 
@@ -906,21 +938,21 @@ static bool repatch_hook(const char *shortname) {
     }
     if (p == nullptr) {
         LOGW("[repatch] hook desconhecido: %s", shortname);
-        publish_log("Warning", "[repatch] hook desconhecido: %s", shortname);
+        publish_log_src("Warning", shortname, "[repatch] hook desconhecido");
         return false;
     }
     // Já está instalado (backup != null) → nada a fazer, idempotente.
     if (*p->backup != nullptr) {
         LOGI("[repatch] %s: já instalado (backup != NULL) — nada a fazer", p->shortname);
-        publish_log("Info", "[%s] já instalado — nada a fazer", p->shortname);
+        publish_log_src("Info", p->shortname, "já instalado — nada a fazer");
         return true;
     }
     // reinstala SÓ este plano (try_install refaz self-test + DobbyHook).
     bool ok = try_install(p);
     if (ok) {
-        publish_log("Info", "[%s] hook reinstalado (repatch)", p->shortname);
+        publish_log_src("Info", p->shortname, "hook reinstalado (repatch)");
     } else {
-        publish_log("Error", "[%s] repatch falhou", p->shortname);
+        publish_log_src("Error", p->shortname, "repatch falhou");
     }
     return ok;
 }
@@ -1047,11 +1079,36 @@ static bool mod_api_install_hook(void *target, void *replacement, void **orig_ou
     return true;
 }
 static void mod_api_log(bc_log_level level, const char *msg) {
+    // Achado real na revisao (devin + hermes, convergiram): mod malicioso/com
+    // bug podia chamar api->log(level, nullptr) e crashar em msg[0] abaixo.
+    if (msg == nullptr) msg = "(mensagem nula)";
     switch (level) {
-        case BC_LOG_WARN:  LOGW("[mod] %s", msg); publish_log("Warning", "[mod] %s", msg); break;
-        case BC_LOG_ERROR: LOGE("[mod] %s", msg); publish_log("Error", "[mod] %s", msg); break;
-        default:            LOGI("[mod] %s", msg); publish_log("Info", "[mod] %s", msg); break;
+        case BC_LOG_WARN:  LOGW("[mod] %s", msg); break;
+        case BC_LOG_ERROR: LOGE("[mod] %s", msg); break;
+        default:            LOGI("[mod] %s", msg); break;
     }
+    const char *lvl = (level == BC_LOG_WARN) ? "Warning" : (level == BC_LOG_ERROR) ? "Error" : "Info";
+    // Convenção já usada por todo mod dinâmico: msg começa com "[nome_do_mod] ".
+    // Extrai como Source (BepInEx real dá a cada plugin seu próprio
+    // ManualLogSource nomeado — Logger.CreateLogSource) em vez do source
+    // genérico fixo "BCPOC" pra toda mensagem de todo mod. Buffer é local
+    // (stack), não static — thread-safe sem lock, cada chamada tem o seu.
+    const char *source = "BCPOC";
+    const char *body = msg;
+    if (msg[0] == '[') {
+        const char *close = strchr(msg, ']');
+        char name_buf[32];
+        if (close != nullptr && close > msg + 1 && (size_t)(close - msg - 1) < sizeof(name_buf)) {
+            size_t namelen = (size_t)(close - msg - 1);
+            memcpy(name_buf, msg + 1, namelen);
+            name_buf[namelen] = '\0';
+            const char *rest = close + 1;
+            while (*rest == ' ' || *rest == '\t') rest++;
+            publish_log_src(lvl, name_buf, "%s", rest);
+            return;
+        }
+    }
+    publish_log_src(lvl, source, "%s", body);
 }
 
 // run_entry real: sym já foi resolvido via dlsym(handle, "bc_mod_register")
@@ -1321,12 +1378,23 @@ static void *event_thread(void *) {
     // Banner estilo BepInEx (achado freebuff: Chainloader imprime "BepInEx
     // X.Y.Z - <game>" em Message no início do carregamento) — nosso
     // equivalente: banner do módulo antes de qualquer instalação.
-    publish_log("Message", "BC POC Zygisk %d hooks disponíveis — iniciando instalação", N_PLANS);
+    // Ground-truth checado (nao suposto): banner inicial real do BepInEx usa
+    // source "Preloader" (InternalPreloaderLogger.cs:7 CreateLogSource("Preloader"),
+    // consumido por ChainloaderLogHelper.PrintLogInfo via param `log`) — NAO
+    // "Chainloader" (esse nome so aparece dentro de MENSAGENS tipo "Chainloader
+    // startup complete", nunca como Source; confirmado, zero
+    // CreateLogSource("Chainloader") em todo BepInEx.Android/).
+    publish_log_src("Message", "Preloader", "BC POC Zygisk %d hooks disponíveis — iniciando instalação", N_PLANS);
     start_logcat_bridge();  // unifica log nativo do jogo no mesmo canal (1x por sessão)
     // Opção A (§8): valida o build ANTES de qualquer instalação.
     g_build_id_resolved.store(verify_build_id(TARGET_LIB), std::memory_order_relaxed);
     install_all();
     LOGI("state: %s", g_dormant.load() ? "DORMANT" : "ACTIVE");
+    // Ground-truth: "Chainloader startup complete" real vai por Logger.Log()
+    // (BaseChainloader.cs:344), que roteia pra InternalLogSource = source
+    // "BepInEx" (Logger.cs:23) — "Chainloader" ali e' so texto da MENSAGEM,
+    // nao o Source. Nosso equivalente do source generico interno e' "BCPOC"
+    // (default do publish_log), nao "Chainloader" — revertido daqui.
     publish_log("Message", "instalação concluída — state: %s", g_dormant.load() ? "DORMANT" : "ACTIVE");
     // Mods dinâmicos DEPOIS dos hooks estáticos — resolve_symbol() já funciona.
     load_dynamic_mods();
