@@ -1,4 +1,4 @@
-# bepin-termux
+# bepinEx-termux
 
 Injeção/instrumentação nativa em runtime pra apps Android via **Zygisk**
 (Magisk) + **Dobby** (inline hook ARM64) + ponte de controle pelo **Termux**
