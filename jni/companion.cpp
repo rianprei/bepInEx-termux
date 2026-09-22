@@ -940,6 +940,12 @@ static void *termux_accept_loop(void *) {
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
+        // Achado de review (freebuff): reset tinha que estar aqui, fora de
+        // qualquer branch -- accept() com sucesso já quebra a sequência de
+        // falhas, mesmo que o cliente seja rejeitado depois por UID (isso é
+        // operação normal do accept loop, não falha dele).
+        consecutive_errors = 0;
+
         struct ucred cred;
         if (getpeercred(client, &cred) == 0) {
             LOGI("connection from UID=%d PID=%d", cred.uid, cred.pid);

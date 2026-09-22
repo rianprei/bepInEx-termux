@@ -4,6 +4,22 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
+## v0.3.4 — 2026-09-22
+
+Revisão pós-v0.3.3 (freebuff). Dois fixes:
+
+### Fixed
+- **Regressão do reset de `consecutive_errors`** (`jni/companion.cpp`,
+  accept loop): o reset no caminho de sucesso existia só no comentário —
+  a linha tinha se perdido, e o daemon voltava a morrer após 21 falhas
+  *totais* na vida do processo em vez de consecutivas. Reset reposto
+  fora de qualquer branch (accept com sucesso quebra a sequência mesmo
+  que o cliente caia depois no gate de UID).
+- **Comentário stale no caminho genérico** (`jni/main.cpp`,
+  `generic_event_thread`): dizia "janela maior que os 5000ms do Battle
+  Cats" — com o v0.3.3 o BC espera 60s (`TARGET_LIB_WAIT_MS`), 13x maior
+  que os 8s genéricos, não menor. Texto corrigido.
+
 ## v0.3.3 — 2026-09-22
 
 ### Fixed

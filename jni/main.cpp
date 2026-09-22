@@ -1539,10 +1539,10 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 // Battle Cats, mas sem nome de lib fixo pra esperar (não sabemos qual é a
 // lib nativa do jogo genérico). bc_wait_engine_detect faz poll da cascata
 // inteira (Cocos2d-x + fallback genérico) até achar ou estourar timeout.
-// 8000ms/200ms: janela um pouco maior que os 5000ms fixos do Battle Cats
-// (lib de nome conhecido responde mais rápido a um simples name-match;
-// aqui cada poll faz enumeração de símbolo em todas as libs carregadas,
-// mais caro por iteração, por isso o intervalo de 200ms em vez de 8ms).
+// 8000ms/200ms: janela menor que os 60s do caminho Battle Cats
+// (TARGET_LIB_WAIT_MS, ver event_thread) -- aqui cada poll faz enumeração
+// de símbolo em todas as libs carregadas, mais caro por iteração, por isso
+// o intervalo de 200ms em vez de 8ms.
 static void *generic_event_thread(void *arg) {
     const char *pkg = (const char *)arg;
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
