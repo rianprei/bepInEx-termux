@@ -116,6 +116,9 @@ estilo Harmony já usado nos hooks estáticos), `resolve_symbol`, e `log`.
 Isolamento de falha por arquivo: `dlopen` que falha ou `dlsym` sem o símbolo
 esperado só pula aquele `.so` (log, não derruba o processo nem os outros
 mods) — mesmo padrão DORMANT dos hooks estáticos, agora por mod.
+O mod de referência incluído (`mods/mechabun`) existe como prova de
+conceito dessa infra de ponta a ponta num jogo real, não como produto
+final — ver o README dele.
 
 Grafo de dependência (`jni/bc_mod_graph.h`): cada mod pode declarar
 `requires`/`conflicts` por nome; resolve ordem topológica, rejeita ciclo e

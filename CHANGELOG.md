@@ -1,4 +1,4 @@
-# Changelog — bepinEx-termux
+# Changelog — bepInEx-termux
 
 Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
@@ -20,7 +20,9 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 - **Buffers de log aumentados** (`line` 224→448, `body` 160→384): mensagens
   reais de erro (ex. mismatch de `STAT_BLOCK_OFF`) passavam de 300 chars e
   eram truncadas — confirmado no capture ao vivo.
-- **Mod Mecha-Bun (#426)**: hook de stats via loader CSV (HP/ATK/range/
+- **Mod Mecha-Bun (#426, prova de conceito da infra — não mod pra jogar)**:
+  veículo de teste de ponta a ponta (hooks, log, deploy, hot-reload) com
+  conteúdo realista: hook de stats via loader CSV (HP/ATK/range/
   recarga/imunidades/wave/strengthen/dodge/slayers/traits, até 3 formas),
   hook de dano D2-fix (getter `0x8789e8` → campo `+0x83774`, mesma escala
   9/5 do ATK), redirect de ícones D16.1 e de pack de animação D12 via hook

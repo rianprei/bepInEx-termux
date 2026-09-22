@@ -1,9 +1,12 @@
-# mechabun — mod real pro bepinEx-termux
+# mechabun — mod de teste (prova de conceito) pro bepInEx-termux
 
-Primeiro mod de gameplay de verdade rodando no loader (não é mais throttle
-de frame nem exemplo — mexe em stat de unidade real). Aplica o design
-"ideal comunitário" do Mecha-Bun (#426) documentado em
-`battlecats-mecha-bun-ideal-comunidade.md`.
+Este mod existe para provar que a infra do bepInEx-termux funciona de
+ponta a ponta num jogo real (hooks via loader, log fiel ao BepInEx,
+deploy, hot-reload) — NÃO é um "mod de buff pra jogar". O conteúdo
+concreto que ele carrega é o design "ideal comunitário" do Mecha-Bun
+(#426) documentado em `battlecats-mecha-bun-ideal-comunidade.md`, usado
+aqui como carga de teste realista (stats, imunidades, ícones, animação),
+não como produto final.
 
 ## Como o mod funciona, em partes
 
@@ -207,7 +210,7 @@ estática por unidade no jogo: loading screen é textura global única
 item de shop (`gatyaitemD_{id}_f/z.png`, `gatyaitem.py:217`), nenhum
 é por unidade.
 
-**Arquivos gerados** (nesta pasta `assets/`, zero arquivo do jogo
+**Arquivos gerados** (na pasta `tools/`, zero arquivo do jogo
 tocado), a partir da arte fan-made do usuário:
 
 | Arquivo | Slot | Dimensão | Conteúdo |
@@ -227,8 +230,8 @@ tocado), a partir da arte fan-made do usuário:
   nos icons NÃO tem +1 — `uni426`/`udi426` direto (padding 3 dígitos,
   ex.: cat_id 9 → `uni009_f00.png`)
 
-**Geração reproduzível**: `gen_icons.py` nesta pasta (roda com a venv
-battlecats: `~/.venvs/battlecats-mod/bin/python gen_icons.py`).
+**Geração reproduzível**: `tools/gen_icons.py` (roda com a venv
+battlecats: `~/.venvs/battlecats-mod/bin/python tools/gen_icons.py`).
 Chroma-key do fundo teal (flood-fill das bordas tolerante a gradiente
 radial — modelo plano de 1º grau falha no spotlight dessa arte;
 bandas autoritativas flood=sujeito/bg-profundo com decisão por cor só
@@ -247,7 +250,7 @@ executados por este agente — exigem device real):
 ```
 # adb (host, a partir da raiz do repo; device com USB debugging)
 adb shell mkdir -p /data/local/tmp/bc_mods/mechabun_assets
-adb push mods/mechabun/assets/uni426_s00.png mods/mechabun/assets/udi426_s.png /data/local/tmp/bc_mods/mechabun_assets/
+adb push mods/mechabun/tools/uni426_s00.png mods/mechabun/tools/udi426_s.png /data/local/tmp/bc_mods/mechabun_assets/
 
 # termux (alternativa: arquivos já no device, ex. /sdcard/Download;
 # escrever em /data/local/tmp exige o mesmo canal de privilégio que o

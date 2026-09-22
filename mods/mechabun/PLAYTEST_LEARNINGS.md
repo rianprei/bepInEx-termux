@@ -1,6 +1,8 @@
-# Playtest learnings — sessão ao vivo no device (Poco C75, jp.co.ponos.battlecatsen v15.6.0)
+# Playtest learnings — sessões de validação da infra em device real (Poco C75, jp.co.ponos.battlecatsen v15.6.0)
 
-Log de achados durante gameplay real via adb input, jogando até o usuário mandar parar.
+Log de achados durante execução real do mod de teste (Mecha-Bun) via adb:
+o objetivo das sessões é validar a infra de ponta a ponta (hook, deploy,
+hot-reload, log) — gameplay aqui é instrumento de teste, não o produto.
 
 ## 2026-09-18 18:55 — confirmação do hook em jogo real
 - `[mechabun] design ideal comunitario aplicado (...)` disparou no logcat durante uma batalha comum (Korea, tutorial) sem eu ter Mecha-Bun no deck — confirma que o loader faz warm-up/parse de CSV de units fora do deck ativo (provavelmente cache de dados no boot ou entre estágios), não só quando a unit é deployada em batalha.

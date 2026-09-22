@@ -49,7 +49,8 @@ echo "Enviado. Confira com: adb shell logcat -d | grep -i mechabun"
 # cá). Push separado, opcional: sem esses 2 arquivos o hook so faz
 # fallback pro fopen original (nao quebra nada, so os icons custom nao
 # aparecem). NAO roda sozinho — só se o usuário confirmar de novo.
-ASSETS_DIR="$(dirname "$0")/assets"
+# Icons + scripts geradores consolidados em tools/ (junto do d12_transform.py).
+ASSETS_DIR="$(dirname "$0")/tools"
 ICON1="$ASSETS_DIR/uni426_s00.png"
 ICON2="$ASSETS_DIR/udi426_s.png"
 if [ -f "$ICON1" ] && [ -f "$ICON2" ]; then
