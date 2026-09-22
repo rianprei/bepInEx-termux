@@ -162,31 +162,27 @@ static inline int bc_unpatch_hook(HookState *states, const char *shortname,
     return 1;
 }
 
-// repatch (lógica real): reinstala o hook. Retorno: 1=instalado, 0=já ativo,
-// -1=erro (slot inválido / install falhou).
+// repatch (lógica real): reinstala o hook num endereço-alvo explícito.
+// `target` é OBRIGATÓRIO (endereço real já resolvido pelo caller — símbolo,
+// pattern scan, ou s->resolved_addr sobrevivente de um unpatch anterior no
+// mesmo slot). Sem isso a função não tem como descobrir um endereço válido
+// sozinha; um placeholder aqui dentro seria só um SIGSEGV adiado pro dia em
+// que alguém ligar isto a um install() de verdade (Dobby).
+// Retorno: 1=instalado, 0=já ativo, -1=erro (slot inválido / sem target /
+// install falhou).
 static inline int bc_repatch_hook(HookState *states, const char *shortname,
-                                  HookInstallFn install, void *replacement,
-                                  void **backup_storage) {
-    // ATENÇÃO (achado de review forense): esta função NÃO tem nenhum call
-    // site em produção (main.cpp nunca chama bc_repatch_hook) — só é
-    // exercitada por test/selftest_harness.cpp com um install() STUB que
-    // ignora o endereço alvo. O (void*)1 abaixo é um PLACEHOLDER, não um
-    // endereço real: se um futuro caller ligar isto a um install() de
-    // verdade (Dobby), vai tentar instalar hook no endereço 0x1 → SIGSEGV
-    // garantido. Antes de wirar esta função a produção, troque (void*)1
-    // pelo endereço real resolvido (ex.: s->resolved_addr já teria o valor
-    // certo se a resolução tivesse acontecido antes do unpatch — hoje não
-    // há como esta função descobrir um endereço novo sozinha).
+                                  HookInstallFn install, void *target,
+                                  void *replacement, void **backup_storage) {
     int idx = hook_slot_by_name(shortname);
     if (idx < 0) return -1;
     HookState *s = &states[idx];
     if (s->backup != nullptr) return 0;           // já ativo
-    //
+    if (target == nullptr) return -1;             // sem endereço válido pra reinstalar
     void *new_backup = nullptr;
     if (install != nullptr &&
-        install((void*)1, replacement, &new_backup) != 0) return -1;
+        install(target, replacement, &new_backup) != 0) return -1;
     s->backup = new_backup;
-    s->resolved_addr = (void*)1;   // marca "resolvido" após reinstall
+    s->resolved_addr = target;
     if (backup_storage != nullptr) *backup_storage = new_backup;
     return 1;
 }

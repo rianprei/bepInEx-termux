@@ -282,21 +282,8 @@ static ssize_t write_all(int fd, const char *data, size_t len) {
 // Config de hooks (bc_mods.conf) — comandos list_mods / toggle_mod
 // ============================================================================
 
-// (KNOWN_HOOKS removido — a lista de chaves agora é o BC_SCHEMA logo abaixo,
-// que inclui as chaves tipadas novas além dos 4 hooks bool)
-
-// Schema espelho do main.cpp (1:1 — tem que bater). Mantido aqui porque o
-// companion é processo separado; se adicionar chave, adicionar nos DOIS.
-static const char *const BC_SRC_DOMAIN[] = {"game", "companion", nullptr};
-static const struct bc_mod_schema BC_SCHEMA[] = {
-    {"appInit",       BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"appUpdateDraw", BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"appTouch",      BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"appKey",        BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"throttle_every",BC_MOD_INT,  false, 1, 600, 60, nullptr, nullptr},
-    {"stream_source", BC_MOD_ENUM, false, 0, 0, 0,    BC_SRC_DOMAIN, "game"},
-};
-static const int BC_SCHEMA_N = (int)(sizeof(BC_SCHEMA) / sizeof(BC_SCHEMA[0]));
+// (KNOWN_HOOKS removido — a lista de chaves agora é o BC_SCHEMA, definição
+// única em bc_mods_conf.h (SSOT — antes duplicado aqui e em main.cpp))
 
 // Busca schema por nome (nullptr = chave desconhecida)
 static const struct bc_mod_schema *schema_find(const char *name) {

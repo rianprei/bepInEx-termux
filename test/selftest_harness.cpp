@@ -980,16 +980,20 @@ int main() {
         st[0].backup = nullptr;
         st[0].resolved_addr = nullptr;         // appInit removido
         int r = bc_repatch_hook(st, "appInit", (HookInstallFn)t_install_stub,
-                                (void*)0x1234, nullptr);
+                                (void*)0x9999, (void*)0x1234, nullptr);
         check("repatch de removido → 1", r == 1);
         check("backup preenchido", st[0].backup != nullptr);
-        check("resolved marcado após reinstall", st[0].resolved_addr != nullptr);
+        check("resolved marcado após reinstall", st[0].resolved_addr == (void*)0x9999);
         int r2 = bc_repatch_hook(st, "appInit", (HookInstallFn)t_install_stub,
-                                 (void*)0x1234, nullptr);
+                                 (void*)0x9999, (void*)0x1234, nullptr);
         check("idempotente (já instalado) → 0", r2 == 0);
         int r3 = bc_repatch_hook(st, "nope", (HookInstallFn)t_install_stub,
-                                 (void*)0x1234, nullptr);
+                                 (void*)0x9999, (void*)0x1234, nullptr);
         check("desconhecido → -1", r3 == -1);
+        static HookState st_no_target[BC_HOOK_NAMES_COUNT] = {};
+        int r5 = bc_repatch_hook(st_no_target, "appInit", (HookInstallFn)t_install_stub,
+                                 nullptr, (void*)0x1234, nullptr);
+        check("sem target → -1", r5 == -1);
     }
     {
         printf("\n[Caso 40] par unpatch→repatch REAL no MESMO HookState (ciclo completo)\n");
@@ -1002,9 +1006,10 @@ int main() {
         check("appKey ainda 'resolvido' (unpatched, não no-target)",
               st[3].resolved_addr == (void*)0xDEAD);
         int rp = bc_repatch_hook(st, "appKey", (HookInstallFn)t_install_stub,
-                                 (void*)0x7777, nullptr);
+                                 st[3].resolved_addr, (void*)0x7777, nullptr);
         check("repatch appKey → 1", rp == 1);
         check("appKey reinstalado", st[3].backup != nullptr);
+        check("appKey resolved preservado (0xDEAD)", st[3].resolved_addr == (void*)0xDEAD);
         // 3-state final: backup ok → active
         check("appKey agora active (backup != null)", st[3].backup != nullptr);
         // e um segundo hook nunca instalado → no-target

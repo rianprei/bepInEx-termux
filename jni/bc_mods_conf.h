@@ -375,6 +375,25 @@ static inline int bc_mod_watch_fire_changed(const bc_mod_watch *table, int count
     return fired;
 }
 
+// ---- Schema real (SSOT) ----------------------------------------------
+// Achado real (revisão kilo): main.cpp e companion.cpp mantinham CADA UM
+// sua própria cópia manual deste array ("Schema espelho do main.cpp —
+// tem que bater"), risco de drift silencioso se alguém editasse só um
+// lado ao adicionar/mudar uma chave. Definição única aqui — cada .cpp
+// que inclui este header ganha sua própria cópia `static const` (linkage
+// interna, sem símbolo duplicado no link do bc-poc.so), mas o TEXTO da
+// definição só existe uma vez.
+static const char *const BC_SRC_DOMAIN[] = {"game", "companion", nullptr};
+static const struct bc_mod_schema BC_SCHEMA[] = {
+    {"appInit",       BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
+    {"appUpdateDraw", BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},  // gate do hook (bool)
+    {"appTouch",      BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
+    {"appKey",        BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
+    {"throttle_every",BC_MOD_INT,  false, 1, 600, 60, nullptr, nullptr}, // 0* não é default válido → default 60, mas 0 desliga: ver g_throttle_every
+    {"stream_source", BC_MOD_ENUM, false, 0, 0, 0,    BC_SRC_DOMAIN, "game"},
+};
+static const int BC_SCHEMA_N = (int)(sizeof(BC_SCHEMA) / sizeof(BC_SCHEMA[0]));
+
 #ifdef __cplusplus
 }
 #endif

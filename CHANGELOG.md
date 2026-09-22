@@ -4,6 +4,64 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
+## v0.3.5 — 2026-09-22
+
+Revisão forense de 5 agentes (OpenCode, hermes, freebuff, devin, kilo) +
+verificação direta de cada achado contra o código real antes de aplicar
+(vários achados já estavam resolvidos por releases anteriores — só os
+confirmados por leitura direta viraram fix).
+
+### Fixed
+- **`BC_LOADER_VERSION` desatualizada** (`jni/main.cpp`): dizia `v0.3.0`
+  desde a primeira release, nunca acompanhou v0.3.1-v0.3.4 — log de boot
+  e o companion reportavam versão errada pro Termux.
+- **`bc_repatch_hook` com endereço placeholder perigoso**
+  (`jni/bc_hook_logic.h`): instalava hook sempre em `(void*)1` — função
+  sem call site em produção hoje, mas um SIGSEGV garantido esperando um
+  caller futuro real (Dobby). Assinatura agora exige `target` explícito
+  do caller (endereço já resolvido); `test/selftest_harness.cpp`
+  atualizado (Casos 39/40 + 1 caso novo pra `target=nullptr`).
+- **Double-registro de hook em reload de mod dinâmico** (`jni/main.cpp`,
+  `load_dynamic_mods`): sinal `reload_mods` reexecuta a função inteira
+  sem resetar `g_hook_callbacks` — um mod já ativo tinha seus callbacks
+  prefix/postfix reempilhados a cada reload (dispatch duplicado; após
+  `HOOK_MAX_CALLBACKS` reloads, falha silenciosa por slot cheio). Fix:
+  `memset(g_hook_callbacks, ...)` no topo da função (rebuild completo a
+  cada chamada, mesma semântica já documentada pelo caller).
+- **`BC_SCHEMA` duplicado** (`jni/main.cpp` + `jni/companion.cpp`): cada
+  arquivo mantinha sua própria cópia manual do array (comentário já
+  admitia "tem que bater... se adicionar chave, adicionar nos DOIS").
+  Definição única movida pra `jni/bc_mods_conf.h` (SSOT) — os dois `.cpp`
+  ganham cada um sua cópia `static const` via include, sem risco de
+  drift na manutenção.
+- **`jni/symbol_scan.cpp` removido**: arquivo inteiro era esboço não-
+  funcional (autodocumentado "ESBOÇO — não 100% funcional", signature
+  bytes placeholder, 5 TODOs em aberto), nunca incluído no `Android.mk`
+  (só `main.cpp` + `companion.cpp` compilam). Comentário stale em
+  `main.cpp` que referenciava o arquivo também removido.
+- Nota de escopo adicionada ao changelog do v0.3.3 (ver abaixo) —
+  timeout de 60s é exclusivo do `event_thread` (Battle Cats), não do
+  caminho genérico multi-jogo.
+
+### Verificado sem ação (achados já resolvidos ou falso-positivo)
+- `mod_api_resolve_pattern`/`mod_api_install_hook` "sem call site": usados
+  como ponteiros de função no struct `bc_mod_api` exposto a mods `.so`.
+- `write_patches_snapshot`: já valida `w == hw` antes do rename atômico
+  (fix real do v0.3.2, achado batia com estado anterior ao fix).
+- Offset `0x9e568` no README do mod: já documentado lado a lado com o
+  valor real `0x9e318`, com explicação do drift entre builds.
+- `deploy.sh` `PACK_SRC_ORIGINAL`: já overridable via env, mesmo padrão
+  aceito de `BCDATA_DIR` (documentado desde v0.3.0).
+- `docs/ROADMAP.md` item 3.7: nunca foi marcado `[x]`, já consta como
+  "NÃO COMPROVADO" no texto.
+- `test/selftest_harness.cpp`: usa helper `check()` próprio, não
+  `assert()` (imune a `-DNDEBUG`); harness host-only é design
+  documentado no topo do arquivo, não lacuna de build.
+
+Build (`ndk-build -B -j4`, verificado por agente com toolchain NDK): 0
+warnings além do `-static-libstdc++` benigno conhecido. Host harness
+(`g++ -std=c++17`): 234/234 assertions (232→234, 2 casos novos).
+
 ## v0.3.4 — 2026-09-22
 
 Revisão pós-v0.3.3 (freebuff). Dois fixes:
@@ -32,6 +90,14 @@ Revisão pós-v0.3.3 (freebuff). Dois fixes:
   engine nativo, dependendo do caminho de boot). Timeout subiu pra 60s —
   poll (`dl_iterate_phdr` a cada 8ms) é barato numa thread dedicada, não
   bloqueia nada mais.
+
+### Escopo (achado de review, kilo)
+- Mudança confinada ao `event_thread` — caminho ESPECÍFICO do Battle Cats
+  (`TARGET_LIB="libnative-lib.so"`). O caminho genérico multi-jogo
+  (`generic_event_thread`, detecção de engine via `bc_wait_engine_detect`
+  pra qualquer app Cocos2d-x/C++ na allowlist) usa timeout próprio de 8s,
+  não tocado por este fix — threads e timeouts são independentes por
+  design (Battle Cats sempre teve lib nomeada conhecida; genérico não).
 
 ## v0.3.2 — 2026-09-22
 

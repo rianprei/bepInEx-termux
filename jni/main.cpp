@@ -53,7 +53,7 @@ using zygisk::AppSpecializeArgs;
 using zygisk::Option;
 
 #define LOG_TAG "BCPOC"
-#define BC_LOADER_VERSION "v0.3.0"
+#define BC_LOADER_VERSION "v0.3.4"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
@@ -89,16 +89,8 @@ static void publish_log(const char *level, const char *fmt, ...);
 // companion aceita escrever). appUpdateDraw substitui a antiga system
 // property persist.bc_poc.mod_enabled: int 0 (throttle desligado) ou
 // 1..600 (pula 1 frame a cada N).
-static const char *const BC_SRC_DOMAIN[] = {"game", "companion", nullptr};
-static const struct bc_mod_schema BC_SCHEMA[] = {
-    {"appInit",       BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"appUpdateDraw", BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},  // gate do hook (bool)
-    {"appTouch",      BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"appKey",        BC_MOD_BOOL, true,  0, 0, 0,    nullptr, nullptr},
-    {"throttle_every",BC_MOD_INT,  false, 1, 600, 60, nullptr, nullptr}, // 0* não é default válido → default 60, mas 0 desliga: ver g_throttle_every
-    {"stream_source", BC_MOD_ENUM, false, 0, 0, 0,    BC_SRC_DOMAIN, "game"},
-};
-static const int BC_SCHEMA_N = (int)(sizeof(BC_SCHEMA) / sizeof(BC_SCHEMA[0]));
+// BC_SCHEMA/BC_SCHEMA_N/BC_SRC_DOMAIN: definição única em bc_mods_conf.h
+// (SSOT — antes duplicado aqui e em companion.cpp, risco de drift).
 
 static struct bc_mod_entry g_cfg[8];  // >= BC_SCHEMA_N (6 chaves)
 static std::atomic<int> g_mods_count{0};
@@ -239,7 +231,6 @@ static bool verify_build_id(const char *libname) {
 }
 
 // Opção A (§8): base da lib mapeada — necessário pros alvos base+offset.
-// (a get_lib_base do symbol_scan.cpp é static e não entra no build; cópia mínima aqui.)
 struct LibBaseCtx { const char *libname; void *base; };
 static void *get_lib_base(const char *libname) {
     LibBaseCtx ctx{libname, nullptr};
@@ -1170,6 +1161,18 @@ static bool discover_mod_manifest(void *handle, bc_manifest_snapshot *out) {
 // falha em dlopen/dlsym é pulado (logado), não derruba os outros nem o jogo
 // (mesmo padrão DORMANT já usado nos hooks estáticos).
 static void load_dynamic_mods() {
+    // achado real (revisão kilo): esta função é re-executada inteira a cada
+    // sinal de reload_mods (mesmo processo, mesmo dlopen path/handle já
+    // ativo em cache) — sem isto, bc_mod_register() de um mod já carregado
+    // rodava de novo e reempilhava os MESMOS callbacks em g_hook_callbacks
+    // (sem limite de slot avisado, HOOK_MAX_CALLBACKS=4 por hook), causando
+    // dispatch duplicado (ex.: hook de stats aplicando 2x por frame) e,
+    // após reloads repetidos, falha silenciosa ao esgotar os 4 slots.
+    // Reset completo aqui casa com a semântica documentada da função
+    // ("re-executando load_dynamic_mods()" no caller) — rebuild total do
+    // zero, não incremental.
+    memset(g_hook_callbacks, 0, sizeof(g_hook_callbacks));
+
     DIR *dir = opendir(BC_MODS_DIR);
     if (dir == nullptr) {
         LOGI("mod loader: %s ausente ou sem acesso — sem mods dinâmicos (normal se não usa)",
