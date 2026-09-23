@@ -8,7 +8,6 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ### Added
 - mechabun: target traits red/black/metal/traitless/angel, resistant, massive damage, colossus slayer and soul strike (battle readers pending proof).
-- mechabun: range 190 -> 300 and speed 23 -> 30 (community-consensus.md proposals, user max-value rule).
 - mechabun: wave 20% mini -> 30% full wave, dodge 30% -> 50% (user max-value rule).
 - **`mods/mechabun` teto de nível 60+90**: reescreve em memória a linha
   426 do `unitbuy.csv` (parse 0x7936b8, tabela `+0x4ACB8`, XOR key

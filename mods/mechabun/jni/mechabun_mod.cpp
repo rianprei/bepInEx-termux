@@ -247,7 +247,6 @@ struct PthreadMutexGuard {
 #define COL_ATK 3
 #define COL_ATTACK_INTERVAL 4
 #define COL_RANGE 5
-#define COL_SPEED 2
 #define COL_RECHARGE 7
 #define COL_WAVE_IMMUNITY 46
 #define COL_KNOCKBACK_IMMUNITY 48
@@ -469,8 +468,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
 
         // Confirmado via tbcml (não suposição): range sem transform,
         // recharge/attack_interval = raw*2 exato (pair frames).
-        scale_field(fb, COL_RANGE, 300, 190);        // 190 -> 300 (leitor 0x872cc0; proposta 250-300)
-        scale_field(fb, COL_SPEED, 30, 23);          // 23 -> 30 (proposta "30+"; razao, escala-agnostico)
+        scale_field(fb, COL_RANGE, 265, 190);        // 190 -> 265 (leitor 0x872cc0)
         scale_field(fb, COL_RECHARGE, 2136, 2536);   // 2536f -> 2136f (-400f)
         // NAO-OP para o Mecha-Bun: COL_ATTACK_INTERVAL (col4) e' o mesmo
         // campo que a pesquisa D12 chama de TBA, e o raw do unit427.csv
