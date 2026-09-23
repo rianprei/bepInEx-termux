@@ -4,6 +4,16 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
+## Unreleased
+
+### Fixed
+- **`mods/mechabun` `verify_unit_base`**: device real (build `338b0601`)
+  leu range=760 (190×4) com ATK 400/500 exatos — offset certo, struct
+  guarda range em unidade interna ×4. Check rejeitava e o patch inteiro
+  ficava vanilla. Agora aceita 190 ou 190×4; par de ATK segue provando o
+  offset. Validado em batalha: `DEBUG form=0 ATK raw=400 pos-scale=720`,
+  `design ideal comunitario aplicado`, zero crash.
+
 ## v0.3.6 — 2026-09-22
 
 Segunda rodada de revisão: OpenCode + hermes em paralelo (achados

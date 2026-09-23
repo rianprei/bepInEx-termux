@@ -335,7 +335,12 @@ static bool verify_unit_base(long unit_base, const bc_mod_api *api) {
     long fb_true = unit_base + (long)TRUE_FORM_INDEX * FORM_STRIDE;
     int32_t atk_true = *field_ptr(fb_true, COL_ATK);
 
-    bool ok = range0 == EXPECTED_RANGE_RAW_FORM0 &&
+    // Range: device real (build 338b0601, 2026-09-22) mostrou 760 = 190*4
+    // com ATK 400/500 batendo exato -- offset certo, o struct guarda range
+    // em unidade interna x4. Aceita as 2 formas; o par de ATK segue sendo a
+    // prova de offset. Escala 250/190 e' proporcional, vale nas duas.
+    bool ok = (range0 == EXPECTED_RANGE_RAW_FORM0 ||
+               range0 == EXPECTED_RANGE_RAW_FORM0 * 4) &&
               atk0 == EXPECTED_ATK_RAW_FORM0 &&
               atk_true == EXPECTED_ATK_RAW_TRUE_FORM;
     if (!ok && api != nullptr && api->log != nullptr) {
