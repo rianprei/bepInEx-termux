@@ -371,6 +371,49 @@ static bool verify_unit_base(long unit_base, const bc_mod_api *api) {
     return ok;
 }
 
+// Teto de nivel 60+90 (unitbuy.csv em memoria, sem tocar arquivo).
+// freebuff 2026-09-23, build 338b0601: parse 0x7936b8 grava cada linha em
+// this+0x4ACB8+unit*0x100 (this = mesmo singleton do big_data), dword
+// col*4 XOR key de 4 bytes em row+0xfc. Leitores: col49 (check de upgrade
+// 0x3e85f8 = col49 + bonus catseye do save), col50 0x3e7f7c, col51 0x3e80d8,
+// col18/19 getter 0x384e08. Vanilla EN visto no device: col49=30,
+// col51=0 (BCData 14.7 dizia 70) -- confere antes de escrever, senao desiste.
+#define UNITBUY_TABLE_OFF 0x4ACB8
+#define UNITBUY_ROW_STRIDE 0x100
+#define UNITBUY_KEY_OFF 0xfc
+
+static uint32_t *unitbuy_field(long row, int col) {
+    return reinterpret_cast<uint32_t *>(row + (long)col * 4);
+}
+
+static void patch_level_caps(long big_data) {
+    static bool done = false;
+    if (done) return;
+    long row = big_data + UNITBUY_TABLE_OFF + (long)MECHABUN_UNIT_ID * UNITBUY_ROW_STRIDE;
+    uint32_t key = *reinterpret_cast<uint32_t *>(row + UNITBUY_KEY_OFF);
+    uint32_t c49 = *unitbuy_field(row, 49) ^ key;
+    uint32_t c50 = *unitbuy_field(row, 50) ^ key;
+    uint32_t c51 = *unitbuy_field(row, 51) ^ key;
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+             "[mechabun] unitbuy 426 vanilla: col18=%u col19=%u col49=%u col50=%u col51=%u",
+             *unitbuy_field(row, 18) ^ key, *unitbuy_field(row, 19) ^ key, c49, c50, c51);
+    g_api->log(BC_LOG_INFO, buf);
+    if (c49 != 30 || (c51 != 0 && c51 != 70)) {
+        snprintf(buf, sizeof(buf),
+                 "[mechabun] teto de nivel NAO aplicado: unitbuy col49=%u col51=%u "
+                 "(esperado 30 e 0|70)", c49, c51);
+        g_api->log(BC_LOG_WARN, buf);
+        return;
+    }
+    const struct { int col; uint32_t v; } caps[] = {
+        {18, 60}, {19, 90}, {49, 60}, {50, 90}, {51, 90},
+    };
+    for (const auto &c : caps) *unitbuy_field(row, c.col) = c.v ^ key;
+    done = true;
+    g_api->log(BC_LOG_INFO, "[mechabun] teto de nivel aplicado (unitbuy 426: 60+90)");
+}
+
 static void hooked_load_unit(long big_data, int unit_id) {
     g_orig(big_data, unit_id);  // deixa o parse original do CSV rodar
     if (unit_id != MECHABUN_UNIT_ID) return;
@@ -387,6 +430,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
     long unit_base = big_data +
         (long)(unit_id + UNIT_ID_TABLE_OFFSET) * UNIT_BLOCK_STRIDE +
         STAT_BLOCK_OFF;
+    if (g_api != nullptr) patch_level_caps(big_data);
     if (!verify_unit_base(unit_base, g_api)) return;
     for (int form = 0; form < N_FORMS; form++) {
         long fb = unit_base + (long)form * FORM_STRIDE;

@@ -133,6 +133,12 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Freeze/Slow/Weaken Immunity | 49/50/51 | seta 1 | ✅ 0x874e20 / 0x874ed8 / 0x874d68 |
 | Target Floating | 16 | seta 1 | ✅ 0x875ae4 |
 
+Teto de nível 60+90: o mod reescreve na memória a linha 426 do
+`unitbuy.csv` já parseado (`big_data+0x4ACB8+426*0x100`, dword `col*4` XOR
+key em `row+0xfc`): col18/19 = 60/90, col49 = 60, col50/51 = 90. Confere
+antes os valores vanilla EN (col49=30, col51=0) e desiste se não baterem.
+Nível do save continua sendo editado à parte (BCSFE).
+
 Leitores da leva 2026-09-23 achados por varredura estática do build
 `338b0601` (freebuff); valores = maior citado na pesquisa comunitária
 (regra de design do autor). Explosion attack e Omni Strike não existem no

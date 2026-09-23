@@ -7,6 +7,11 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## Unreleased
 
 ### Added
+- **`mods/mechabun` teto de nível 60+90**: reescreve em memória a linha
+  426 do `unitbuy.csv` (parse 0x7936b8, tabela `+0x4ACB8`, XOR key
+  `row+0xfc`; leitores col49 0x3e85f8, col50 0x3e7f7c, col51 0x3e80d8).
+  Vanilla EN lido no device: col49=30 col50=50 col51=0. Validado: save
+  editado pra 60+90 aparece 60+90 no jogo.
 - **`mods/mechabun`**: KB 4, Freeze 20%/90f, Crit 25%, Weaken 100%/120f/50%,
   Survive 100%, imunidades Freeze/Slow/Weaken — cada coluna com leitor em
   batalha provado no build `338b0601`. Mini-wave 20%, Dodge 30%/90f,
