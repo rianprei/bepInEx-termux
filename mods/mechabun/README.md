@@ -112,7 +112,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310; medido em batalha: TF Lv20 = 10.800 (900×12; vanilla 6.000) |
 | Speed | 2 | não mexido (design mantém) | ✅ |
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
-| Range | 5 | ×265/190 (190→265; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
+| Range | 5 | ×300/190 (190→300; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
 | Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
 | Wave Immunity | 46 | seta 1 | ✅ |
 | Knockback Immunity | 48 | seta 1 | ✅ |
@@ -152,7 +152,7 @@ formato CSV. Hook "D2-fix" (0x8789e8) removido: era getter de freeze time.
 |---|---|---|
 | D1 | Surge Immunity | ✅ implementado |
 | D2 | HP Up 80% | ✅ implementado |
-| D3 | Range +75 (190→265) | ✅ implementado; leitor em batalha provado (getter 0x872cc0, builder 0x7c23cc) |
+| D3 | Range +110 (190→300) | ✅ implementado; leitor em batalha provado (getter 0x872cc0, builder 0x7c23cc) |
 | D4 | Knockback Immunity | ✅ implementado |
 | D5 | Cooldown -400f | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D6 | Mini-wave | ✅ implementado |
