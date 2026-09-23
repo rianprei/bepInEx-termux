@@ -282,8 +282,6 @@ struct PthreadMutexGuard {
 #define COL_TARGET_METAL 18
 #define COL_TARGET_TRAITLESS 19
 #define COL_TARGET_ANGEL 20
-#define COL_TARGET_ALIEN 21
-#define COL_TARGET_ZOMBIE 22
 #define COL_RESISTANT 29
 #define COL_MASSIVE_DAMAGE 30
 #define COL_COLOSSUS_SLAYER 97
@@ -545,8 +543,6 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_TARGET_METAL);
         set_bool_field(fb, COL_TARGET_TRAITLESS);
         set_bool_field(fb, COL_TARGET_ANGEL);
-        set_bool_field(fb, COL_TARGET_ALIEN);
-        set_bool_field(fb, COL_TARGET_ZOMBIE);
         set_bool_field(fb, COL_RESISTANT);
         set_bool_field(fb, COL_MASSIVE_DAMAGE);
         set_bool_field(fb, COL_COLOSSUS_SLAYER);
@@ -556,7 +552,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
                     "+80% formas 0/1, True Form 300k Lv50; 9 imunidades, "
-                    "crit/weaken/freeze/survive/KB4, onda 30%, 10 traits, resistant/massive/colossus/soulstrike, "
+                    "crit/weaken/freeze/survive/KB4, onda 30%, 8 traits, resistant/massive/colossus/soulstrike, "
                     "strengthen, dodge 50%)");
     }
 }
