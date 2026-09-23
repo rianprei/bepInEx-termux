@@ -112,7 +112,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310 (efeito em batalha ainda não medido) |
 | Speed | 2 | não mexido (design mantém) | ✅ |
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
-| Range | 5 | ×265/190 (190→265) | ❌ **SEM LEITOR** — D3 sem efeito |
+| Range | 5 | ×265/190 (190→265; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
 | Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
 | Wave Immunity | 46 | seta 1 | ✅ |
 | Knockback Immunity | 48 | seta 1 | ✅ |
