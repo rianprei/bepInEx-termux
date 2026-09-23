@@ -146,7 +146,7 @@ formato CSV. Hook "D2-fix" (0x8789e8) removido: era getter de freeze time.
 |---|---|---|
 | D1 | Surge Immunity | ✅ implementado |
 | D2 | HP Up 80% | ✅ implementado |
-| D3 | Range +60 | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
+| D3 | Range +75 (190→265) | ✅ implementado; leitor em batalha provado (getter 0x872cc0, builder 0x7c23cc) |
 | D4 | Knockback Immunity | ✅ implementado |
 | D5 | Cooldown -400f | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D6 | Mini-wave | ✅ implementado |
