@@ -109,7 +109,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Campo | Índice | Ação | Leitor confirmado |
 |---|---|---|---|
 | HP | 0 | ×1.8 (+80%) para forms 0/1; ×25/9 para True Form (300k Lv50) | ✅ |
-| ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310 (efeito em batalha ainda não medido) |
+| ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310; medido em batalha: TF Lv20 = 10.800 (900×12; vanilla 6.000) |
 | Speed | 2 | não mexido (design mantém) | ✅ |
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
 | Range | 5 | ×265/190 (190→265; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |

@@ -22,6 +22,12 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
   time (col26), não de dano; escalaria o freeze 9/5. O dano normal vem de
   `calc_atk` 0x872440, que lê col3 do struct já patchado.
 
+### Verified
+- **`mods/mechabun` ATK em batalha**: hook log-only temporário em
+  `calc_atk` (não commitado) mostrou `args=0,426,2,20,...` →
+  `ret=10800` no builder de batalha (site 0x7c250c) = 900×12 (Lv20 com
+  tesouros); vanilla seria 6.000. +80% chega ao dano real.
+
 ### Fixed
 - **`mods/mechabun` `verify_unit_base`**: device real (build `338b0601`)
   leu range=760 (190×4) com ATK 400/500 exatos — offset certo, struct
