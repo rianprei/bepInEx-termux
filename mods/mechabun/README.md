@@ -114,25 +114,25 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
 | Range | 5 | ×250/190 (190→250; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
 | Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
-| Wave Immunity | 46 | seta 1 | ✅ |
+| Wave Immunity | 46 | — | removido 2026-09-23 (sem fonte valida) |
 | Knockback Immunity | 48 | seta 1 | ✅ |
 | Surge Immunity | 91 | seta 1 | ✅ |
-| Behemoth Slayer | 105 | — | removido 2026-09-23 (sem fonte valida) |
+| Behemoth Slayer | 105 | seta 1 | fonte fandom f/p/4400000000000734592; ❌ SEM LEITOR |
 | Wave prob/level/mini | 35/36/94 | — | removido 2026-09-23 (sem fonte valida) |
 | Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
 | Dodge prob/frames | 84/85 | — | removido 2026-09-23 (sem fonte valida) |
 | Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
-| Explosion Immunity | 116 | seta 1 | ✅ |
+| Explosion Immunity | 116 | — | removido 2026-09-23 (sem fonte valida) |
 | Warp Immunity | 75 | seta 1 | ✅ |
-| Toxic Immunity | 90 | seta 1 (opcional, design 3.2) | ✅ |
+| Toxic Immunity | 90 | — | removido 2026-09-23 (sem fonte valida) |
 | KB count | 1 | — (vanilla) | removido 2026-09-23 (sem fonte valida) |
 | Speed | 2 | ×29/23 (+6) | fonte reddit 1qv6rno; leitor provado |
 | Target Angel | 20 | seta 1 | fonte reddit 1qv6rno; leitor 0x875d20 |
 | Freeze prob/time | 25/26 | 20% / 90f | ✅ 0x873f54 / 0x878a70 |
 | Crit prob | 31 | 25% | ✅ 0x874204 |
-| Weaken prob/time/% | 37/38/39 | 100% / 120f / 50% | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |
-| Survive prob | 42 | 100% | ✅ 0x8740a4 |
-| Freeze/Slow/Weaken Immunity | 49/50/51 | seta 1 | ✅ 0x874e20 / 0x874ed8 / 0x874d68 |
+| Weaken prob/time/% | 37/38/39 | 50% / 90f / 50% (reddit 1qv6rno) | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |
+| Survive prob | 42 | — | removido 2026-09-23 (sem fonte valida) |
+| Freeze Immunity | 49 | seta 1 | ✅ 0x874e20 (Slow 50 / Weaken 51: removidos 2026-09-23, sem fonte valida) |
 | Target Floating | 16 | seta 1 | ✅ 0x875ae4 |
 
 Teto de nível 60+90: o mod reescreve na memória a linha 426 do
@@ -161,10 +161,10 @@ formato CSV. Hook "D2-fix" (0x8789e8) removido: era getter de freeze time.
 | D7 | Strengthen 50%@50%HP | ✅ implementado |
 | D8 | Dodge 20%/1s | ✅ implementado |
 | D9 | Behemoth Slayer | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
-| D10 | Wave Immunity | ✅ implementado |
+| D10 | Wave Immunity | removido 2026-09-23 (sem fonte valida) |
 | D11 | Sage Slayer | ⚠️ implementado no struct, **SEM efeito confirmado em batalha real (root cause: struct sem leitor, ver `context/battlecats-mechabun-atk-dead-struct.md`), fix pendente** |
 | D12 | Attack Speed Up | ✅ implementado (metade — ver Backswing abaixo) |
-| D13 | Explosion Immunity | ✅ implementado |
+| D13 | Explosion Immunity | removido 2026-09-23 (sem fonte valida) |
 | D14 | Warp Immunity | ✅ implementado |
 | D15 | Shrug Off | ✅ **implementado via D8** — mesma mecânica interna, ver abaixo |
 | D16 | Ultra Form | ✅ **implementado como tier de stats na True Form** — ver abaixo |

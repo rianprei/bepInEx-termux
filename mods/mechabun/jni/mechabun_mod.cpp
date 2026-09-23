@@ -249,15 +249,13 @@ struct PthreadMutexGuard {
 #define COL_RANGE 5
 #define COL_SPEED 2
 #define COL_RECHARGE 7
-#define COL_WAVE_IMMUNITY 46
 #define COL_KNOCKBACK_IMMUNITY 48
 #define COL_SURGE_IMMUNITY 91
 #define COL_STRENGTHEN_HP_PERCENT 40
 #define COL_STRENGTHEN_MULT_PERCENT 41
+#define COL_BEHEMOTH_SLAYER 105
 #define COL_SAGE_SLAYER 111
-#define COL_EXPLOSION_IMMUNITY 116
 #define COL_WARP_IMMUNITY 75
-#define COL_TOXIC_IMMUNITY 90
 #define COL_TARGET_FLOATING 16
 #define COL_TARGET_AKU 96
 #define COL_STRONG_AGAINST 23
@@ -267,10 +265,7 @@ struct PthreadMutexGuard {
 #define COL_WEAKEN_PROB 37
 #define COL_WEAKEN_TIME 38
 #define COL_WEAKEN_PERCENT 39
-#define COL_SURVIVE_PROB 42
 #define COL_FREEZE_IMMUNITY 49
-#define COL_SLOW_IMMUNITY 50
-#define COL_WEAKEN_IMMUNITY 51
 #define COL_TARGET_ANGEL 20
 #define TRUE_FORM_INDEX 2
 
@@ -467,13 +462,11 @@ static void hooked_load_unit(long big_data, int unit_id) {
         scale_field(fb, COL_ATTACK_INTERVAL, 26, 32);
 
         // Alta confiança: bool flags diretos.
-        set_bool_field(fb, COL_WAVE_IMMUNITY);
         set_bool_field(fb, COL_KNOCKBACK_IMMUNITY);
         set_bool_field(fb, COL_SURGE_IMMUNITY);
+        set_bool_field(fb, COL_BEHEMOTH_SLAYER);    // fandom f/p/4400000000000734592
         set_bool_field(fb, COL_SAGE_SLAYER);        // D11
-        set_bool_field(fb, COL_EXPLOSION_IMMUNITY); // D13
         set_bool_field(fb, COL_WARP_IMMUNITY);      // D14
-        set_bool_field(fb, COL_TOXIC_IMMUNITY);     // opcional (design ideal 3.2)
 
         // D16 Ultra (traits): Strong Against Floating/Relic/Aku. Loop
         // aplica nas 3 formas (0/1/2), nao so True Form -- diferenca do
@@ -503,13 +496,10 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_FREEZE_PROB, 20);
         set_field(fb, COL_FREEZE_TIME, 90);
         set_field(fb, COL_CRIT_PROB, 25);
-        set_field(fb, COL_WEAKEN_PROB, 100);
-        set_field(fb, COL_WEAKEN_TIME, 120);    // 4s
+        set_field(fb, COL_WEAKEN_PROB, 50);     // reddit 1qv6rno "Weaken (50% for 90f)"
+        set_field(fb, COL_WEAKEN_TIME, 90);
         set_field(fb, COL_WEAKEN_PERCENT, 50);
-        set_field(fb, COL_SURVIVE_PROB, 100);
         set_bool_field(fb, COL_FREEZE_IMMUNITY);
-        set_bool_field(fb, COL_SLOW_IMMUNITY);
-        set_bool_field(fb, COL_WEAKEN_IMMUNITY);
 
         // Fonte: reddit 1qv6rno ("Angel Targeting ..."); leitor 0x875d20.
         set_bool_field(fb, COL_TARGET_ANGEL);
@@ -517,8 +507,8 @@ static void hooked_load_unit(long big_data, int unit_id) {
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
-                    "+80% formas 0/1, True Form 300k Lv50; 9 imunidades, "
-                    "crit/weaken/freeze/survive, speed 29, alvos floating/aku/angel, "
+                    "+80% formas 0/1, True Form 300k Lv50; imunidades KB/surge/warp/freeze, "
+                    "crit/weaken/freeze, speed 29, behemoth/sage, alvos floating/aku/angel, "
                     "strengthen)");
     }
 }
