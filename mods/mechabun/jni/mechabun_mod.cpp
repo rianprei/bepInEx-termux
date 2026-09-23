@@ -277,6 +277,17 @@ struct PthreadMutexGuard {
 #define COL_FREEZE_IMMUNITY 49
 #define COL_SLOW_IMMUNITY 50
 #define COL_WEAKEN_IMMUNITY 51
+#define COL_TARGET_RED 10
+#define COL_TARGET_BLACK 17
+#define COL_TARGET_METAL 18
+#define COL_TARGET_TRAITLESS 19
+#define COL_TARGET_ANGEL 20
+#define COL_TARGET_ALIEN 21
+#define COL_TARGET_ZOMBIE 22
+#define COL_RESISTANT 29
+#define COL_MASSIVE_DAMAGE 30
+#define COL_COLOSSUS_SLAYER 97
+#define COL_SOUL_STRIKE 98
 #define TRUE_FORM_INDEX 2
 
 typedef void (*orig_load_unit_fn)(long big_data, int unit_id);
@@ -459,7 +470,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
 
         // Confirmado via tbcml (não suposição): range sem transform,
         // recharge/attack_interval = raw*2 exato (pair frames).
-        scale_field(fb, COL_RANGE, 265, 190);        // 190 -> 265 (sem leitor ainda)
+        scale_field(fb, COL_RANGE, 265, 190);        // 190 -> 265 (leitor 0x872cc0)
         scale_field(fb, COL_RECHARGE, 2136, 2536);   // 2536f -> 2136f (-400f)
         // NAO-OP para o Mecha-Bun: COL_ATTACK_INTERVAL (col4) e' o mesmo
         // campo que a pesquisa D12 chama de TBA, e o raw do unit427.csv
@@ -492,10 +503,11 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_TARGET_FLOATING);
         set_bool_field(fb, COL_TARGET_AKU);
 
-        // D6 Mini-wave: 20% chance, nível 1, variante mini.
-        set_field(fb, COL_WAVE_PROB, 20);   // regra do usuario: maior citado
+        // D6 Onda: 30% chance, nível 1, onda cheia (regra do usuario:
+        // proposta 20-30% -> 30%; onda cheia > mini).
+        set_field(fb, COL_WAVE_PROB, 30);
         set_field(fb, COL_WAVE_LEVEL, 1);
-        set_bool_field(fb, COL_WAVE_IS_MINI);
+        set_field(fb, COL_WAVE_IS_MINI, 0);
 
         // D7 Strengthen: ativa a 50% de HP, +50% de dano (total 150%).
         // ATENCAO (achado de review, historico real no CHANGELOG): o campo
@@ -507,8 +519,8 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
         set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 50);
 
-        // D8 Dodge: 30% de chance, esquiva por 3s (90 frames a 30fps).
-        set_field(fb, COL_DODGE_PROB, 30);
+        // D8 Dodge: 50% de chance (regra do usuario), esquiva por 3s (90f).
+        set_field(fb, COL_DODGE_PROB, 50);
         set_field(fb, COL_DODGE_TIME_FRAMES, 90);
 
         // Leva 2026-09-23 (freebuff: leitor em batalha provado por coluna,
@@ -525,13 +537,27 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_FREEZE_IMMUNITY);
         set_bool_field(fb, COL_SLOW_IMMUNITY);
         set_bool_field(fb, COL_WEAKEN_IMMUNITY);
+
+        // Leva 2 (regra do usuario: inclui propostas contestadas/rejeitadas).
+        // Leitores ainda a provar (maestri), sem efeito colateral se inertes.
+        set_bool_field(fb, COL_TARGET_RED);
+        set_bool_field(fb, COL_TARGET_BLACK);
+        set_bool_field(fb, COL_TARGET_METAL);
+        set_bool_field(fb, COL_TARGET_TRAITLESS);
+        set_bool_field(fb, COL_TARGET_ANGEL);
+        set_bool_field(fb, COL_TARGET_ALIEN);
+        set_bool_field(fb, COL_TARGET_ZOMBIE);
+        set_bool_field(fb, COL_RESISTANT);
+        set_bool_field(fb, COL_MASSIVE_DAMAGE);
+        set_bool_field(fb, COL_COLOSSUS_SLAYER);
+        set_bool_field(fb, COL_SOUL_STRIKE);
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
                     "+80% formas 0/1, True Form 300k Lv50; 9 imunidades, "
-                    "crit/weaken/freeze/survive/KB4, mini-wave 20%, "
-                    "strengthen, dodge 30%)");
+                    "crit/weaken/freeze/survive/KB4, onda 30%, 10 traits, resistant/massive/colossus/soulstrike, "
+                    "strengthen, dodge 50%)");
     }
 }
 
