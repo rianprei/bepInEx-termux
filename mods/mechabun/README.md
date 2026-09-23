@@ -117,15 +117,17 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Wave Immunity | 46 | seta 1 | ✅ |
 | Knockback Immunity | 48 | seta 1 | ✅ |
 | Surge Immunity | 91 | seta 1 | ✅ |
-| Behemoth Slayer | 105 | seta 1 | ❌ **SEM LEITOR** — D9 sem efeito |
-| Wave prob/level/mini | 35/36/94 | 20% / lv1 / mini=1 (D6) | ✅ |
+| Behemoth Slayer | 105 | — | removido 2026-09-23 (sem fonte valida) |
+| Wave prob/level/mini | 35/36/94 | — | removido 2026-09-23 (sem fonte valida) |
 | Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
-| Dodge prob/frames | 84/85 | 30% / 90f=3s (D8) | ✅ |
+| Dodge prob/frames | 84/85 | — | removido 2026-09-23 (sem fonte valida) |
 | Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
 | Explosion Immunity | 116 | seta 1 | ✅ |
 | Warp Immunity | 75 | seta 1 | ✅ |
 | Toxic Immunity | 90 | seta 1 (opcional, design 3.2) | ✅ |
-| KB count | 1 | 4 | ✅ 0x872294 |
+| KB count | 1 | — (vanilla) | removido 2026-09-23 (sem fonte valida) |
+| Speed | 2 | ×29/23 (+6) | fonte reddit 1qv6rno; leitor provado |
+| Target Angel | 20 | seta 1 | fonte reddit 1qv6rno; leitor 0x875d20 |
 | Freeze prob/time | 25/26 | 20% / 90f | ✅ 0x873f54 / 0x878a70 |
 | Crit prob | 31 | 25% | ✅ 0x874204 |
 | Weaken prob/time/% | 37/38/39 | 100% / 120f / 50% | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |

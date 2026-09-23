@@ -88,8 +88,8 @@
 //     Off" e "Dodge" são a MESMA mecânica interna — o proc `IMUATK`.
 //     Não existe proc "DODGE" separado; "Shrug Off" é só o nome que a
 //     comunidade deu ao mesmo proc IMUATK num contexto sem trait-alvo
-//     específico. D15 = D8, já implementado via COL_DODGE_PROB/
-//     COL_DODGE_TIME_FRAMES — não é aproximação, é a mesma mecânica
+//     específico. D15 = D8 (removido 2026-09-23: sem fonte valida; cols 84/85/
+//     dodge) — não é aproximação, é a mesma mecânica
 //     confirmada por identidade de código, não por falta de opção
 //     melhor.
 //
@@ -247,18 +247,13 @@ struct PthreadMutexGuard {
 #define COL_ATK 3
 #define COL_ATTACK_INTERVAL 4
 #define COL_RANGE 5
+#define COL_SPEED 2
 #define COL_RECHARGE 7
 #define COL_WAVE_IMMUNITY 46
 #define COL_KNOCKBACK_IMMUNITY 48
 #define COL_SURGE_IMMUNITY 91
-#define COL_BEHEMOTH_SLAYER 105
-#define COL_WAVE_PROB 35
-#define COL_WAVE_LEVEL 36
-#define COL_WAVE_IS_MINI 94
 #define COL_STRENGTHEN_HP_PERCENT 40
 #define COL_STRENGTHEN_MULT_PERCENT 41
-#define COL_DODGE_PROB 84
-#define COL_DODGE_TIME_FRAMES 85
 #define COL_SAGE_SLAYER 111
 #define COL_EXPLOSION_IMMUNITY 116
 #define COL_WARP_IMMUNITY 75
@@ -266,7 +261,6 @@ struct PthreadMutexGuard {
 #define COL_TARGET_FLOATING 16
 #define COL_TARGET_AKU 96
 #define COL_STRONG_AGAINST 23
-#define COL_KB_COUNT 1
 #define COL_FREEZE_PROB 25
 #define COL_FREEZE_TIME 26
 #define COL_CRIT_PROB 31
@@ -277,15 +271,7 @@ struct PthreadMutexGuard {
 #define COL_FREEZE_IMMUNITY 49
 #define COL_SLOW_IMMUNITY 50
 #define COL_WEAKEN_IMMUNITY 51
-#define COL_TARGET_RED 10
-#define COL_TARGET_BLACK 17
-#define COL_TARGET_METAL 18
-#define COL_TARGET_TRAITLESS 19
 #define COL_TARGET_ANGEL 20
-#define COL_RESISTANT 29
-#define COL_MASSIVE_DAMAGE 30
-#define COL_COLOSSUS_SLAYER 97
-#define COL_SOUL_STRIKE 98
 #define TRUE_FORM_INDEX 2
 
 typedef void (*orig_load_unit_fn)(long big_data, int unit_id);
@@ -469,6 +455,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
         // Confirmado via tbcml (não suposição): range sem transform,
         // recharge/attack_interval = raw*2 exato (pair frames).
         scale_field(fb, COL_RANGE, 250, 190);        // 190 -> 250 (decisao do usuario) (leitor 0x872cc0)
+        scale_field(fb, COL_SPEED, 29, 23);          // +6 (reddit 1qv6rno, "Speed UP (+6 speed)")
         scale_field(fb, COL_RECHARGE, 2136, 2536);   // 2536f -> 2136f (-400f)
         // NAO-OP para o Mecha-Bun: COL_ATTACK_INTERVAL (col4) e' o mesmo
         // campo que a pesquisa D12 chama de TBA, e o raw do unit427.csv
@@ -483,7 +470,6 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_WAVE_IMMUNITY);
         set_bool_field(fb, COL_KNOCKBACK_IMMUNITY);
         set_bool_field(fb, COL_SURGE_IMMUNITY);
-        set_bool_field(fb, COL_BEHEMOTH_SLAYER);
         set_bool_field(fb, COL_SAGE_SLAYER);        // D11
         set_bool_field(fb, COL_EXPLOSION_IMMUNITY); // D13
         set_bool_field(fb, COL_WARP_IMMUNITY);      // D14
@@ -501,12 +487,6 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_TARGET_FLOATING);
         set_bool_field(fb, COL_TARGET_AKU);
 
-        // D6 Onda: 30% chance, nível 1, onda cheia (regra do usuario:
-        // proposta 20-30% -> 30%; onda cheia > mini).
-        set_field(fb, COL_WAVE_PROB, 30);
-        set_field(fb, COL_WAVE_LEVEL, 1);
-        set_field(fb, COL_WAVE_IS_MINI, 0);
-
         // D7 Strengthen: ativa a 50% de HP, +50% de dano (total 150%).
         // ATENCAO (achado de review, historico real no CHANGELOG): o campo
         // COL_STRENGTHEN_MULT_PERCENT e' BONUS-percentual (cf. tbcml
@@ -517,14 +497,9 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
         set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 50);
 
-        // D8 Dodge: 50% de chance (regra do usuario), esquiva por 3s (90f).
-        set_field(fb, COL_DODGE_PROB, 50);
-        set_field(fb, COL_DODGE_TIME_FRAMES, 90);
-
         // Leva 2026-09-23 (freebuff: leitor em batalha provado por coluna,
         // build 338b0601). Valores = maior citado na pesquisa comunitaria
         // (context/mecha-bun-extracao-completa.md), regra do usuario.
-        set_field(fb, COL_KB_COUNT, 4);
         set_field(fb, COL_FREEZE_PROB, 20);
         set_field(fb, COL_FREEZE_TIME, 90);
         set_field(fb, COL_CRIT_PROB, 25);
@@ -536,24 +511,15 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_SLOW_IMMUNITY);
         set_bool_field(fb, COL_WEAKEN_IMMUNITY);
 
-        // Leva 2 (regra do usuario: inclui propostas contestadas/rejeitadas).
-        // Leitores ainda a provar (maestri), sem efeito colateral se inertes.
-        set_bool_field(fb, COL_TARGET_RED);
-        set_bool_field(fb, COL_TARGET_BLACK);
-        set_bool_field(fb, COL_TARGET_METAL);
-        set_bool_field(fb, COL_TARGET_TRAITLESS);
+        // Fonte: reddit 1qv6rno ("Angel Targeting ..."); leitor 0x875d20.
         set_bool_field(fb, COL_TARGET_ANGEL);
-        set_bool_field(fb, COL_RESISTANT);
-        set_bool_field(fb, COL_MASSIVE_DAMAGE);
-        set_bool_field(fb, COL_COLOSSUS_SLAYER);
-        set_bool_field(fb, COL_SOUL_STRIKE);
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
                     "+80% formas 0/1, True Form 300k Lv50; 9 imunidades, "
-                    "crit/weaken/freeze/survive/KB4, onda 30%, 8 traits, resistant/massive/colossus/soulstrike, "
-                    "strengthen, dodge 50%)");
+                    "crit/weaken/freeze/survive, speed 29, alvos floating/aku/angel, "
+                    "strengthen)");
     }
 }
 
