@@ -108,23 +108,35 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 
 | Campo | Índice | Ação | Leitor confirmado |
 |---|---|---|---|
-| HP | 0 | ×1.8 (+80%) para forms 0/1; ×325/54 (~6.02×) para True Form (D16) | ✅ |
-| ATK | 3 | ×1.8 (+80%) | ❌ **SEM LEITOR** — não afeta dano real |
+| HP | 0 | ×1.8 (+80%) para forms 0/1; ×25/9 para True Form (300k Lv50) | ✅ |
+| ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310 (efeito em batalha ainda não medido) |
 | Speed | 2 | não mexido (design mantém) | ✅ |
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
-| Range | 5 | ×250/190 (190→250) | ❌ **SEM LEITOR** — D3 sem efeito |
+| Range | 5 | ×265/190 (190→265) | ❌ **SEM LEITOR** — D3 sem efeito |
 | Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
 | Wave Immunity | 46 | seta 1 | ✅ |
 | Knockback Immunity | 48 | seta 1 | ✅ |
 | Surge Immunity | 91 | seta 1 | ✅ |
 | Behemoth Slayer | 105 | seta 1 | ❌ **SEM LEITOR** — D9 sem efeito |
-| Wave prob/level/mini | 35/36/94 | 10% / lv1 / mini=1 (D6) | ✅ |
+| Wave prob/level/mini | 35/36/94 | 20% / lv1 / mini=1 (D6) | ✅ |
 | Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
-| Dodge prob/frames | 84/85 | 20% / 30f=1s (D8) | ✅ |
+| Dodge prob/frames | 84/85 | 30% / 90f=3s (D8) | ✅ |
 | Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
 | Explosion Immunity | 116 | seta 1 | ✅ |
 | Warp Immunity | 75 | seta 1 | ✅ |
 | Toxic Immunity | 90 | seta 1 (opcional, design 3.2) | ✅ |
+| KB count | 1 | 4 | ✅ 0x872294 |
+| Freeze prob/time | 25/26 | 20% / 90f | ✅ 0x873f54 / 0x878a70 |
+| Crit prob | 31 | 25% | ✅ 0x874204 |
+| Weaken prob/time/% | 37/38/39 | 100% / 120f / 50% | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |
+| Survive prob | 42 | 100% | ✅ 0x8740a4 |
+| Freeze/Slow/Weaken Immunity | 49/50/51 | seta 1 | ✅ 0x874e20 / 0x874ed8 / 0x874d68 |
+| Target Floating | 16 | seta 1 | ✅ 0x875ae4 |
+
+Leitores da leva 2026-09-23 achados por varredura estática do build
+`338b0601` (freebuff); valores = maior citado na pesquisa comunitária
+(regra de design do autor). Explosion attack e Omni Strike não existem no
+formato CSV. Hook "D2-fix" (0x8789e8) removido: era getter de freeze time.
 
 ## Cobertura do desejo da comunidade (D1-D17)
 

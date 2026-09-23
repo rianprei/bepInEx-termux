@@ -165,11 +165,10 @@
 //   dano sao +0x838c8/+0x838f8 (setters fileoff 0x86ac88/0x86bfd0, unicos
 //   writers, alimentados pelos getters fileoff 0x8782c4/0x878cec) — MAS
 //   esses 2 getters foram depois provados condicionais (gated por flag de
-//   warp/curse, ver bloco de comentario logo antes de kDmgBasePattern
-//   abaixo), nao o caminho do dano normal. O getter que de fato alimenta
-//   dano normal incondicional e outro: 0x8789e8 -> +0x83774 (coluna CSV
-//   26) — e' esse que a secao "D2-fix" hookeia hoje (unitIdx =
-//   MECHABUN_UNIT_IDX = 426, confirmado em device, mesma escala 9/5 do ATK).
+//   warp/curse), nao o caminho do dano normal. 0x8789e8 -> +0x83774
+//   (col26), hookeado ate 2026-09-23 como "D2-fix", e' o getter de
+//   FREEZE TIME, nao dano (hook removido). Dano normal: calc_atk 0x872440
+//   le col3 deste struct via tabela de colunas 0x1f8310 (build 338b0601).
 //
 //   IMPACTO PRATICO NO MOD ATUAL: os campos abaixo SAO ESCRITOS
 //   corretamente neste struct (offset e valor confirmados via log ao
@@ -267,6 +266,17 @@ struct PthreadMutexGuard {
 #define COL_TARGET_FLOATING 16
 #define COL_TARGET_AKU 96
 #define COL_STRONG_AGAINST 23
+#define COL_KB_COUNT 1
+#define COL_FREEZE_PROB 25
+#define COL_FREEZE_TIME 26
+#define COL_CRIT_PROB 31
+#define COL_WEAKEN_PROB 37
+#define COL_WEAKEN_TIME 38
+#define COL_WEAKEN_PERCENT 39
+#define COL_SURVIVE_PROB 42
+#define COL_FREEZE_IMMUNITY 49
+#define COL_SLOW_IMMUNITY 50
+#define COL_WEAKEN_IMMUNITY 51
 #define TRUE_FORM_INDEX 2
 
 typedef void (*orig_load_unit_fn)(long big_data, int unit_id);
@@ -383,17 +393,12 @@ static void hooked_load_unit(long big_data, int unit_id) {
 
         // Alta confiança: proporcional preserva o resultado final
         // independente da fórmula da curva de level.
-        // D16 Ultra Form (folded na True Form, sem forma nova): raw HP
-        // da True Form em unit427.csv (JP 15.0.0) = 4000, referência
-        // "atual" de HP Lv50 = 86.400 (fonte: design doc). Alvo Ultra
-        // = 520.000 -> razao exata 520000/86400 = 325/54 (fracao
-        // irredutivel, mesma logica proporcional das outras escalas:
-        // curva de level e multiplicativa sobre o raw, entao a razao
-        // final bate o alvo independente da formula exata da curva).
-        // Formas 0/1 (Normal/Evolved) mantem o alvo ideal padrao
-        // (+80%, D2); só a True Form recebe o tier Ultra.
+        // True Form: alvo 300.000 HP Lv50 (decisao do usuario 2026-09-23).
+        // Raw TF = 4000 -> Lv50 vanilla 108.000 (mesmo x27 de 3200 ->
+        // 86.400 das formas 0/1); 300000/108000 = 25/9. Versao anterior
+        // usava 325/54 contra 86.400 (base da forma errada) = ~650k real.
         if (form == TRUE_FORM_INDEX) {
-            scale_field(fb, COL_HP, 325, 54);  // alvo Ultra: 520.000 HP Lv50
+            scale_field(fb, COL_HP, 25, 9);    // 300.000 HP Lv50
         } else {
             scale_field(fb, COL_HP, 9, 5);     // +80% (D2)
         }
@@ -410,7 +415,7 @@ static void hooked_load_unit(long big_data, int unit_id) {
 
         // Confirmado via tbcml (não suposição): range sem transform,
         // recharge/attack_interval = raw*2 exato (pair frames).
-        scale_field(fb, COL_RANGE, 250, 190);        // 190 -> 250
+        scale_field(fb, COL_RANGE, 265, 190);        // 190 -> 265 (sem leitor ainda)
         scale_field(fb, COL_RECHARGE, 2136, 2536);   // 2536f -> 2136f (-400f)
         // NAO-OP para o Mecha-Bun: COL_ATTACK_INTERVAL (col4) e' o mesmo
         // campo que a pesquisa D12 chama de TBA, e o raw do unit427.csv
@@ -443,8 +448,8 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_bool_field(fb, COL_TARGET_FLOATING);
         set_bool_field(fb, COL_TARGET_AKU);
 
-        // D6 Mini-wave: 10% chance, nível 1, variante mini.
-        set_field(fb, COL_WAVE_PROB, 10);
+        // D6 Mini-wave: 20% chance, nível 1, variante mini.
+        set_field(fb, COL_WAVE_PROB, 20);   // regra do usuario: maior citado
         set_field(fb, COL_WAVE_LEVEL, 1);
         set_bool_field(fb, COL_WAVE_IS_MINI);
 
@@ -458,116 +463,38 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
         set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 50);
 
-        // D8 Dodge: 20% de chance, esquiva por 1s (30 frames a 30fps).
-        set_field(fb, COL_DODGE_PROB, 20);
-        set_field(fb, COL_DODGE_TIME_FRAMES, 30);
+        // D8 Dodge: 30% de chance, esquiva por 3s (90 frames a 30fps).
+        set_field(fb, COL_DODGE_PROB, 30);
+        set_field(fb, COL_DODGE_TIME_FRAMES, 90);
+
+        // Leva 2026-09-23 (freebuff: leitor em batalha provado por coluna,
+        // build 338b0601). Valores = maior citado na pesquisa comunitaria
+        // (context/mecha-bun-extracao-completa.md), regra do usuario.
+        set_field(fb, COL_KB_COUNT, 4);
+        set_field(fb, COL_FREEZE_PROB, 20);
+        set_field(fb, COL_FREEZE_TIME, 90);
+        set_field(fb, COL_CRIT_PROB, 25);
+        set_field(fb, COL_WEAKEN_PROB, 100);
+        set_field(fb, COL_WEAKEN_TIME, 120);    // 4s
+        set_field(fb, COL_WEAKEN_PERCENT, 50);
+        set_field(fb, COL_SURVIVE_PROB, 100);
+        set_bool_field(fb, COL_FREEZE_IMMUNITY);
+        set_bool_field(fb, COL_SLOW_IMMUNITY);
+        set_bool_field(fb, COL_WEAKEN_IMMUNITY);
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
-                    "+80% formas 0/1, True Form x325/54 (~6.02x, D16 Ultra); "
-                    "range/recarga ajustados, 6 imunidades + "
-                    "behemoth/sage slayer + mini-wave + strengthen + dodge)");
+                    "+80% formas 0/1, True Form 300k Lv50; 9 imunidades, "
+                    "crit/weaken/freeze/survive/KB4, mini-wave 20%, "
+                    "strengthen, dodge 30%)");
     }
 }
 
-// ---------------------------------------------------------------------------
-// D2-fix (sessao Ghidra q12-q19, sem device): o writer de deploy
-// (FUN_008c209c, fileoff 0x7c209c) NAO propaga o struct CSV que o hook
-// acima patcha para os campos de dano que a batalha realmente le.
-// Cadeia confirmada via decompile (mesmo .so do device, md5 1f9bb61e;
-// fileoff = vaddr Ghidra - 0x100000):
-//   consumidor FUN_00592dd0 le dano-base via
-//     FUN_0096ac48(side,slot) = *(singleton+side*0xc738+slot*0x3e8+0x838c8)
-//     FUN_0096bf90(side,slot) = *(singleton+side*0xc738+slot*0x3e8+0x838f8)
-//   aplicando so reducao ((100-x)*dano)/100 (warp/curse) — sem re-escala.
-//   Esses campos sao escritos no deploy pelos SETTERs FUN_0096ac88 /
-//   FUN_0096bfd0 (fileoff 0x86ac88/0x86bfd0, unicos writers) com o RETORNO de:
-//     FUN_009782c4(side,unitIdx,form)  (fileoff 0x8782c4) -> +0x838c8
-//     FUN_00978cec(side,unitIdx,form)  (fileoff 0x878cec) -> +0x838f8
-//   que valem struct+0x120 / struct+0x174 + factory(kind 9 / 0x3c).
-// Por isso o patch no struct CSV (campo +0xC) nunca chegou ao dano (600
-// vs 720): tabela E campo diferentes. O hook abaixo corrige na FRONTEIRA
-// (retorno dos 2 getters quando unitIdx == Mecha-Bun) — funciona
-// independente de qual ramo interno (struct vs tabela estatica via
-// DT_JMPREL) a funcao tomar, mesma logica do hook FUN_008307ec acima.
-//   Assinatura (decompile real, ambas identicas): int (int side,
-//   int unit_idx, int form). unit_idx CONFIRMADO EM DEVICE (log
-//   "DEBUG dmg-warp call#7 side=0 unit_idx=426 form=0 orig=0", sessao
-//   live 2026-09-20): e o unitId literal, SEM o offset -2 usado em
-//   UNIT_ID_TABLE_OFFSET — hipotese antiga (424) estava errada, nunca
-//   bateu em teste real. form = indice 0..3 (stride 0x1d8 dentro do
-//   bloco 0x760: 4*472 = 1888 = 0x760 exato; nivel quebraria o bloco,
-//   entao nao e level). Retorno = dano raw pre-reducao, mesmo dominio
-//   do ATK raw -> mesma escala 9/5 do COL_ATK (uniforme nas 4 formas,
-//   como o hook acima ja faz).
-//   AOBs de 48 bytes extraidos do .so real do device e verificados
-//   UNICOS no binario inteiro (contagem exata = 1 cada, no offset certo;
-//   prologos compartilham 28 bytes iniciais, os bytes 28-29 discriminam).
-//   Reverificar a cada update do jogo, mesma disciplina do STAT_BLOCK_OFF.
-// ---------------------------------------------------------------------------
-#define MECHABUN_UNIT_IDX MECHABUN_UNIT_ID
-
-typedef int (*orig_dmg_getter_fn)(int side, int unit_idx, int form);
-// 0x8789e8 -> +0x83774 (coluna CSV 26, dano NORMAL incondicional). Os 2
-// getters warp/curse anteriores (0x8782c4/0x878cec -> +0x838c8/+0x838f8)
-// ficaram provados condicionais via r2 (gated por tbz de flag warp/curse
-// no lado consumidor, FUN_00592dd0 @ 0x493a80/0x493e80) — confirmado tb
-// em device: 6/6 disparos com orig=0 num hit normal sem status. O campo
-// que o dano normal realmente le e +0x83774, alimentado por este getter.
-static orig_dmg_getter_fn g_orig_dmg_base = nullptr;
-
-static const uint8_t kDmgBasePattern[] = {
-    0xfd, 0x7b, 0xbd, 0xa9, 0xf6, 0x57, 0x01, 0xa9, 0xf4, 0x4f, 0x02, 0xa9,
-    0xfd, 0x03, 0x00, 0x91, 0xf3, 0x03, 0x02, 0x2a, 0xf4, 0x03, 0x01, 0x2a,
-    0xf5, 0x03, 0x00, 0x2a, 0x56, 0x25, 0xf6, 0x97, 0x08, 0x3e, 0x80, 0x52,
-    0x09, 0xc9, 0x84, 0x52, 0xa8, 0x02, 0x28, 0x9b, 0x00, 0x01, 0x09, 0x8b,
-};
-static const uint8_t kDmgBaseMask[sizeof(kDmgBasePattern)] = {
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-};
-
-static int scale_dmg_ret(int orig) {
-    return (int)(((int64_t)orig * 9) / 5);  // mesma razao do COL_ATK
-}
-
-static int hooked_dmg_base(int side, int unit_idx, int form) {
-    int orig = g_orig_dmg_base(side, unit_idx, form);
-    if (unit_idx != MECHABUN_UNIT_IDX) return orig;
-    int scaled = scale_dmg_ret(orig);
-    if (g_api != nullptr) {
-        char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "[mechabun] D2-fix dmg-base side=%d unit=%d form=%d "
-                 "orig=%d scaled=%d",
-                 side, unit_idx, form, orig, scaled);
-        g_api->log(BC_LOG_INFO, buf);
-    }
-    return scaled;
-}
-
-// Instala o hook do getter de dano normal; falha nao derruba o mod
-// principal (dano segue vanilla, resto do patch CSV continua valendo).
-static bool try_install_dmg_hooks(const bc_mod_api *api) {
-    if (g_orig_dmg_base != nullptr) return true;
-    void *t = api->resolve_pattern(kDmgBasePattern, kDmgBaseMask,
-                                   sizeof(kDmgBasePattern));
-    if (t != nullptr &&
-        api->install_hook(t, (void *)hooked_dmg_base,
-                          (void **)&g_orig_dmg_base)) {
-        api->log(BC_LOG_INFO,
-                 "[mechabun] D2-fix: hook getter dano-base instalado "
-                 "(0x8789e8 -> +0x83774, col26)");
-        return true;
-    }
-    api->log(BC_LOG_WARN,
-             "[mechabun] D2-fix: getter dano-base NAO hookado "
-             "(pattern mudou?) — dano segue vanilla");
-    return false;
-}
+// D2-fix REMOVIDO (2026-09-23): o hook em 0x8789e8 era o getter de
+// freeze time (col26 + talento), nao dano -- escalava o freeze 9/5.
+// Dano real passa por calc_atk 0x872440 (le col3 do struct); ver
+// CHANGELOG.
 
 // D16.1 — redirect de deploy/upgrade icon (fopen hook, mod-only, zero
 // arquivo do jogo tocado). fopen é símbolo importado real (PLT), ABI
@@ -707,9 +634,6 @@ extern "C" BC_MOD_EXPORT bool bc_mod_register(const bc_mod_api *api) {
         if (g_orig_fopen == nullptr && api != nullptr && api->log != nullptr) {
             try_install_fopen_hook(api);
         }
-        if (g_orig_dmg_base == nullptr && api != nullptr && api->log != nullptr) {
-            try_install_dmg_hooks(api);
-        }
         if (api != nullptr && api->log != nullptr) {
             api->log(BC_LOG_INFO,
                        "[mechabun] ja registrado (hot-reload) — hooks preservados");
@@ -744,9 +668,6 @@ extern "C" BC_MOD_EXPORT bool bc_mod_register(const bc_mod_api *api) {
         return false;
     }
     api->log(BC_LOG_INFO, "[mechabun] hook instalado, aguardando load do unit_id 426 (unit427.csv)");
-    // D2-fix: hook de retorno no getter de dano (falha isolada nao
-    // derruba o registro — ver try_install_dmg_hooks).
-    try_install_dmg_hooks(api);
 
     // D16.1 icon redirect: opcional, não derruba o mod principal se
     // falhar (resolve_symbol pode não existir em loader mais antigo,

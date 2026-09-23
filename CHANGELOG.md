@@ -6,6 +6,22 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## Unreleased
 
+### Added
+- **`mods/mechabun`**: KB 4, Freeze 20%/90f, Crit 25%, Weaken 100%/120f/50%,
+  Survive 100%, imunidades Freeze/Slow/Weaken — cada coluna com leitor em
+  batalha provado no build `338b0601`. Mini-wave 20%, Dodge 30%/90f,
+  range 265 (ainda sem leitor).
+
+### Changed
+- **`mods/mechabun`**: HP True Form ×25/9 = 300k Lv50. O ×325/54 antigo
+  usava a base Lv50 da forma normal (86,4k) e dava ~650k real (base TF =
+  108k).
+
+### Removed
+- **`mods/mechabun`**: hook "D2-fix" em 0x8789e8 — é o getter de freeze
+  time (col26), não de dano; escalaria o freeze 9/5. O dano normal vem de
+  `calc_atk` 0x872440, que lê col3 do struct já patchado.
+
 ### Fixed
 - **`mods/mechabun` `verify_unit_base`**: device real (build `338b0601`)
   leu range=760 (190×4) com ATK 400/500 exatos — offset certo, struct
