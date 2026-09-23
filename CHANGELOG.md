@@ -8,6 +8,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ### Added
 - mechabun: target traits red/black/metal/traitless/angel, resistant, massive damage, colossus slayer and soul strike (battle readers pending proof).
+- mechabun: thread 1qv6rno checked in a real browser: mini-wave 100% lv2, dodge 20%/30f, toxic immunity, weaken 25%/90f/50%.
 - mechabun: second source pass (context/mecha-bun-fontes-kimi-2.md): removed survive and wave/explosion/toxic/slow/weaken immunities; weaken 50%/90f; behemoth slayer restored (fandom source).
 - mechabun: removed everything without a valid source (targets red/black/metal/traitless, resistant, massive, colossus, soul strike, behemoth, wave attack, dodge, KB count 4); added speed +6 (reddit 1qv6rno).
 - mechabun: range 190 -> 250 (user decision; 265 had no traceable source).

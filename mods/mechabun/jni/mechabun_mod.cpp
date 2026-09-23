@@ -263,6 +263,12 @@ struct PthreadMutexGuard {
 #define COL_FREEZE_TIME 26
 #define COL_CRIT_PROB 31
 #define COL_WEAKEN_PROB 37
+#define COL_WAVE_PROB 35
+#define COL_WAVE_LEVEL 36
+#define COL_WAVE_IS_MINI 94
+#define COL_DODGE_PROB 84
+#define COL_DODGE_TIME_FRAMES 85
+#define COL_TOXIC_IMMUNITY 90
 #define COL_WEAKEN_TIME 38
 #define COL_WEAKEN_PERCENT 39
 #define COL_FREEZE_IMMUNITY 49
@@ -496,19 +502,31 @@ static void hooked_load_unit(long big_data, int unit_id) {
         set_field(fb, COL_FREEZE_PROB, 20);
         set_field(fb, COL_FREEZE_TIME, 90);
         set_field(fb, COL_CRIT_PROB, 25);
-        set_field(fb, COL_WEAKEN_PROB, 50);     // reddit 1qv6rno "Weaken (50% for 90f)"
+        // reddit 1qv6rno: "Weaken (50% for 90f)" = 25% de chance, 50% de
+        // potencia, 90f (esclarecido pelo autor no mesmo thread).
+        set_field(fb, COL_WEAKEN_PROB, 25);
         set_field(fb, COL_WEAKEN_TIME, 90);
         set_field(fb, COL_WEAKEN_PERCENT, 50);
         set_bool_field(fb, COL_FREEZE_IMMUNITY);
 
         // Fonte: reddit 1qv6rno ("Angel Targeting ..."); leitor 0x875d20.
         set_bool_field(fb, COL_TARGET_ANGEL);
+        // reddit 1qv6rno: "guaranteed mini-wave lv.1" e "30% mini wave lv2"
+        // -> maior de cada: 100%, nivel 2, mini.
+        set_field(fb, COL_WAVE_PROB, 100);
+        set_field(fb, COL_WAVE_LEVEL, 2);
+        set_bool_field(fb, COL_WAVE_IS_MINI);
+        // reddit 1qv6rno: "20% dodge for 1 second".
+        set_field(fb, COL_DODGE_PROB, 20);
+        set_field(fb, COL_DODGE_TIME_FRAMES, 30);
+        // reddit 1qv6rno: "... and some toxic immunity".
+        set_bool_field(fb, COL_TOXIC_IMMUNITY);
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
                     "+80% formas 0/1, True Form 300k Lv50; imunidades KB/surge/warp/freeze, "
-                    "crit/weaken/freeze, speed 29, behemoth/sage, alvos floating/aku/angel, "
+                    "crit/weaken/freeze, mini-onda 100% lv2, dodge 20%, toxic, speed 29, behemoth/sage, alvos floating/aku/angel, "
                     "strengthen)");
     }
 }
