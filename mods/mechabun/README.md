@@ -505,9 +505,9 @@ suposição rotulada**:
 - HP, ATK — multiplicar o raw por 1.8 propaga +80% pro stat final
   calculado pelo jogo, seja qual for a curva de `unitlevel.csv` aplicada
   depois (curva multiplicativa preserva proporção).
-  **⚠️ SEM LEITOR CONFIRMADO** — ATK escrito no struct mas **não afeta
-  dano real** (D2 é apenas HP Up 80%; ATK não tem leitor no jogo,
-  ver `context/battlecats-mechabun-atk-dead-struct.md`).
+  ✅ Leitor confirmado: `calc_atk` 0x872440 lê col3 do struct (o antigo
+  "ATK sem leitor" de `context/battlecats-mechabun-atk-dead-struct.md`
+  foi superado).
 - Recharge — **fórmula confirmada exata** via tbcml
   (`unit.py:126-136`, `Frames.from_pair_frames`): frames reais = raw × 2
   ("pair frames"). Não é suposição — é o código de conversão real da
@@ -517,8 +517,7 @@ suposição rotulada**:
 - Range — **confirmado sem transform** via tbcml (`cats.py:332`,
   `self.range = raw_data[5]`, sem wrapper nenhum): valor final = raw
   direto. Escalar raw por 250/190 dá final=250 exato, não aproximado.
-  **⚠️ SEM LEITOR CONFIRMADO** — D3 (range) escrito no struct mas sem
-  efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
+  ✅ Leitor confirmado: getter 0x872cc0 lê col5 do struct (`add #0x32c`).
 - Imunidades e Behemoth Slayer — bool flags diretos (`tbcml`
   `unit_bool()` = `bool(value)`, 0=false/qualquer-não-zero=true), sem
   ambiguidade.
