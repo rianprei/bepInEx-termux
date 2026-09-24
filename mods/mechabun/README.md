@@ -114,25 +114,25 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
 | Range | 5 | ×250/190 (190→250; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
 | Recharge | 7 | ×2136/2536 (-400f) | ❌ **SEM LEITOR** — D5 sem efeito |
-| Wave Immunity | 46 | — | removido 2026-09-23 (sem fonte valida) |
+| Wave Immunity | 46 | seta 1 | fonte reddit 1ftdnvo t1_lpt0btb ("Immunities: Surge and Wave"); leitor 0x874904 |
 | Knockback Immunity | 48 | seta 1 | ✅ |
 | Surge Immunity | 91 | seta 1 | ✅ |
-| Behemoth Slayer | 105 | seta 1 | fonte fandom f/p/4400000000000734592; ❌ SEM LEITOR |
+| Behemoth Slayer | 105 | seta 1 | fonte reddit 1jbfu1p t1_mhtqriz ("behemoth slayer"; fandom 734592 citado antes era falso); ❌ SEM LEITOR |
 | Wave prob/level/mini | 35/36/94 | 100% / lv2 / mini | fonte reddit 1qv6rno (verificado no browser) |
 | Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
 | Dodge prob/frames | 84/85 | 20% / 30f | fonte reddit 1qv6rno (verificado no browser) |
 | Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
-| Explosion Immunity | 116 | — | removido 2026-09-23 (sem fonte valida) |
+| Explosion Immunity | 116 | seta 1 | fonte reddit 1o3deph OP ("explosion immunity", EN original); leitor 0x876c14 |
 | Warp Immunity | 75 | seta 1 | ✅ |
 | Toxic Immunity | 90 | seta 1 | fonte reddit 1qv6rno (verificado no browser) |
-| KB count | 1 | — (vanilla) | removido 2026-09-23 (sem fonte valida) |
+| KB count | 1 | 4 | fonte reddit 1ftdnvo t1_lpt0btb ("KB: 4"); leitor 0x872290 |
 | Speed | 2 | ×29/23 (+6) | fonte reddit 1qv6rno; leitor provado |
 | Target Angel | 20 | seta 1 | fonte reddit 1qv6rno; leitor 0x875d20 |
 | Freeze prob/time | 25/26 | 20% / 90f | ✅ 0x873f54 / 0x878a70 |
 | Crit prob | 31 | 25% | ✅ 0x874204 |
 | Weaken prob/time/% | 37/38/39 | 25% / 90f / 50% (reddit 1qv6rno) | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |
-| Survive prob | 42 | — | removido 2026-09-23 (sem fonte valida) |
-| Freeze Immunity | 49 | seta 1 | ✅ 0x874e20 (Slow 50 / Weaken 51: removidos 2026-09-23, sem fonte valida) |
+| Survive prob | 42 | 100% | fonte reddit 1ftdnvo t1_lpt0btb ("100% To Survive"); leitor 0x8740a0 |
+| Freeze Immunity | 49 | seta 1 | fonte reddit 1jbfu1p t1_mhuq8zp ("freeze immune"); ✅ 0x874e20 (Slow 50 / Weaken 51: removidos 2026-09-23, sem fonte valida) |
 | Target Floating | 16 | seta 1 | ✅ 0x875ae4 |
 
 Teto de nível 60+90: o mod reescreve na memória a linha 426 do

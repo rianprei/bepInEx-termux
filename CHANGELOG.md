@@ -7,6 +7,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## Unreleased
 
 ### Added
+- mechabun: sources re-verified in a real browser (context/mecha-bun-fontes-verificadas.md, OpenCode + freebuff English originals): KB count 4, survive 100% and wave immunity (reddit 1ftdnvo t1_lpt0btb), explosion immunity (1o3deph OP; explosion, not surge). Behemoth Slayer source corrected to 1jbfu1p (fandom 734592 was not a real quote).
 - mechabun: target traits red/black/metal/traitless/angel, resistant, massive damage, colossus slayer and soul strike (battle readers pending proof).
 - mechabun: thread 1qv6rno checked in a real browser: mini-wave 100% lv2, dodge 20%/30f, toxic immunity, weaken 25%/90f/50%.
 - mechabun: second source pass (context/mecha-bun-fontes-kimi-2.md): removed survive and wave/explosion/toxic/slow/weaken immunities; weaken 50%/90f; behemoth slayer restored (fandom source).
