@@ -1,17 +1,30 @@
-// kungfux_mod.cpp — Kung Fu Cat X (#132): remove os cons da wiki
-// (https://battle-cats.fandom.com/wiki/Kung_Fu_Cat_X_(Rare_Cat)) sem mexer
-// nos pros. Plano e contas: context/kungfu-cat-x-132-plano.md (vault).
+// kungfux_mod.cpp — Kung Fu Cat X (#132): remove os cons levantados pela
+// comunidade sem mexer nos pros. Cons e fontes: context/kfx-cons-CONSOLIDADO.md;
+// plano e contas: context/kungfu-cat-x-132-plano.md (vault).
 //
-//   con wiki                        col  vanilla (f0/f1/f2)   patch
-//   "Slow ... movement speed"        2   8                    10 (mediana Rare)
-//   "One knockback"                  1   1                    3  (mediana Rare)
-//   "Single Attack"                 12   0                    1  (area)
-//   "Slow attack rate"               4   100/88/73            40/28/28
-//   "Very expensive"                 6   1560                 -- (sem leitor no struct)
+//   con                              col       vanilla (f0/f1/f2)  patch
+//   "Slow ... movement speed"        2         8                   10 (mediana Rare)
+//   "One knockback" / fragil         1         1                   3  (mediana Rare)
+//   "Single Attack"                 12         0                   1  (area)
+//   "Slow attack rate"               4         100/88/73           40 (ciclo 90f)
+//   3o golpe carrega o dano e erra  3,59-62   multi-hit f1/f2     1 golpe (soma) no frame 11
+//   HP baixo (16.9k Lv30)            0         999                 1648 (Lv30 ~28k ~ Dancer TF 27.5k)
+//   range curto                      5         300                 350 (Dancer TF 330)
+//   "Very expensive"                 6         1560                1200 (Cap.2 1800 < Dancer 2250)
 //
 // Ciclo de ataque = col4*2 + ultimo foreswing - 1 (bate com a wiki nas 3
-// formas: 210/210/180f). Alvo 90f (3s): f0 foreswing 11 -> col4 40;
-// f1/f2 ultimo foreswing 35 -> col4 28.
+// formas: 210/210/180f). Com 1 golpe so, o ultimo foreswing vira o col13
+// (11f nas 3 formas) -> col4 40 = 90f (3s) em todas; DPS igual ao de antes,
+// mas o dano sai no frame 11 em vez do 35 e nao some quando os golpes 1-2
+// empurram o inimigo.
+//
+// Leitores do struct (build 338b0601): multi-hit por tabela de colunas
+// por golpe — ATK (3,59,60) 0x1f8310 lida em 0x872584/0x87270c, foreswing
+// (13,61,62) 0x1f8328 em 0x872b4c, ability (63,64,65) 0x1f8340 em 0x8734bc;
+// range 0x872cc0. Custo: 0x793f44 multiplica o col6 por 100 logo apos o
+// load (1560 -> 156000), entao escala proporcional (vale antes ou depois).
+// Warp immunity fica: contestada (3 fontes acham que atrapalha, outras a
+// chamam de unica vantagem).
 //
 // Sem hook: o 01_mechabun ja engancha o loader de unit CSV (Dobby recusa
 // hook duplo e o AOB some depois do 1o hook). Aqui uma thread le o struct
@@ -37,7 +50,16 @@
 #define COL_SPEED 2
 #define COL_ATK 3
 #define COL_ATTACK_INTERVAL 4
+#define COL_RANGE 5
+#define COL_COST 6
 #define COL_AREA 12
+#define COL_FORESWING1 13
+#define COL_ATK2 59
+#define COL_ATK3 60
+#define COL_FORESWING2 61
+#define COL_FORESWING3 62
+#define COL_USE_ABILITY2 64
+#define COL_USE_ABILITY3 65
 
 // Getter do singleton P (0x601f5c): adrp x0,#0xb71000 / add x0,x0,#0x320 / ret.
 // Unico no binario (contagem = 1).
@@ -71,14 +93,31 @@ static bool is_vanilla(long p) {
            *field(form_base(p, 2), COL_AREA) == 0;
 }
 
+static void scale_field(long fb, int col, int num, int den) {
+    int32_t *f = field(fb, col);
+    *f = (int32_t)((int64_t)*f * num / den);
+}
+
 static void apply(long p) {
-    static const int32_t interval[N_FORMS] = {40, 28, 28};
     for (int form = 0; form < N_FORMS; form++) {
         long fb = form_base(p, form);
         *field(fb, COL_SPEED) = 10;
         *field(fb, COL_KB_COUNT) = 3;
         *field(fb, COL_AREA) = 1;
-        *field(fb, COL_ATTACK_INTERVAL) = interval[form];
+        *field(fb, COL_ATTACK_INTERVAL) = 40;
+        scale_field(fb, COL_HP, 1648, 999);
+        scale_field(fb, COL_RANGE, 350, 300);
+        scale_field(fb, COL_COST, 1200, 1560);
+        // Multi-hit -> 1 golpe com o dano somado, no foreswing do golpe 1.
+        if (*field(fb, COL_ATK2) > 0) {
+            *field(fb, COL_ATK) += *field(fb, COL_ATK2) + *field(fb, COL_ATK3);
+            *field(fb, COL_ATK2) = 0;
+            *field(fb, COL_ATK3) = 0;
+            *field(fb, COL_FORESWING2) = 0;
+            *field(fb, COL_FORESWING3) = 0;
+            *field(fb, COL_USE_ABILITY2) = 0;
+            *field(fb, COL_USE_ABILITY3) = 0;
+        }
     }
 }
 
@@ -89,10 +128,13 @@ static void *watch(void *) {
         if (is_vanilla(p)) {
             apply(p);
             applied++;
-            char buf[160];
+            long tf = form_base(p, 2);
+            char buf[256];
             snprintf(buf, sizeof(buf),
                      "[kungfux] #132 patch aplicado (#%d): speed 10, KB 3, area, "
-                     "ciclo 90f (col4 40/28/28)", applied);
+                     "ciclo 90f, 1 golpe (TF atk %d, fs %d), HP %d, range %d, custo %d",
+                     applied, *field(tf, COL_ATK), *field(tf, COL_FORESWING1), *field(tf, COL_HP),
+                     *field(tf, COL_RANGE), *field(tf, COL_COST));
             g_api->log(BC_LOG_INFO, buf);
         }
         sleep(1);
