@@ -108,8 +108,8 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 
 | Campo | Índice | Ação | Leitor confirmado |
 |---|---|---|---|
-| HP | 0 | ×1.8 (+80%) para forms 0/1; ×25/9 para True Form (300k Lv50) | ✅ |
-| ATK | 3 | ×1.8 (+80%) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310; medido em batalha: TF Lv20 = 10.800 (900×12; vanilla 6.000) |
+| HP | 0 | ×1.8 (+80%) para forms 0/1; ×347/72 para True Form (520.500 Lv50, reddit 1ftdnvo t1_lpt0btb) | ✅ |
+| ATK | 3 | ×1.8 (+80%) forms 0/1; ×75/34 True Form (18.750 Lv30, fandom 830328) | ✅ `calc_atk` 0x872440 lê o struct via tabela de colunas 0x1f8310; medido em batalha: TF Lv20 = 10.800 (900×12; vanilla 6.000) |
 | Speed | 2 | não mexido (design mantém) | ✅ |
 | Attack Interval | 4 | ×26/32 (32f→26f) | ✅ |
 | Range | 5 | ×250/190 (190→250; struct guarda ×4) | ✅ getter 0x872cc0 lê col5 (+0x9e32c), chamado no builder de batalha 0x7c23cc |
@@ -118,8 +118,8 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | Knockback Immunity | 48 | seta 1 | ✅ |
 | Surge Immunity | 91 | seta 1 | ✅ |
 | Behemoth Slayer | 105 | seta 1 | fonte reddit 1jbfu1p t1_mhtqriz ("behemoth slayer"; fandom 734592 citado antes era falso); ❌ SEM LEITOR |
-| Wave prob/level/mini | 35/36/94 | 100% / lv2 / mini | fonte reddit 1qv6rno (verificado no browser) |
-| Strengthen hp%/mult% | 40/41 | 50% HP / +50% dano (D7) | ✅ |
+| Wave prob/level/mini | 35/36/94 | 100% / lv5 / normal (1qv6rno + fandom 928474) | fonte reddit 1qv6rno (verificado no browser) |
+| Strengthen hp%/mult% | 40/41 | 50% HP / +100% dano (reddit 1w2hi4l imagem "damage X2") | ✅ |
 | Dodge prob/frames | 84/85 | 20% / 30f | fonte reddit 1qv6rno (verificado no browser) |
 | Sage Slayer | 111 | seta 1 (D11) | ❌ **SEM LEITOR** — D11 sem efeito |
 | Explosion Immunity | 116 | seta 1 | fonte reddit 1o3deph OP ("explosion immunity", EN original); leitor 0x876c14 |
@@ -128,11 +128,19 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
 | KB count | 1 | 4 | fonte reddit 1ftdnvo t1_lpt0btb ("KB: 4"); leitor 0x872290 |
 | Speed | 2 | ×29/23 (+6) | fonte reddit 1qv6rno; leitor provado |
 | Target Angel | 20 | seta 1 | fonte reddit 1qv6rno; leitor 0x875d20 |
-| Freeze prob/time | 25/26 | 20% / 90f | ✅ 0x873f54 / 0x878a70 |
+| Freeze prob/time | 25/26 | 38% / 90f (1qv6rno "+2% per lvl", nivel 10) | ✅ 0x873f54 / 0x878a70 |
 | Crit prob | 31 | 25% | ✅ 0x874204 |
 | Weaken prob/time/% | 37/38/39 | 25% / 90f / 50% (reddit 1qv6rno) | ✅ 0x873d84 / 0x878bc0 / 0x878c90 |
 | Survive prob | 42 | 100% | fonte reddit 1ftdnvo t1_lpt0btb ("100% To Survive"); leitor 0x8740a0 |
 | Freeze Immunity | 49 | seta 1 | fonte reddit 1jbfu1p t1_mhuq8zp ("freeze immune"); ✅ 0x874e20 (Slow 50 / Weaken 51: removidos 2026-09-23, sem fonte valida) |
+| Explosion prob/start/range | 113/114/115 | 100% / range / 0 | reddit 1w2hi4l imagem; início/alcance = convenção das 33 unidades vanilla; leitores 0x876bf0/0x87891c/0x8789c4 |
+| Savage prob/dmg | 82/83 | 20% / +200% | reddit 1ftdnvo t1_lpt0btb; +200% = todas as vanilla; leitores 0x87601c/0x878ec0 |
+| Shield pierce | 95 | 20% | reddit 1ftdnvo t1_lpt0btb; ❌ SEM LEITOR achado |
+| KB/Slow/Curse prob | 24/27/92 | 20% cada (slow 60f, curse 90f = mediana vanilla) | reddit 1jbfu1p t1_mhuaq06; leitores 0x8745bc/0x873ff8/0x876374 |
+| Target Red/Black/Alien | 10/17/21 | seta 1 | reddit 1w2hi4l t1_p72h74v; leitores 0x875a20/0x875ba0/0x872178 |
+| Zombie Killer / Resistant / Massive | 52/29/30 | seta 1 | 1w2hi4l t1_p72h74v / 1jbfu1p t1_mhtqriz / 1jbfu1p t1_mhuaq06; ❌ SEM LEITOR achado |
+| Curse Immunity | 79 | seta 1 | reddit 1qv6rno t1_o3fjne2 |
+| Multi-hit (TF) | 59-65 | 3 hits (20/25/30f, dano = ATK) | reddit 1w2hi4l t1_p72h74v "hits three times"; ciclo segue 33f |
 | Target Floating | 16 | seta 1 | ✅ 0x875ae4 |
 
 Teto de nível 60+90: o mod reescreve na memória a linha 426 do

@@ -7,6 +7,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## Unreleased
 
 ### Added
+- mechabun: every remaining sourced proposal at its highest value ("se tem fonte adiciona"): TF HP 520.5k Lv50 / ATK 18.75k Lv30, freeze 38%, wave lv5 normal 100%, strengthen x2, explosion 100%, savage 20%, shield pierce 20%, KB/slow/curse 20%, red/black/alien targets, zombie killer, resistant, massive, curse immunity, 3-hit TF. Missing parameters use vanilla data conventions (explosion start = range, savage +200%, slow 60f, curse 90f).
 - kungfux (new mod, `02_kungfux.so`): Kung Fu Cat X #132 without the wiki cons (speed 10, KB 3, area attack, 90f attack cycle); no hook, patches the unit struct from a watcher thread once vanilla values are seen. Cost still unchanged (no struct reader).
 - mechabun: sources re-verified in a real browser (context/mecha-bun-fontes-verificadas.md, OpenCode + freebuff English originals): KB count 4, survive 100% and wave immunity (reddit 1ftdnvo t1_lpt0btb), explosion immunity (1o3deph OP; explosion, not surge). Behemoth Slayer source corrected to 1jbfu1p (fandom 734592 was not a real quote).
 - mechabun: target traits red/black/metal/traitless/angel, resistant, massive damage, colossus slayer and soul strike (battle readers pending proof).

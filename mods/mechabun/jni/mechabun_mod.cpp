@@ -277,6 +277,30 @@ struct PthreadMutexGuard {
 #define COL_SURVIVE_PROB 42
 #define COL_WAVE_IMMUNITY 46
 #define COL_EXPLOSION_IMMUNITY 116
+#define COL_EXPLOSION_PROB 113
+#define COL_EXPLOSION_START 114
+#define COL_EXPLOSION_RANGE 115
+#define COL_SAVAGE_PROB 82
+#define COL_SAVAGE_DMG_PERCENT 83
+#define COL_SHIELD_PIERCE_PROB 95
+#define COL_KB_PROB 24
+#define COL_SLOW_PROB 27
+#define COL_SLOW_TIME 28
+#define COL_CURSE_PROB 92
+#define COL_CURSE_TIME 93
+#define COL_TARGET_RED 10
+#define COL_TARGET_BLACK 17
+#define COL_TARGET_ALIEN 21
+#define COL_ZOMBIE_KILLER 52
+#define COL_RESISTANT 29
+#define COL_MASSIVE_DAMAGE 30
+#define COL_CURSE_IMMUNITY 79
+#define COL_ATK2 59
+#define COL_ATK3 60
+#define COL_FORESWING2 61
+#define COL_FORESWING3 62
+#define COL_USE_ABILITY2 64
+#define COL_USE_ABILITY3 65
 #define TRUE_FORM_INDEX 2
 
 typedef void (*orig_load_unit_fn)(long big_data, int unit_id);
@@ -441,13 +465,18 @@ static void hooked_load_unit(long big_data, int unit_id) {
         // Raw TF = 4000 -> Lv50 vanilla 108.000 (mesmo x27 de 3200 ->
         // 86.400 das formas 0/1); 300000/108000 = 25/9. Versao anterior
         // usava 325/54 contra 86.400 (base da forma errada) = ~650k real.
+        // 2026-09-24 regra maxima com fonte: TF HP 520.500 (reddit 1ftdnvo
+        // t1_lpt0btb "HP: 520500"; lido como Lv50, mesma base do alvo antigo
+        // de 300k) = 108.000*347/72. TF ATK 18.750 no Lv30 (fandom 830328
+        // Catacyclone "Damage: 11,250 --> 18,750") = 8.500*75/34.
+        int32_t atk_before = *field_ptr(fb, COL_ATK);
         if (form == TRUE_FORM_INDEX) {
-            scale_field(fb, COL_HP, 25, 9);    // 300.000 HP Lv50
+            scale_field(fb, COL_HP, 347, 72);  // 520.500 HP Lv50
+            scale_field(fb, COL_ATK, 75, 34);  // 18.750 ATK Lv30
         } else {
             scale_field(fb, COL_HP, 9, 5);     // +80% (D2)
+            scale_field(fb, COL_ATK, 9, 5);    // +80%
         }
-        int32_t atk_before = *field_ptr(fb, COL_ATK);
-        scale_field(fb, COL_ATK, 9, 5);    // +80%
         int32_t atk_after = *field_ptr(fb, COL_ATK);
         if (g_api != nullptr) {
             char dbgbuf[96];
@@ -497,13 +526,17 @@ static void hooked_load_unit(long big_data, int unit_id) {
         // abaixo fica em 50, nunca 150. Uma versao anterior deste mod usou
         // 150 achando que era "dano total", e isso over-buffou 2.5x na
         // pratica (ja corrigido, ver CHANGELOG "Changed"). Nao reverter.
+        // reddit 1w2hi4l (imagem do post): "when HP below 50% damage X2"
+        // -> bonus +100% (regra maxima sobre os +50% de 1qv6rno).
         set_field(fb, COL_STRENGTHEN_HP_PERCENT, 50);
-        set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 50);
+        set_field(fb, COL_STRENGTHEN_MULT_PERCENT, 100);
 
         // Leva 2026-09-23 (freebuff: leitor em batalha provado por coluna,
         // build 338b0601). Valores = maior citado na pesquisa comunitaria
         // (context/mecha-bun-extracao-completa.md), regra do usuario.
-        set_field(fb, COL_FREEZE_PROB, 20);
+        // reddit 1qv6rno OP: "20% chance to freeze for 90f (+2% per lvl)"
+        // -> nivel maximo 10 = 38%.
+        set_field(fb, COL_FREEZE_PROB, 38);
         set_field(fb, COL_FREEZE_TIME, 90);
         set_field(fb, COL_CRIT_PROB, 25);
         // reddit 1qv6rno: "Weaken (50% for 90f)" = 25% de chance, 50% de
@@ -516,11 +549,12 @@ static void hooked_load_unit(long big_data, int unit_id) {
 
         // Fonte: reddit 1qv6rno ("Angel Targeting ..."); leitor 0x875d20.
         set_bool_field(fb, COL_TARGET_ANGEL);
-        // reddit 1qv6rno: "guaranteed mini-wave lv.1" e "30% mini wave lv2"
-        // -> maior de cada: 100%, nivel 2, mini.
+        // Wave, maior de cada parametro com fonte: 100% (1qv6rno "guaranteed
+        // mini-wave lv.1"), nivel 5 onda normal (fandom 928474 "Up to 20%
+        // chance to make a level 5 wave attack"). Normal > mini.
         set_field(fb, COL_WAVE_PROB, 100);
-        set_field(fb, COL_WAVE_LEVEL, 2);
-        set_bool_field(fb, COL_WAVE_IS_MINI);
+        set_field(fb, COL_WAVE_LEVEL, 5);
+        set_field(fb, COL_WAVE_IS_MINI, 0);
         // reddit 1qv6rno: "20% dodge for 1 second".
         set_field(fb, COL_DODGE_PROB, 20);
         set_field(fb, COL_DODGE_TIME_FRAMES, 30);
@@ -536,13 +570,68 @@ static void hooked_load_unit(long big_data, int unit_id) {
         // nao surge -- mesmo post usa "surge immunity" pra outra unidade).
         // Leitor 0x876c14.
         set_bool_field(fb, COL_EXPLOSION_IMMUNITY);
+
+        // 2026-09-24 "se tem fonte adiciona". Parametro que a fonte nao da
+        // = convencao dos dados vanilla (EN 15.5.0), nunca chute:
+        //   explosao: as 33 unidades vanilla usam inicio = range(x4) e
+        //   alcance 0; savage: todas usam +200%; slow/curse: duracao
+        //   mediana vanilla 60f/90f.
+        // reddit 1w2hi4l (imagem): "100% chance Explosion". Leitores
+        // 0x876bf0/0x87891c/0x8789c4.
+        set_field(fb, COL_EXPLOSION_PROB, 100);
+        set_field(fb, COL_EXPLOSION_START, *field_ptr(fb, COL_RANGE));
+        set_field(fb, COL_EXPLOSION_RANGE, 0);
+        // reddit 1ftdnvo t1_lpt0btb: "20% To Proc Savage Blow", "20% To
+        // Break Shields" (col95 sem leitor achado).
+        set_field(fb, COL_SAVAGE_PROB, 20);
+        set_field(fb, COL_SAVAGE_DMG_PERCENT, 200);
+        set_field(fb, COL_SHIELD_PIERCE_PROB, 20);
+        // reddit 1jbfu1p t1_mhuaq06 (neoangel13): "a 20% to
+        // Weaken/Slow/Freeze/Curse/KB" (weaken/freeze ja tem valor maior).
+        // Leitores col24 0x8745bc, col27/28 0x873ff8/0x878b14, col92/93
+        // 0x876374/0x878d70.
+        set_field(fb, COL_KB_PROB, 20);
+        set_field(fb, COL_SLOW_PROB, 20);
+        set_field(fb, COL_SLOW_TIME, 60);
+        set_field(fb, COL_CURSE_PROB, 20);
+        set_field(fb, COL_CURSE_TIME, 90);
+        // reddit 1w2hi4l t1_p72h74v (Rals3iDankner): "strong against Red,
+        // Black and Aku ... Zombie Killer, Anti-Alien". Leitores col10
+        // 0x875a20, col17 0x875ba0, col21 0x872178; col52 sem leitor achado.
+        set_bool_field(fb, COL_TARGET_RED);
+        set_bool_field(fb, COL_TARGET_BLACK);
+        set_bool_field(fb, COL_TARGET_ALIEN);
+        set_bool_field(fb, COL_ZOMBIE_KILLER);
+        // Resistant: 1jbfu1p t1_mhtqriz "resistant against all traits" +
+        // 1qv6rno melonNOTsot. Massive: 1jbfu1p t1_mhuaq06 "Massive Damage".
+        // Sem leitor achado (col29/col30).
+        set_bool_field(fb, COL_RESISTANT);
+        set_bool_field(fb, COL_MASSIVE_DAMAGE);
+        // reddit 1qv6rno t1_o3fjne2 (ZodiaksEnd): "full curse immunity".
+        set_bool_field(fb, COL_CURSE_IMMUNITY);
+
+        // reddit 1w2hi4l t1_p72h74v: "Hits three times" (Ultra da TF).
+        // Hit 1 fica no foreswing 20; hits 2/3 em 25/30, dentro da
+        // animacao de 33f -> ciclo continua 33f, 3 hits por ciclo (o "4x
+        // mais rapido" nao cabe: ciclo <33f exige editar o .maanim, D12).
+        // Dano dos hits 2/3 = ATK ja escalado do hit 1.
+        if (form == TRUE_FORM_INDEX) {
+            int32_t atk = *field_ptr(fb, COL_ATK);
+            set_field(fb, COL_ATK2, atk);
+            set_field(fb, COL_ATK3, atk);
+            set_field(fb, COL_FORESWING2, 25);
+            set_field(fb, COL_FORESWING3, 30);
+            set_field(fb, COL_USE_ABILITY2, 1);
+            set_field(fb, COL_USE_ABILITY3, 1);
+        }
     }
     if (g_api != nullptr) {
         g_api->log(BC_LOG_INFO,
                         "[mechabun] design ideal comunitario aplicado (HP/ATK "
-                    "+80% formas 0/1, True Form 300k Lv50; imunidades KB/surge/warp/freeze/wave/explosao, "
-                    "crit/weaken/freeze, mini-onda 100% lv2, dodge 20%, toxic, speed 29, behemoth/sage, alvos floating/aku/angel, "
-                    "strengthen, KB 4, survive 100%)");
+                    "+80% formas 0/1, TF HP 520.5k Lv50 ATK 18.75k Lv30 3 hits; imunidades KB/surge/warp/freeze/wave/explosao/curse, "
+                    "crit 25/weaken 25/freeze 38/slow/curse/KB 20, onda lv5 100%, explosao 100%, savage/escudo 20, dodge 20%, toxic, "
+                    "speed 29, behemoth/sage/zombie killer, alvos floating/aku/angel/red/black/alien, resistant, massive, "
+                    "strengthen x2, KB 4, survive 100%)");
     }
 }
 
