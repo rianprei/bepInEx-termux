@@ -22,4 +22,4 @@ Se o jogo recarregar os dados, ela reaplica.
 
 Deploy: `./deploy.sh` (companion do jogo rodando) → `02_kungfux.so` em `/data/local/tmp/bc_mods/`.
 Log esperado: `[kungfux] #132 patch aplicado (#1): speed 10, KB 3, area, ciclo 90f (col4 40/28/28)`.
-Pendente: validar em batalha (área e ciclo) e achar o hook do custo.
+Validado em batalha 2026-09-23 (área, KB 3, ciclo rápido). Pendente: hook do custo (deck slot 0x360090, ver context/kungfu-cat-x-pesquisa-OpenCode.md no vault).
