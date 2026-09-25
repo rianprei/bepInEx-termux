@@ -33,6 +33,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <sys/stat.h>
 
 #include "zygisk.hpp"
 #include "dobby.h"
@@ -1557,17 +1558,34 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 // thread, espera a lib do jogo e instala o que precisa). Roda antes da
 // detecção de engine porque jogo Unity/IL2CPP não expõe Java_* (a detecção
 // cairia em dormant e o mod nunca carregaria).
-static void load_generic_pkg_mods(const char *pkg) {
+static void pkg_mods_dir(const char *pkg, char *dir, size_t size) {
+    snprintf(dir, size, "/data/local/tmp/mods/%s", pkg);
+}
+
+// Pacote com pasta de mods própria = mods autônomos cuidam de tudo: sem
+// companion (o companion abre o console do Termux por cima do jogo) e sem o
+// hook de log genérico do experimento Cocos2d-x (crashava o Swamp Attack 2
+// 3s depois de abrir).
+static bool has_pkg_mods_dir(const char *pkg) {
     char dir[320];
-    snprintf(dir, sizeof(dir), "/data/local/tmp/mods/%s", pkg);
+    pkg_mods_dir(pkg, dir, sizeof(dir));
+    struct stat st;
+    return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+// Retorna quantos mods carregaram.
+static int load_generic_pkg_mods(const char *pkg) {
+    char dir[320];
+    pkg_mods_dir(pkg, dir, sizeof(dir));
     // Ordem alfabética (igual BC_MODS_DIR): readdir sozinho não garante
     // ordem, e mod que depende de outro precisa de carga determinística.
     struct dirent **ents = nullptr;
     int n = scandir(dir, &ents, nullptr, alphasort);
     if (n < 0) {
         LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
-        return;
+        return 0;
     }
+    int loaded = 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
         if (bc_loader_is_mod_filename(name)) {
@@ -1578,11 +1596,13 @@ static void load_generic_pkg_mods(const char *pkg) {
             } else {
                 LOGI("%s: mod %s carregado", pkg, name);
                 publish_log("Info", "%s: mod %s carregado", pkg, name);
+                loaded++;
             }
         }
         free(ents[i]);
     }
     free(ents);
+    return loaded;
 }
 
 // Thread genérica de espera + instalação — equivalente ao event_thread do
@@ -1595,7 +1615,10 @@ static void load_generic_pkg_mods(const char *pkg) {
 // o intervalo de 200ms em vez de 8ms.
 static void *generic_event_thread(void *arg) {
     const char *pkg = (const char *)arg;
-    load_generic_pkg_mods(pkg);
+    if (load_generic_pkg_mods(pkg) > 0) {
+        LOGI("%s: mods por pacote ativos — sem detecção de engine/hook de log genérico", pkg);
+        return nullptr;
+    }
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
     // JNI única logo após System.loadLibrary() (padrão comum de init) pode
     // rodar ANTES do poll instalar o hook — DobbyInstrument só intercepta
@@ -1664,11 +1687,15 @@ public:
                 // Termux, porque só o caminho be_bc chamava connectCompanion().
                 // Mesma restrição de SELinux do caminho BC: só funciona aqui,
                 // em preAppSpecialize.
-                int companion_fd = api->connectCompanion();
-                if (companion_fd >= 0) {
-                    g_stream_fd.store(companion_fd, std::memory_order_relaxed);
+                if (has_pkg_mods_dir(pkg_copy)) {
+                    LOGI("%s: pasta de mods própria — sem companion/console Termux", pkg_copy);
                 } else {
-                    LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
+                    int companion_fd = api->connectCompanion();
+                    if (companion_fd >= 0) {
+                        g_stream_fd.store(companion_fd, std::memory_order_relaxed);
+                    } else {
+                        LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
+                    }
                 }
             } else {
                 api->setOption(Option::DLCLOSE_MODULE_LIBRARY);

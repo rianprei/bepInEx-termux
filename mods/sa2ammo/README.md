@@ -43,7 +43,7 @@ Log esperado: `ativo: SelectWeapon @... + ReloadWeaponClip @...`. Ao pegar ou re
 
 ## Deploy persistente (loader genérico)
 
-Depende do `load_generic_pkg_mods` do `jni/main.cpp`, que precisa do módulo Zygisk atualizado e de reboot:
+Depende do `load_generic_pkg_mods` do `jni/main.cpp` (módulo `bc-poc` v0.3.6-generic2 ou posterior, instalado e validado no device em 2026-09-25):
 
 1. `echo com.hyperdotstudios.swampattack2 >> /data/local/tmp/bc_generic_allowlist.conf`
 2. `mkdir -p /data/local/tmp/mods/com.hyperdotstudios.swampattack2`

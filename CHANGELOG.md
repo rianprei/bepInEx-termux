@@ -49,6 +49,8 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
   tesouros); vanilla seria 6.000. +80% chega ao dano real.
 
 ### Fixed
+- loader: a package with its own mods dir (`/data/local/tmp/mods/<pkg>`) no longer connects to the companion (the companion opened the Termux console over the game, so Swamp Attack 2 kept bouncing to Termux) and skips the generic Cocos2d-x engine detection/log hooks.
+- mods/common/il2cpp_min.h: `il2cpp_boot` waits for `il2cpp_get_corlib()` before `il2cpp_domain_get()`, which allocates the domain through the GC when it does not exist yet and crashed the game when a mod loaded from Zygisk ran before `il2cpp_init` (Frida injection came late and hid it).
 - loader: per-package generic mods now load in alphabetical order (`scandir` + `alphasort`); plain `readdir` order was arbitrary. README states the real `bc_mods/` order (`strcmp` on the name, zero-padded prefixes; manifest `requires` still reorders), not "numeric prefix".
 - sa2ammo / sa2content: each Dobby hook is installed and logged on its own; one failing hook no longer aborts the others (review by kilo, `raw/review-sa2-kilo.md`).
 - sa2content `gen_patches.py`: snapshot read once with closed handles; a missing category or fusion damage type stops with a clear message instead of `AttributeError`/`StopIteration`.

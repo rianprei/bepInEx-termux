@@ -117,7 +117,7 @@ static inline void *il2cpp_open() {
     return dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
 }
 
-// Espera a libil2cpp e o domínio subirem (até ~120s cada), resolve a API e
+// Espera a libil2cpp e o runtime subirem (até ~120s cada), resolve a API e
 // registra a thread chamadora no runtime. false = desistiu.
 static inline bool il2cpp_boot(Il2Cpp &il) {
     void *h = nullptr;
@@ -136,7 +136,16 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM(field_get_type); IL2CPP_SYM(class_from_type); IL2CPP_SYM(class_is_valuetype);
     IL2CPP_SYM(gchandle_new);
 #undef IL2CPP_SYM
-    for (int i = 0; i < 600 && !(il.domain = il.domain_get()); i++) usleep(200 * 1000);
+    // il2cpp_domain_get CRIA o domínio (aloca pelo GC) se ainda não existe:
+    // chamado antes do il2cpp_init, crasha o jogo (achado no device com a
+    // carga pelo Zygisk, que entra no começo do processo; pelo Frida o jogo já
+    // estava de pé). il2cpp_get_corlib só lê um global preenchido no init.
+    typedef void *(*get_corlib_t)();
+    auto get_corlib = (get_corlib_t)dlsym(h, "il2cpp_get_corlib");
+    if (!get_corlib) return false;
+    for (int i = 0; i < 600 && !get_corlib(); i++) usleep(200 * 1000);
+    if (!get_corlib()) return false;
+    il.domain = il.domain_get();
     if (!il.domain) return false;
     il.thread_attach(il.domain);
     return true;
