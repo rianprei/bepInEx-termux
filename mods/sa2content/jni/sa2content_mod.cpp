@@ -27,11 +27,9 @@
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "sa2content", __VA_ARGS__)
 
-// Unknown jogável: DESLIGADO. Com o corpo do Slow Joe o jogo crasha ao abrir
-// o mapa (SIGSEGV em MapLevelIcon.TrySetupRewardIcon, fault 0x60004523),
-// mesmo com availableFromLevel vazio. Ver README "Unknown".
+// Unknown jogável (validado no device 2026-09-25). -DSA2_ENABLE_UNKNOWN=0 desliga.
 #ifndef SA2_ENABLE_UNKNOWN
-#define SA2_ENABLE_UNKNOWN 0
+#define SA2_ENABLE_UNKNOWN 1
 #endif
 
 static const char *const CATEGORIES[] = {"wep", "red", "ld"};
@@ -136,9 +134,8 @@ static void *super_clone;
 // hook de TryApplyPendingPatches, logo depois do apply_all(true) que já deu
 // ao Unknown vida/armas/isPlayable pelo Apply do jogo. Idempotente: roda de
 // novo a cada chamada porque o Apply re-serializa o Unknown com a Shotgun
-// original (o clone tem o mesmo persistentGuid). Deserialize direto no
-// Unknown crashava o jogo (SIGSEGV dentro do parser), por isso o JSON dele
-// vai pelo Apply.
+// original (o clone tem o mesmo persistentGuid). O JSON do Unknown vai pelo
+// Apply, o mesmo caminho dos outros personagens.
 static void setup_unknown() {
     static bool logged_ok;
     void *red = category("red"), *wep = category("wep");

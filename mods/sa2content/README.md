@@ -26,20 +26,18 @@ Alvo: `com.hyperdotstudios.swampattack2` 1.3.9 (Unity 6000.3.13f1, IL2CPP arm64)
 3. **Fases remixadas.** As fases L05, L10 e L15 dos capítulos 2 a 9 (18 fases) terminam com o chefe do capítulo anterior, com a tela de apresentação de chefe (`present_screen` + `spawn "<Boss>" 50% 3`, antes do último `wait all`).
 4. **Sem anúncio forçado entre fases.** `InterstitialAdManager.TryShowInterstitial` vira no-op. Os anúncios opcionais com recompensa continuam iguais.
 
-## Unknown jogável (desligado, `SA2_ENABLE_UNKNOWN`)
+## Unknown jogável (`SA2_ENABLE_UNKNOWN`, ligado)
 
-O "Unknown" é o card "?" do elenco (`isPlayable 0`, sem prefab, skin, vida ou arma). O código em `SA2_ENABLE_UNKNOWN` faz o seguinte:
-- copia do Slow Joe prefab, skins, melhorias e ícones;
-- aplica vida e armas pelo `Apply` do jogo;
+O "Unknown" é o card "?" do elenco (`isPlayable 0`, sem prefab, skin, vida ou arma). O mod faz o seguinte:
+- copia do Slow Joe prefab, skins, melhorias e ícones (`Il2Cpp::copy_field`);
+- aplica o JSON do Unknown pelo `Apply` do jogo: jogável, vida e armas do Slow Joe, sem fase de liberação;
 - troca a arma inicial por um clone em runtime da Shotgun (`Object.Internal_CloneSingle` + `Deserialize` da categoria `wep`), com o dano dela e os efeitos 1-7, 9 e 11. O controle mental (8) não entra, porque nenhuma arma do jogo tem.
 
-O clone da arma e a montagem funcionam. Depois disso, porém, o jogo crasha ao abrir o mapa, com SIGSEGV em `MapLevelIcon.TrySetupRewardIcon` (fault `0x60004523`, dentro do runtime il2cpp). Isso acontece mesmo com `availableFromLevel` vazio.
+Tudo isso roda na thread principal, dentro do hook de `TryApplyPendingPatches`.
 
-Chamar `Deserialize` direto no Unknown também crashava, pelo mesmo caminho do runtime. Por isso o JSON dele vai pelo `Apply`.
+Lição do crash: `il2cpp_field_set_value` recebe o próprio ponteiro do objeto pra campo de referência. Passar `&ptr` gravava lixo nas skins e no prefab, e o jogo crashava em chamada de interface (no parser e no ícone de recompensa do mapa).
 
-Hipótese aberta: as skins são compartilhadas com o Slow Joe (`RedneckSkinInfo.redneck` aponta pro Slow Joe), e a busca de recompensa por skin (`GameData.TryGetRedneckForSkin`) se confunde.
-
-Build de teste: `ndk-build APP_CFLAGS=-DSA2_ENABLE_UNKNOWN=1`.
+Save: o jogo salva o progresso do Unknown pelo nome. Antes de tirar o mod, troque de personagem.
 
 ## Como funciona
 
