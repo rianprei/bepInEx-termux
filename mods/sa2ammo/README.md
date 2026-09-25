@@ -51,4 +51,6 @@ Depende do `load_generic_pkg_mods` do `jni/main.cpp`, que precisa do módulo Zyg
 
 ## Status
 
-Build ok (NDK 23.2). Testado no device via Frida em 2026-09-25: o mod resolve tudo (offsets batem com o dump) e liga a flag nas armas primárias (#1..#5 no log), sem crash. Falta o usuário confirmar o contador na tela.
+Build ok (NDK 23.2). Testado no device via Frida em 2026-09-25: o mod resolve tudo (offsets batem com o dump) e liga a flag nas armas primárias (#1..#5 no log), sem crash. Usuário confirmou em jogo que a munição não cai mais.
+
+A API il2cpp e o boot (fix do namespace do linker) ficam em `mods/common/il2cpp_min.h`, compartilhado com o `sa2content`.

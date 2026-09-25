@@ -13,24 +13,11 @@
 //
 // Carregado pelo caminho genérico do loader (/data/local/tmp/mods/<pkg>/).
 #include <android/log.h>
-#include <dlfcn.h>
-#include <link.h>
 #include <pthread.h>
-#include <unistd.h>
-#include <cstdint>
-#include <cstring>
 #include "dobby.h"
+#include "../../common/il2cpp_min.h"
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "sa2ammo", __VA_ARGS__)
-
-typedef void *(*domain_get_t)();
-typedef void *(*thread_attach_t)(void *);
-typedef void **(*domain_get_assemblies_t)(void *, size_t *);
-typedef void *(*assembly_get_image_t)(void *);
-typedef void *(*class_from_name_t)(void *, const char *, const char *);
-typedef void *(*method_from_name_t)(void *, const char *, int);
-typedef void *(*field_from_name_t)(void *, const char *);
-typedef size_t (*field_offset_t)(void *);
 
 #define WEAPON_TYPE_PRIMARY 0  // WeaponType 0: armas de fogo (Shotgun, Kalashnikov...)
 
@@ -65,102 +52,39 @@ static void fake_reload(void *self, bool reload_ammo, void *method) {
     orig_reload(self, reload_ammo, method);
 }
 
-// Procura a classe em todas as imagens (WeaponInfo e ComplexCreature ficam no
-// Assembly-CSharp, namespace global).
-static void *find_class(void *domain, domain_get_assemblies_t get_asm, assembly_get_image_t get_img,
-                        class_from_name_t from_name, const char *name) {
-    size_t n = 0;
-    void **asms = get_asm(domain, &n);
-    for (size_t i = 0; i < n; i++) {
-        void *k = from_name(get_img(asms[i]), "", name);
-        if (k) return k;
-    }
-    return nullptr;
-}
-
-static int find_il2cpp(struct dl_phdr_info *info, size_t, void *out) {
-    if (info->dlpi_name && strstr(info->dlpi_name, "/libil2cpp.so")) {
-        *(uintptr_t *)out = info->dlpi_addr;
-        return 1;
-    }
-    return 0;
-}
-
-// A libil2cpp vive no namespace do classloader do app. Um .so carregado de
-// fora (Zygisk, Frida) fica no namespace default e dlopen("libil2cpp.so")
-// não enxerga ela (achado no device: NOLOAD voltava nullptr com a lib já
-// mapeada). __loader_dlopen escolhe o namespace pelo endereço do chamador,
-// então passar um endereço de dentro da libil2cpp resolve.
-static void *open_il2cpp() {
-    uintptr_t base = 0;
-    dl_iterate_phdr(find_il2cpp, &base);
-    if (!base) return nullptr;
-    typedef void *(*loader_dlopen_t)(const char *, int, const void *);
-    static auto loader_dlopen = (loader_dlopen_t)dlsym(RTLD_DEFAULT, "__loader_dlopen");
-    if (loader_dlopen) {
-        void *h = loader_dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD, (const void *)base);
-        if (h) return h;
-    }
-    return dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
-}
-
 static void *worker(void *) {
     LOG("carregado, esperando libil2cpp.so");
-    void *h = nullptr;
-    for (int i = 0; i < 600 && !h; i++) {  // até 120s pra libil2cpp carregar
-        h = open_il2cpp();
-        if (!h) usleep(200 * 1000);
-    }
-    if (!h) { LOG("libil2cpp.so não carregou em 120s — desistindo"); return nullptr; }
-
-    auto domain_get = (domain_get_t)dlsym(h, "il2cpp_domain_get");
-    auto thread_attach = (thread_attach_t)dlsym(h, "il2cpp_thread_attach");
-    auto get_asm = (domain_get_assemblies_t)dlsym(h, "il2cpp_domain_get_assemblies");
-    auto get_img = (assembly_get_image_t)dlsym(h, "il2cpp_assembly_get_image");
-    auto from_name = (class_from_name_t)dlsym(h, "il2cpp_class_from_name");
-    auto method_from_name = (method_from_name_t)dlsym(h, "il2cpp_class_get_method_from_name");
-    auto field_from_name = (field_from_name_t)dlsym(h, "il2cpp_class_get_field_from_name");
-    auto field_offset = (field_offset_t)dlsym(h, "il2cpp_field_get_offset");
-    if (!domain_get || !thread_attach || !get_asm || !get_img || !from_name || !method_from_name ||
-        !field_from_name || !field_offset) {
-        LOG("API il2cpp incompleta — desistindo");
-        return nullptr;
-    }
+    Il2Cpp il;
+    if (!il2cpp_boot(il)) { LOG("il2cpp não subiu em 120s — desistindo"); return nullptr; }
 
     void *weapon = nullptr, *creature = nullptr;
-    for (int i = 0; i < 600 && !(weapon && creature); i++) {  // até 120s pro domínio subir
-        void *domain = domain_get();
-        if (domain) {
-            thread_attach(domain);
-            weapon = find_class(domain, get_asm, get_img, from_name, "WeaponInfo");
-            creature = find_class(domain, get_asm, get_img, from_name, "ComplexCreature");
-        }
+    for (int i = 0; i < 600 && !(weapon && creature); i++) {  // até 120s pras classes
+        weapon = il.find_class("", "WeaponInfo");
+        creature = il.find_class("", "ComplexCreature");
         if (!(weapon && creature)) usleep(200 * 1000);
     }
     if (!weapon || !creature) { LOG("WeaponInfo/ComplexCreature não achadas — desistindo"); return nullptr; }
 
-    void *f_unl = field_from_name(weapon, "unlimitedAmmo");
-    void *f_eq = field_from_name(weapon, "canBeEquipped");  // herdado de GenericShopItem
-    void *f_type = field_from_name(weapon, "type");
-    void *f_cur = field_from_name(weapon, "currentAmmo");  // InventoryItem, herdado de GenericShopItem
-    void *f_sel = field_from_name(creature, "selectedWeapon");
-    void *inv_item = find_class(domain_get(), get_asm, get_img, from_name, "InventoryItem");
-    void *f_amt = inv_item ? field_from_name(inv_item, "Amount") : nullptr;
-    void *m_sel = method_from_name(creature, "SelectWeapon", 1);
-    void *m_rel = method_from_name(creature, "ReloadWeaponClip", 1);
-    if (!f_unl || !f_eq || !f_type || !f_cur || !f_sel || !f_amt || !m_sel || !m_rel) {
+    void *f_unl = il.class_get_field_from_name(weapon, "unlimitedAmmo");
+    void *f_eq = il.class_get_field_from_name(weapon, "canBeEquipped");  // herdado de GenericShopItem
+    void *f_type = il.class_get_field_from_name(weapon, "type");
+    void *f_cur = il.class_get_field_from_name(weapon, "currentAmmo");  // InventoryItem, herdado de GenericShopItem
+    void *f_sel = il.class_get_field_from_name(creature, "selectedWeapon");
+    void *inv_item = il.find_class("", "InventoryItem");
+    void *f_amt = inv_item ? il.class_get_field_from_name(inv_item, "Amount") : nullptr;
+    void *t_sel = il2cpp_method_ptr(il, creature, "SelectWeapon", 1);
+    void *t_rel = il2cpp_method_ptr(il, creature, "ReloadWeaponClip", 1);
+    if (!f_unl || !f_eq || !f_type || !f_cur || !f_sel || !f_amt || !t_sel || !t_rel) {
         LOG("campo/método ausente (unl=%p eq=%p type=%p cur=%p sel=%p amt=%p SelectWeapon=%p Reload=%p) — versão nova do jogo?",
-            f_unl, f_eq, f_type, f_cur, f_sel, f_amt, m_sel, m_rel);
+            f_unl, f_eq, f_type, f_cur, f_sel, f_amt, t_sel, t_rel);
         return nullptr;
     }
-    off_unlimited = field_offset(f_unl);
-    off_equip = field_offset(f_eq);
-    off_type = field_offset(f_type);
-    off_cur_ammo = field_offset(f_cur);
-    off_amount = field_offset(f_amt);
-    off_selected = field_offset(f_sel);
-    void *t_sel = *(void **)m_sel;  // MethodInfo::methodPointer é o 1º campo
-    void *t_rel = *(void **)m_rel;
+    off_unlimited = il.field_get_offset(f_unl);
+    off_equip = il.field_get_offset(f_eq);
+    off_type = il.field_get_offset(f_type);
+    off_cur_ammo = il.field_get_offset(f_cur);
+    off_amount = il.field_get_offset(f_amt);
+    off_selected = il.field_get_offset(f_sel);
     if (DobbyHook(t_sel, (void *)fake_select, (void **)&orig_select) != 0 ||
         DobbyHook(t_rel, (void *)fake_reload, (void **)&orig_reload) != 0) {
         LOG("DobbyHook falhou (SelectWeapon @%p / ReloadWeaponClip @%p)", t_sel, t_rel);
