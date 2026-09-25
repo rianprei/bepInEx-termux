@@ -34,4 +34,4 @@ Teto de referência: Dancer Cat TF Lv30 (godfat), a unidade que a comunidade diz
 
 **Log esperado:** `[kungfux] #132 patch aplicado (#1): speed 10, KB 3, area, ciclo 90f, 1 golpe (TF atk …, fs 11), HP …, range …, custo …`.
 
-**Validado em batalha em 2026-09-23:** área, KB 3, ciclo rápido. A consolidação do multi-hit, HP, range e custo ainda não foi testada em batalha.
+**Validado em batalha em 2026-09-23:** área, KB 3, ciclo rápido. **Validado em 2026-09-24:** custo no deck = 1.800 (Cap.2). A consolidação do multi-hit, o HP e o range ainda não foram testados em batalha.
