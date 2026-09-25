@@ -161,12 +161,10 @@ static void setup_unknown() {
         super_clone = c;
     }
     void *k = il.object_get_class(un);
-    alignas(16) uint8_t buf[32];
     for (const char *name : BODY_FIELDS) {
         void *f = il.class_get_field_from_name(k, name);
         if (!f) { LOG("Unknown: campo %s ausente", name); return; }
-        il.field_get_value(body, f, buf);
-        il.field_set_value(un, f, buf);
+        il.copy_field(body, un, f);
     }
     void *f_weapons = il.class_get_field_from_name(k, "weapons");
     uint8_t *arr = f_weapons ? *(uint8_t **)((uint8_t *)un + il.field_get_offset(f_weapons)) : nullptr;
