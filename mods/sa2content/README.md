@@ -73,7 +73,7 @@ adb logcat -s sa2content
 Não mate o `frida-inject` no meio do script: isso já derrubou o jogo (SIGSEGV).
 
 Log esperado:
-- `ativo: 31 patches embutidos; ...`;
+- `ativo: 31 patches embutidos`;
 - depois `ld: 18`, `red: 9`, `wep: 4 item(ns) trocados, Apply ok`.
 
 ## Deploy persistente

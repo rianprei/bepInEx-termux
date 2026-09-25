@@ -48,6 +48,9 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
   tesouros); vanilla seria 6.000. +80% chega ao dano real.
 
 ### Fixed
+- loader: per-package generic mods now load in alphabetical order (`scandir` + `alphasort`); plain `readdir` order was arbitrary. README states the real `bc_mods/` order (`strcmp` on the name, zero-padded prefixes; manifest `requires` still reorders), not "numeric prefix".
+- sa2ammo / sa2content: each Dobby hook is installed and logged on its own; one failing hook no longer aborts the others (review by kilo, `raw/review-sa2-kilo.md`).
+- sa2content `gen_patches.py`: snapshot read once with closed handles; a missing category or fusion damage type stops with a clear message instead of `AttributeError`/`StopIteration`.
 - **`mods/mechabun` `verify_unit_base`**: device real (build `338b0601`)
   leu range=760 (190×4) com ATK 400/500 exatos — offset certo, struct
   guarda range em unidade interna ×4. Check rejeitava e o patch inteiro

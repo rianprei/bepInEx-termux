@@ -85,11 +85,12 @@ static void *worker(void *) {
     off_cur_ammo = il.field_get_offset(f_cur);
     off_amount = il.field_get_offset(f_amt);
     off_selected = il.field_get_offset(f_sel);
-    if (DobbyHook(t_sel, (void *)fake_select, (void **)&orig_select) != 0 ||
-        DobbyHook(t_rel, (void *)fake_reload, (void **)&orig_reload) != 0) {
-        LOG("DobbyHook falhou (SelectWeapon @%p / ReloadWeaponClip @%p)", t_sel, t_rel);
-        return nullptr;
-    }
+    // Hooks independentes: cada um sozinho já cobre parte das trocas de arma.
+    bool ok_sel = DobbyHook(t_sel, (void *)fake_select, (void **)&orig_select) == 0;
+    bool ok_rel = DobbyHook(t_rel, (void *)fake_reload, (void **)&orig_reload) == 0;
+    if (!ok_sel) LOG("DobbyHook falhou em SelectWeapon @%p", t_sel);
+    if (!ok_rel) LOG("DobbyHook falhou em ReloadWeaponClip @%p", t_rel);
+    if (!ok_sel && !ok_rel) return nullptr;
     LOG("ativo: SelectWeapon @%p + ReloadWeaponClip @%p (unlimitedAmmo+0x%zx canBeEquipped+0x%zx type+0x%zx currentAmmo+0x%zx selectedWeapon+0x%zx)",
         t_sel, t_rel, off_unlimited, off_equip, off_type, off_cur_ammo, off_selected);
     return nullptr;

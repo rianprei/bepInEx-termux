@@ -1560,24 +1560,29 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 static void load_generic_pkg_mods(const char *pkg) {
     char dir[320];
     snprintf(dir, sizeof(dir), "/data/local/tmp/mods/%s", pkg);
-    DIR *d = opendir(dir);
-    if (d == nullptr) {
+    // Ordem alfabética (igual BC_MODS_DIR): readdir sozinho não garante
+    // ordem, e mod que depende de outro precisa de carga determinística.
+    struct dirent **ents = nullptr;
+    int n = scandir(dir, &ents, nullptr, alphasort);
+    if (n < 0) {
         LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
         return;
     }
-    struct dirent *ent;
-    while ((ent = readdir(d)) != nullptr) {
-        if (!bc_loader_is_mod_filename(ent->d_name)) continue;
-        char path[640];
-        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
-        if (dlopen(path, RTLD_NOW) == nullptr) {
-            LOGW("%s: dlopen %s falhou: %s", pkg, ent->d_name, dlerror());
-            continue;
+    for (int i = 0; i < n; i++) {
+        const char *name = ents[i]->d_name;
+        if (bc_loader_is_mod_filename(name)) {
+            char path[640];
+            snprintf(path, sizeof(path), "%s/%s", dir, name);
+            if (dlopen(path, RTLD_NOW) == nullptr) {
+                LOGW("%s: dlopen %s falhou: %s", pkg, name, dlerror());
+            } else {
+                LOGI("%s: mod %s carregado", pkg, name);
+                publish_log("Info", "%s: mod %s carregado", pkg, name);
+            }
         }
-        LOGI("%s: mod %s carregado", pkg, ent->d_name);
-        publish_log("Info", "%s: mod %s carregado", pkg, ent->d_name);
+        free(ents[i]);
     }
-    closedir(d);
+    free(ents);
 }
 
 // Thread genérica de espera + instalação — equivalente ao event_thread do

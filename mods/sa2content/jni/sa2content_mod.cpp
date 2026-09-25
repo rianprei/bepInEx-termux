@@ -123,13 +123,14 @@ static void *worker(void *) {
     off_item_key = il.field_get_offset(f_key);
     off_item_data = il.field_get_offset(f_data);
 
-    if (DobbyHook(t_try, (void *)fake_try_apply, (void **)&orig_try_apply) != 0 ||
-        DobbyHook(t_ads, (void *)fake_try_show_interstitial, (void **)&orig_try_show_interstitial) != 0) {
-        LOG("DobbyHook falhou (TryApplyPendingPatches @%p / TryShowInterstitial @%p)", t_try, t_ads);
-        return nullptr;
-    }
-    LOG("ativo: %zu patches embutidos; hooks TryApplyPendingPatches + TryShowInterstitial",
-        sizeof(SA2_PATCHES) / sizeof(SA2_PATCHES[0]));
+    // Hooks independentes: sem o de reaplicação o conteúdo ainda entra no
+    // boot (só pode ser sobrescrito por patch remoto); sem o de anúncio o
+    // conteúdo segue igual.
+    if (DobbyHook(t_try, (void *)fake_try_apply, (void **)&orig_try_apply) != 0)
+        LOG("DobbyHook falhou em TryApplyPendingPatches @%p — sem reaplicação após patch remoto", t_try);
+    if (DobbyHook(t_ads, (void *)fake_try_show_interstitial, (void **)&orig_try_show_interstitial) != 0)
+        LOG("DobbyHook falhou em TryShowInterstitial @%p — anúncio forçado continua", t_ads);
+    LOG("ativo: %zu patches embutidos", sizeof(SA2_PATCHES) / sizeof(SA2_PATCHES[0]));
 
     // Primeira aplicação assim que os dados existirem (até ~60s).
     for (int i = 0; i < 120 && !apply_all(); i++) usleep(500 * 1000);

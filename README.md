@@ -102,8 +102,9 @@ DORMANT (log-only, sem crashar o processo do jogo). Ver
 ### 1.1. Loader de mods `.so` dinâmico (`jni/bc_loader.h` + `jni/bc_mod_api.h`)
 
 O que fecha o gap de "mod hardcoded" → "mod-loader de verdade": qualquer
-`.so` colocado em `/data/local/tmp/bc_mods/` (ordenados por prefixo
-numérico no nome) é descoberto, `dlopen()`+`dlsym("bc_mod_register")` no
+`.so` colocado em `/data/local/tmp/bc_mods/` (ordem alfabética do nome,
+`strcmp`: use prefixo com zero à esquerda, `01_`, `02_`..., senão `10_`
+vem antes de `2_`; `requires` no manifest ainda reordena) é descoberto, `dlopen()`+`dlsym("bc_mod_register")` no
 boot, **depois** dos hooks estáticos (o mod já pode usar `resolve_symbol`
 contra a lib carregada). Cada mod exporta:
 

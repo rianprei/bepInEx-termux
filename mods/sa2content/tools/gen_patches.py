@@ -6,9 +6,13 @@ import json, re, sys, collections
 
 SNAP, GUIDS, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 
+with open(SNAP) as f:
+    SNAP_TXT = f.read()
+
 def load_cat(name):
-    txt = open(SNAP).read()
-    m = re.search(r'### CAT %s type=\S+ items=\d+\n(.*?)(?=\n### )' % name, txt, re.S)
+    m = re.search(r'### CAT %s type=\S+ items=\d+\n(.*?)(?=\n### )' % name, SNAP_TXT, re.S)
+    if m is None:
+        sys.exit('categoria %s ausente no snapshot %s' % (name, SNAP))
     items = {}
     for it in re.split(r'\n(?=K [^\t\n]+\tD )', m.group(1)):
         if it.startswith('K ') and '\tD ' in it:
@@ -16,7 +20,8 @@ def load_cat(name):
             items[k] = d
     return items
 
-names = json.load(open(GUIDS))
+with open(GUIDS) as f:
+    names = json.load(f)
 guid = {v: k for k, v in names.items()}
 wep = {k: json.loads(v.split('\n', 1)[0]) for k, v in load_cat('GameBalancePatch_RedneckWeapons').items()}
 red = {k: json.loads(v.split('\n', 1)[0]) for k, v in load_cat('GameBalancePatch_Rednecks').items()}
@@ -38,7 +43,10 @@ for who, wname in HIDDEN.items():
 
 # 2) Fusões: arma ganha a entrada de dano (efeito) de outra arma.
 def entry(src, dtype):
-    return next(e for e in wep[guid[src]]['d'] if e['damageType'] == dtype)
+    e = next((e for e in wep[guid[src]]['d'] if e['damageType'] == dtype), None)
+    if e is None:
+        sys.exit('%s não tem dano tipo %d pra fundir' % (src, dtype))
+    return e
 FUSIONS = [('Shotgun', 'IceCubeLauncher', 5),      # + congelamento
            ('DoubleShotgun', 'RottenEgg', 3),        # + veneno
            ('Kalashnikov', 'HamsterGun', 4),         # + choque elétrico
