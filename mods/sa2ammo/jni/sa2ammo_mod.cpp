@@ -14,6 +14,7 @@
 // Carregado pelo caminho genérico do loader (/data/local/tmp/mods/<pkg>/).
 #include <android/log.h>
 #include <dlfcn.h>
+#include <link.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdint>
@@ -77,10 +78,37 @@ static void *find_class(void *domain, domain_get_assemblies_t get_asm, assembly_
     return nullptr;
 }
 
+static int find_il2cpp(struct dl_phdr_info *info, size_t, void *out) {
+    if (info->dlpi_name && strstr(info->dlpi_name, "/libil2cpp.so")) {
+        *(uintptr_t *)out = info->dlpi_addr;
+        return 1;
+    }
+    return 0;
+}
+
+// A libil2cpp vive no namespace do classloader do app. Um .so carregado de
+// fora (Zygisk, Frida) fica no namespace default e dlopen("libil2cpp.so")
+// não enxerga ela (achado no device: NOLOAD voltava nullptr com a lib já
+// mapeada). __loader_dlopen escolhe o namespace pelo endereço do chamador,
+// então passar um endereço de dentro da libil2cpp resolve.
+static void *open_il2cpp() {
+    uintptr_t base = 0;
+    dl_iterate_phdr(find_il2cpp, &base);
+    if (!base) return nullptr;
+    typedef void *(*loader_dlopen_t)(const char *, int, const void *);
+    static auto loader_dlopen = (loader_dlopen_t)dlsym(RTLD_DEFAULT, "__loader_dlopen");
+    if (loader_dlopen) {
+        void *h = loader_dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD, (const void *)base);
+        if (h) return h;
+    }
+    return dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+}
+
 static void *worker(void *) {
+    LOG("carregado, esperando libil2cpp.so");
     void *h = nullptr;
     for (int i = 0; i < 600 && !h; i++) {  // até 120s pra libil2cpp carregar
-        h = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+        h = open_il2cpp();
         if (!h) usleep(200 * 1000);
     }
     if (!h) { LOG("libil2cpp.so não carregou em 120s — desistindo"); return nullptr; }

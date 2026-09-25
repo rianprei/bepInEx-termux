@@ -51,4 +51,4 @@ Depende do `load_generic_pkg_mods` do `jni/main.cpp`, que precisa do módulo Zyg
 
 ## Status
 
-Build ok (NDK 23.2). Ainda **não testado no device**.
+Build ok (NDK 23.2). Testado no device via Frida em 2026-09-25: o mod resolve tudo (offsets batem com o dump) e liga a flag nas armas primárias (#1..#5 no log), sem crash. Falta o usuário confirmar o contador na tela.
