@@ -86,6 +86,36 @@ for k in sorted(lvl):
     out.append(('ld', k, '\n'.join(lines)))
     remix += 1
 
+# 4) Unknown (card "?" sem corpo, isPlayable 0) vira jogável com o corpo do
+#    Slow Joe. O mod copia em memória prefab/skins/melhorias do Slow Joe e
+#    aplica este JSON pelo parser do jogo. A arma dele é um clone em runtime
+#    da Shotgun (Object.Internal_CloneSingle) com o dano dela + todo efeito.
+UNKNOWN_BODY = 'Slow Joe'
+un = json.loads(json.dumps(red[UNKNOWN_BODY]))
+un['w'] = [w for w in un['w'] if not (w['l'] == 1 and w['d'] == 0)]  # sem a arma escondida do item 1
+# Sem fase de liberação (igual Granny/Betty): com "C01L01" herdado do Slow Joe o
+# ícone de recompensa do mapa (MapLevelIcon.TrySetupRewardIcon) pegava o
+# Unknown e o jogo crashava ao abrir o mapa.
+un['a'] = ''
+SUPER_BASE = 'Shotgun'
+SUPER_EFFECTS = [(1, 'RocketLauncher'),          # explosão
+                 (2, 'MolotovSixPack'),          # fogo
+                 (3, 'RottenEgg'),               # veneno
+                 (4, 'HamsterGun'),              # choque
+                 (5, 'IceCubeLauncher'),         # gelo
+                 (6, 'IceRifle'),                # lentidão
+                 (7, 'DoubleShotgun'),           # atordoamento
+                 (9, 'AtomicBazooka'),           # radiação
+                 (11, 'SurvivalLevelArtillery')]  # penetração
+# MindControl (8) fica de fora: nenhuma arma do jogo tem, sem parâmetro de referência.
+sup = json.loads(json.dumps(wep[guid[SUPER_BASE]]))
+sup['d'] = [e for e in sup['d'] if e['damageType'] == 0]
+for t, src in SUPER_EFFECTS:
+    sup['d'].append(entry(src, t))
+if un['w'][0]['w'] != guid[SUPER_BASE]:
+    sys.exit('arma inicial do %s não é %s' % (UNKNOWN_BODY, SUPER_BASE))
+out.append(('red', 'Unknown', json.dumps(un, separators=(',', ':'))))
+
 def c(s):
     return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
 with open(OUT, 'w') as f:
@@ -95,5 +125,10 @@ with open(OUT, 'w') as f:
     for cat, key, data in out:
         f.write('    {%s, %s, %s},\n' % (c(cat), c(key), c(data)))
     f.write('};\n')
+    f.write('#define SA2_UNKNOWN_KEY %s\n' % c('Unknown'))
+    f.write('#define SA2_UNKNOWN_BODY %s\n' % c(UNKNOWN_BODY))
+    f.write('#define SA2_SUPER_BASE_GUID %s\n' % c(guid[SUPER_BASE]))
+    f.write('#define SA2_SUPER_WEP %s\n' % c(json.dumps(sup, separators=(',', ':'))))
+print('super arma: %s + efeitos %s' % (SUPER_BASE, [t for t, _ in SUPER_EFFECTS]))
 print('patches: red=%d wep=%d ld=%d (chefes por capítulo: %s)' % (
     sum(1 for o in out if o[0] == 'red'), sum(1 for o in out if o[0] == 'wep'), remix, dict(sorted(boss_of.items()))))

@@ -25,6 +25,11 @@ struct Il2Cpp {
     // Escrita de referência em campo de objeto gerenciado: o GC do Unity 6
     // pode ser incremental, então tem que passar pela write barrier.
     void (*gc_wbarrier_set_field)(void *obj, void **field, void *value);
+    // Cópia de campo pelo tipo declarado (ref ou struct), sem saber o tamanho.
+    void (*field_get_value)(void *obj, void *field, void *out);
+    void (*field_set_value)(void *obj, void *field, void *value);
+    // Handle forte: segura objeto criado pelo mod contra o GC.
+    uint32_t (*gchandle_new)(void *obj, bool pinned);
     void *domain;
 
     // Classe pelo nome em todas as imagens carregadas.
@@ -43,6 +48,14 @@ struct Il2Cpp {
         void *m = class_get_method_from_name(object_get_class(obj), method, nargs);
         void *exc = nullptr;
         void *r = m ? runtime_invoke(m, obj, args, &exc) : nullptr;
+        if (ok) *ok = m && !exc;
+        return r;
+    }
+    // Método estático por nome na classe dada.
+    void *call_static(void *klass, const char *method, void **args, int nargs, bool *ok = nullptr) const {
+        void *m = class_get_method_from_name(klass, method, nargs);
+        void *exc = nullptr;
+        void *r = m ? runtime_invoke(m, nullptr, args, &exc) : nullptr;
         if (ok) *ok = m && !exc;
         return r;
     }
@@ -105,7 +118,8 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM(class_get_method_from_name); IL2CPP_SYM(class_get_field_from_name);
     IL2CPP_SYM(field_get_offset); IL2CPP_SYM(field_static_get_value); IL2CPP_SYM(object_get_class);
     IL2CPP_SYM(object_new); IL2CPP_SYM(runtime_invoke); IL2CPP_SYM(string_new);
-    IL2CPP_SYM(gc_wbarrier_set_field);
+    IL2CPP_SYM(gc_wbarrier_set_field); IL2CPP_SYM(field_get_value); IL2CPP_SYM(field_set_value);
+    IL2CPP_SYM(gchandle_new);
 #undef IL2CPP_SYM
     for (int i = 0; i < 600 && !(il.domain = il.domain_get()); i++) usleep(200 * 1000);
     if (!il.domain) return false;
