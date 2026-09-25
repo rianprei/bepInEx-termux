@@ -1551,6 +1551,35 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
     publish_log("Info", "[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
 }
 
+// Mods por pacote no caminho genérico: dlopen de todo .so em
+// /data/local/tmp/mods/<pkg>/. Diferente de BC_MODS_DIR, aqui não tem
+// bc_mod_register/grafo — o mod é autônomo (constructor sobe a própria
+// thread, espera a lib do jogo e instala o que precisa). Roda antes da
+// detecção de engine porque jogo Unity/IL2CPP não expõe Java_* (a detecção
+// cairia em dormant e o mod nunca carregaria).
+static void load_generic_pkg_mods(const char *pkg) {
+    char dir[320];
+    snprintf(dir, sizeof(dir), "/data/local/tmp/mods/%s", pkg);
+    DIR *d = opendir(dir);
+    if (d == nullptr) {
+        LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
+        return;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(d)) != nullptr) {
+        if (!bc_loader_is_mod_filename(ent->d_name)) continue;
+        char path[640];
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        if (dlopen(path, RTLD_NOW) == nullptr) {
+            LOGW("%s: dlopen %s falhou: %s", pkg, ent->d_name, dlerror());
+            continue;
+        }
+        LOGI("%s: mod %s carregado", pkg, ent->d_name);
+        publish_log("Info", "%s: mod %s carregado", pkg, ent->d_name);
+    }
+    closedir(d);
+}
+
 // Thread genérica de espera + instalação — equivalente ao event_thread do
 // Battle Cats, mas sem nome de lib fixo pra esperar (não sabemos qual é a
 // lib nativa do jogo genérico). bc_wait_engine_detect faz poll da cascata
@@ -1561,6 +1590,7 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 // o intervalo de 200ms em vez de 8ms.
 static void *generic_event_thread(void *arg) {
     const char *pkg = (const char *)arg;
+    load_generic_pkg_mods(pkg);
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
     // JNI única logo após System.loadLibrary() (padrão comum de init) pode
     // rodar ANTES do poll instalar o hook — DobbyInstrument só intercepta
