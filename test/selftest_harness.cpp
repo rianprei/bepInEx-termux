@@ -1700,20 +1700,22 @@ int main() {
 
     // Caso 60: bc_crashguard_blocks/next_count (F1d, G1) — o portão que impede
     // crash em loop de mod.
-    printf("\n[Caso 60] bc_crashguard_blocks/next_count: 2 mortes em <60s (F1d)\n");
+    printf("\n[Caso 60] bc_crashguard_blocks/next_count: 2 mortes na janela de 20s (F1d)\n");
     {
         const long long T0 = 1000000;
         check("sem registro (0) não bloqueia", !bc_crashguard_blocks(0, 0, T0));
         check("1 morte não bloqueia", !bc_crashguard_blocks(1, T0, T0 + 10));
-        check("2 mortes em 5s bloqueia", bc_crashguard_blocks(2, T0, T0 + 5));
-        check("2 mortes em 59s bloqueia", bc_crashguard_blocks(2, T0, T0 + 59));
-        check("2 mortes em 60s NÃO bloqueia (janela fechou)", !bc_crashguard_blocks(2, T0, T0 + 60));
-        check("3 mortes em 30s bloqueia", bc_crashguard_blocks(3, T0, T0 + 30));
+        check("2 mortes em 5s bloqueia (crash de boot)", bc_crashguard_blocks(2, T0, T0 + 5));
+        check("2 mortes em 19s bloqueia (borda)", bc_crashguard_blocks(2, T0, T0 + 19));
+        check("2 mortes em 20s NÃO bloqueia (janela fechou)", !bc_crashguard_blocks(2, T0, T0 + 20));
+        check("2 mortes em 40s NÃO bloqueia (sessão curta não é mod crash)",
+              !bc_crashguard_blocks(2, T0, T0 + 40));
+        check("3 mortes em 15s bloqueia", bc_crashguard_blocks(3, T0, T0 + 15));
         // timestamp no futuro (relógio andou pra trás) não abre a janela
         check("ts no futuro não abre a janela", bc_crashguard_blocks(2, T0 + 500, T0));
         // next_count: como o contador evolui a cada abertura
         check("sem registro => 1", bc_crashguard_next_count(0, 0, T0) == 1);
-        check("registro expirado => 1", bc_crashguard_next_count(2, T0, T0 + 61) == 1);
+        check("registro expirado => 1", bc_crashguard_next_count(2, T0, T0 + 21) == 1);
         check("registro recente => incrementa", bc_crashguard_next_count(1, T0, T0 + 3) == 2);
         check("2 recentes => 3 (mas já bloqueou antes de chegar aqui)",
               bc_crashguard_next_count(2, T0, T0 + 3) == 3);
@@ -1735,13 +1737,13 @@ int main() {
             check("abertura 2: carrega (1 morte ainda não bloqueia)", !blocked[1]);
             check("abertura 3: NÃO carrega (2 mortes em 4s)", blocked[2]);
         }
-        // sobreviveu 60s => contador zerado e a 4a volta a carregar
+        // sobreviveu à janela => contador zerado e a 4a volta a carregar
         {
-            long long now = T0 + 200;
+            long long now = T0 + 40;
             int count = 0, ts = 0;
             bool blocked = bc_crashguard_blocks(count, ts, now);
             count = bc_crashguard_next_count(count, ts, now);
-            check("após 200s sem morte: volta a carregar", !blocked && count == 1);
+            check("após 40s sem morte: volta a carregar", !blocked && count == 1);
         }
     }
 

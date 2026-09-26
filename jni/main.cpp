@@ -43,7 +43,7 @@
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
 #include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
 #include "bc_signal.h"    // sinais companion<->poll SEM __system_property_set (Enforcing)
-#include "bc_crashguard.h"  // F1d: 2 mortes em <60s => não carrega mods (lógica pura)
+#include "bc_crashguard.h"  // F1d: 2 mortes na janela => não carrega mods (lógica pura)
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
@@ -1750,8 +1750,8 @@ static int load_generic_pkg_mods(const char *pkg) {
     // (o dlopen roda no constructor, antes do specialize virar app). A env
     // precisa estar posta ANTES do loop: o constructor do mod lê no dlopen.
     setenv("BEPINEX_PKG", pkg, 1);
-    // F1d: antes de qualquer dlopen. 2 mortes seguidas < 60s => nenhum mod
-    // deste jogo entra (e o aviso vai pro log C1).
+    // F1d: antes de qualquer dlopen. 2 mortes seguidas dentro da janela =>
+    // nenhum mod deste jogo entra (e o aviso vai pro log C1).
     if (crashguard_gate(pkg, "crashguard")) return 0;
     int loaded = 0;
     for (int i = 0; i < n; i++) {
