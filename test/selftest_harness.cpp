@@ -1575,6 +1575,90 @@ int main() {
         }).result == BC_ELF_FILE_NO_SYMBOL);
     }
 
+    printf("\n[Caso 63] bc_elf_file: bloqueio por DT_SONAME do frida-gadget\n");
+    {
+        auto make_soname_elf = []() {
+            const char soname[] = "\0libfrida-gadget-raw.so";
+            const size_t str_offset = 0x100;
+            const size_t dynamic_offset = 0x140;
+            const size_t sh_offset = 0x200;
+            const size_t file_size = sh_offset + 3 * sizeof(Elf64_Shdr);
+            std::vector<unsigned char> data(file_size, 0);
+            Elf64_Ehdr *eh = (Elf64_Ehdr *)data.data();
+            memcpy(eh->e_ident, ELFMAG, SELFMAG);
+            eh->e_ident[EI_CLASS] = ELFCLASS64;
+            eh->e_ident[EI_DATA] = ELFDATA2LSB;
+            eh->e_ident[EI_VERSION] = EV_CURRENT;
+            eh->e_shoff = sh_offset;
+            eh->e_ehsize = sizeof(Elf64_Ehdr);
+            eh->e_shentsize = sizeof(Elf64_Shdr);
+            eh->e_shnum = 3;
+            memcpy(data.data() + str_offset, soname, sizeof(soname));
+            Elf64_Dyn *dyn = (Elf64_Dyn *)(data.data() + dynamic_offset);
+            dyn[0].d_tag = DT_SONAME;
+            dyn[0].d_un.d_val = 1;
+            dyn[1].d_tag = DT_NULL;
+            Elf64_Shdr *sh = (Elf64_Shdr *)(data.data() + sh_offset);
+            sh[1].sh_type = SHT_STRTAB;
+            sh[1].sh_offset = str_offset;
+            sh[1].sh_size = sizeof(soname);
+            sh[2].sh_type = SHT_DYNAMIC;
+            sh[2].sh_offset = dynamic_offset;
+            sh[2].sh_size = 2 * sizeof(Elf64_Dyn);
+            sh[2].sh_entsize = sizeof(Elf64_Dyn);
+            sh[2].sh_link = 1;
+            return data;
+        };
+        auto write_soname_temp = [](const std::vector<unsigned char> &data, const char *tag) {
+            char path[128];
+            std::snprintf(path, sizeof(path), "/tmp/bc-soname-%s-XXXXXX", tag);
+            int fd = mkstemp(path);
+            if (fd < 0) return std::string();
+            ssize_t written = write(fd, data.data(), data.size());
+            close(fd);
+            return written == (ssize_t)data.size() ? std::string(path) : std::string();
+        };
+        std::vector<unsigned char> soname_elf = make_soname_elf();
+        auto probe_soname = [&](const char *tag, auto mutate) {
+            std::vector<unsigned char> data = soname_elf;
+            mutate(data);
+            std::string path = write_soname_temp(data, tag);
+            char soname[128];
+            bc_elf_file_probe result =
+                bc_elf_file_read_soname(path.c_str(), soname, sizeof(soname));
+            unlink(path.c_str());
+            return std::make_pair(result, std::string(soname));
+        };
+        const char *real_mod = "../mods/kungfux/libs/arm64-v8a/libkungfux.so";
+        char real_soname[128];
+        bc_elf_file_probe real_result =
+            bc_elf_file_read_soname(real_mod, real_soname, sizeof(real_soname));
+        check("ELF minimo com SONAME frida e detectado",
+              probe_soname("hit", [](auto &) {}).first.result == BC_ELF_FILE_HAS_SYMBOL &&
+              probe_soname("hit2", [](auto &) {}).second == "libfrida-gadget-raw.so");
+        check("SONAME do gadget aciona o bloqueio",
+              bc_elf_file_soname_is_frida("libfrida-gadget-raw.so"));
+        check("SONAME do gadget devolve o nome completo",
+              probe_soname("name", [](auto &) {}).second == "libfrida-gadget-raw.so");
+        check("mod .so real nao e gadget",
+              real_result.result == BC_ELF_FILE_HAS_SYMBOL &&
+              !bc_elf_file_soname_is_frida(real_soname));
+        check("d_val fora do strtab e seguro",
+              probe_soname("badval", [](auto &d) {
+                  auto *dyn = (Elf64_Dyn *)(d.data() + 0x140);
+                  dyn[0].d_un.d_val = 0xffff;
+              }).first.result == BC_ELF_FILE_NO_SYMBOL);
+        check("strtab sem NUL e seguro",
+              probe_soname("nonul", [](auto &d) {
+                  memset(d.data() + 0x100, 'X', sizeof("\0libfrida-gadget-raw.so"));
+              }).first.result == BC_ELF_FILE_NO_SYMBOL);
+        check("dynamic truncado e seguro",
+              probe_soname("truncated", [](auto &d) {
+                  auto *sh = (Elf64_Shdr *)(d.data() + 0x200);
+                  sh[2].sh_size = sizeof(Elf64_Dyn) - 1;
+              }).first.result == BC_ELF_FILE_NO_SYMBOL);
+    }
+
     printf("\n[Caso 62] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
     {
         const char *buf = "com.foo.bar\n# comentario\n\ncom.baz.qux \n  com.indentado\n";
