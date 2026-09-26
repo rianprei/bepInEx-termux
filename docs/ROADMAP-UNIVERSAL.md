@@ -123,6 +123,24 @@ Lista `lib/arm64-v8a/` no APK base + splits (`ApplicationInfo.sourceDir` + `spli
 - `libgodot_android.so` → `godot`
 - senão → `native`/`java`
 
+### C7. Aceitar mod de qualquer origem (detecção automática no Manager)
+O usuário escolhe um arquivo qualquer + o jogo. O Manager identifica o tipo pelo **conteúdo** (magic/cabeçalho), não pela extensão, e diz em português se roda e como.
+
+| Tipo detectado | Como detecta | Roda? | Caminho |
+|---|---|---|---|
+| `.bmod` | zip com `manifest.json` | sim | C2 |
+| `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim | copia pra `mods/<pkg>/` |
+| `.so` 32-bit/x86 | ELF de outra arquitetura | não | "feito pra outra arquitetura" |
+| `.patch` | texto nas regras C4 | sim | u_patch |
+| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`, `Java.perform`) | sim (F11) | frida-gadget em modo script |
+| `.dll` .NET que referencia `Il2CppInterop`/`UnhollowerBaseLib` (BepInEx 6 IL2CPP / MelonLoader IL2CPP) | PE + CLI header + AssemblyRefs | depois (F12) | runtime .NET no processo |
+| `.dll` .NET Mono (BepInEx 5 / MelonLoader Mono, ex: mods do TABS PC) em jogo **Unity Mono** | AssemblyRefs sem Il2Cpp* + engine `unity-mono` | depois (F13) | mono_* + Harmony |
+| `.dll` .NET Mono em jogo **IL2CPP** | idem + engine `unity-il2cpp` | **não automático** | explica e sugere Mod Maker/port |
+| `.dll` Windows nativo, `.dylib` iOS, `.CT` Cheat Engine, `.exe` | PE sem CLI / Mach-O / XML CE | não | explica o porquê (outra plataforma/binário) |
+| `.lua` GameGuardian | texto com `gg.` | depois (F10) | — |
+
+Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtime.
+
 ## Fases (TODO)
 
 ### F1 — Ativação zero-config (loader)
@@ -182,6 +200,21 @@ Lista `lib/arm64-v8a/` no APK base + splits (`ApplicationInfo.sourceDir` + `spli
 - [ ] Ponto de hook comum de AdMob/AppLovin/ironSource/Unity Ads (Java via JNI vs wrapper C#). Go/no-go de um `u_noads`.
 - [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager.
 
+### F11 — Scripts Frida como mod (runtime, sem PC)
+- [ ] Loader/Manager: mod `.js` ⇒ copia `frida-gadget` arm64 (licença wxWindows, vai nos assets do Manager) + config `interaction: script` apontando pro `.js`. [NAO VERIFICADO: confirmar a doc do gadget modo script + tamanho + detecção por anti-tamper]
+- [ ] Suporte a `frida-il2cpp-bridge` (scripts da comunidade que usam `Il2Cpp.perform`).
+- **Verifica:** script `.js` simples que loga um método do SA2, instalado pelo Manager.
+
+### F12 — Mods `.dll` IL2CPP (BepInEx 6 IL2CPP / MelonLoader IL2CPP) — spike primeiro
+- [ ] Spike: carregar o runtime .NET (CoreCLR) **dentro do processo pelo nosso Zygisk** (sem container), reaproveitando o que o NextBep/FusionCore já portou (CoreCLR android-arm64 + Il2CppInterop + HarmonyX). Medir tamanho, RAM, tempo da 1ª execução (geração dos assemblies proxy).
+- [ ] Go/no-go com números. Se go: fase de implementação separada.
+- Limite real: só roda `.dll` feito pra versão **IL2CPP** do jogo. Mod de PC Mono não entra aqui.
+
+### F13 — Mods `.dll` Mono em jogo Unity Mono
+- [ ] `mono_min.h` + carregar assembly (`mono_domain_assembly_open`) + HarmonyX (roda nativo em Mono).
+- [ ] Compat BepInEx 5 mínima (`BaseUnityPlugin`, `Logger`, `Config`) pra mod de PC do mesmo jogo carregar sem recompilar, quando o jogo Android também é Mono.
+- Precisa de jogo-alvo Unity Mono real pra validar.
+
 ### F10 — Depois (fora do caminho crítico)
 - `mono_min.h` (Unity Mono), com jogo-alvo real.
 - Helper de thread principal Unity (habilita `u_speed`/`u_fps` universais).
@@ -213,7 +246,8 @@ F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até e
 
 ## Fora de escopo
 
-- Sem root. Patch de APK. Rodar DLL C# dos mods PC (acompanhar NextBep/FusionCore).
+- Sem root. Patch de APK.
+- Conversão automática de mod `.dll` Mono de PC pra jogo IL2CPP: o mod referencia tipos Mono que não existem no build IL2CPP, e transpiler Harmony não tem IL pra reescrever. Fica como "port assistido" (Mod Maker/SDK), não automático.
 - Burlar IAP/licença/pagamento. PvP online com anti-cheat.
 
 ## Decisões tomadas (defaults do orquestrador, usuário pode trocar)
