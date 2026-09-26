@@ -28,7 +28,10 @@ NDK=${NDK:-$HOME/Android/Sdk/ndk/23.2.8568313}
 # VERSION = "<version> <versionCode>". O módulo mostra essa versão no app
 # Magisk; o loader mostra a dele no logcat. Se divergirem o usuário instala
 # "v0.4.0" e vê "módulo carregado — v0.3.6", então o build reclama.
-read -r VERSION VERSION_CODE < VERSION
+version_line=$(cat VERSION)
+read -r VERSION VERSION_CODE <<EOF
+$version_line
+EOF
 grep -q "BC_LOADER_VERSION \"$VERSION\"" jni/main.cpp || {
     echo "ERRO: VERSION diz $VERSION mas jni/main.cpp nao bate. Atualize o define." >&2
     exit 1
