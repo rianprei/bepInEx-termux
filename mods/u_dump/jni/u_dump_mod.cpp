@@ -105,16 +105,33 @@ static long long il2cpp_mapped_size() {
 
 // --- il2cpp -> C5 ---
 
-// "Ns.Nome" num buffer. Aninhada: class_get_namespace vazio + nome curto
-// ("Inner") — C5 não define formato pra aninhada (furo reportado ao
-// orquestrador, não inventamos variante); C4 v1 ignora aninhada de qualquer
-// forma.
+// "Namespace.Externa/Interna" (C5 2026-09-26+): namespace e 1º nome vêm da
+// raiz; caminho de nesting com '/', subindo class_get_declaring_type até a
+// raiz. Sem o símbolo (il2cpp velho): nome curto, como antes.
 static const char *full_class_name(void *klass, char *out, size_t cap) {
-    const char *ns = il.class_get_namespace(klass);
-    const char *nm = il.class_get_name(klass);
-    if (!nm) { snprintf(out, cap, "?"); return out; }
-    if (!ns || !ns[0]) { snprintf(out, cap, "%s", nm); return out; }
-    snprintf(out, cap, "%s.%s", ns, nm);
+    if (!il.class_get_declaring_type) {
+        const char *ns = il.class_get_namespace(klass);
+        const char *nm = il.class_get_name(klass);
+        if (!nm) { snprintf(out, cap, "?"); return out; }
+        if (!ns || !ns[0]) { snprintf(out, cap, "%s", nm); return out; }
+        snprintf(out, cap, "%s.%s", ns, nm);
+        return out;
+    }
+    const char *parts[16];  // nesting além disso é patológico: trunca
+    int nparts = 0;
+    void *k = klass, *root = klass;
+    while (k && nparts < 16) {
+        parts[nparts++] = il.class_get_name(k);
+        root = k;
+        k = il.class_get_declaring_type(k);
+    }
+    if (nparts == 0) { snprintf(out, cap, "?"); return out; }
+    for (int i = 0; i < nparts / 2; i++) {  // coletei fundo→raiz; C5 é raiz→fundo
+        const char *tn = parts[i];
+        parts[i] = parts[nparts - 1 - i];
+        parts[nparts - 1 - i] = tn;
+    }
+    dump_join_class_name(out, cap, il.class_get_namespace(root), parts, nparts);
     return out;
 }
 

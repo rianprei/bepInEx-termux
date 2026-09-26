@@ -12,6 +12,8 @@
 //   C  <assembly>  <Namespace.Classe>
 //   M  <Namespace.Classe>  <método>  <nargs>  <tipo_retorno>  <static 0|1>
 //   F  <Namespace.Classe>  <campo>  <tipo>  <static 0|1>  <offset>
+// Aninhada (C5 2026-09-26+): <Namespace.Classe> = "Namespace.Externa/Interna"
+// — namespace vem da raiz (top-level), caminho de nesting com '/'.
 // Separador TAB. Grava-se em "<arquivo>.tmp" e rename() no fim — o leitor
 // (Manager) nunca vê dump pela metade, e uma falha no meio da escrita deixa
 // o dump.tsv anterior intacto.
@@ -26,6 +28,33 @@ static inline int dump_write_header(char *out, size_t cap, const char *pkg,
 static inline int dump_write_class(char *out, size_t cap, const char *assembly,
                                    const char *cls) {
     return snprintf(out, cap, "C\t%s\t%s\n", assembly ? assembly : "?", cls);
+}
+
+// Monta o nome de classe do C5 com aninhada: "Namespace.Externa/Interna".
+// ns = namespace da RAIZ; parts = nomes raiz→fundo (parts[0] = top-level,
+// parts[nparts-1] = a própria classe). Sem namespace: "Externa/Interna".
+// parte null dentro do caminho vira "?"; sem partes, "?".
+static inline int dump_join_class_name(char *out, size_t cap, const char *ns,
+                                       const char *const *parts, int nparts) {
+    if (!parts || nparts <= 0) {
+        snprintf(out, cap, "?");
+        return (int)strlen(out);
+    }
+    size_t used = 0;
+    if (ns && ns[0]) {
+        int w = snprintf(out, cap, "%s.", ns);
+        if (w < 0 || (size_t)w >= cap) { snprintf(out, cap, "?"); return 1; }
+        used = (size_t)w;
+    }
+    for (int i = 0; i < nparts; i++) {
+        if (used + 1 >= cap) break;  // truncado (C5 real não deveria chegar aqui)
+        int w = snprintf(out + used, cap - used, "%s%s", i ? "/" : "",
+                         parts[i] ? parts[i] : "?");
+        if (w < 0) break;
+        used += (size_t)w;
+    }
+    out[cap - 1] = '\0';
+    return (int)used;
 }
 
 // Flags de atributo que interessam pro usuário do dump (escopo/hiding).

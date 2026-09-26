@@ -1551,6 +1551,51 @@ int main() {
         }
     }
 
+    // ================================================================
+    // Caso 55: dump_join_class_name (F3b) — aninhada C5:
+    // "Namespace.Externa/Interna", namespace e 1º nome da raiz.
+    // ================================================================
+    {
+        printf("\n[Caso 55] dump_join_class_name: aninhada C5\n");
+        char buf[128];
+        {
+            const char *parts[] = {"Externa", "Interna"};
+            dump_join_class_name(buf, sizeof(buf), "NS", parts, 2);
+            check("aninhada com namespace: NS.Externa/Interna", strcmp(buf, "NS.Externa/Interna") == 0);
+        }
+        {
+            const char *parts[] = {"A", "B", "C"};
+            dump_join_class_name(buf, sizeof(buf), "", parts, 3);
+            check("sem namespace: A/B/C", strcmp(buf, "A/B/C") == 0);
+        }
+        {
+            const char *parts[] = {"Solo"};
+            dump_join_class_name(buf, sizeof(buf), nullptr, parts, 1);
+            check("top-level sem ns: Solo", strcmp(buf, "Solo") == 0);
+        }
+        {
+            const char *parts[] = {"A", "B", "C", "D"};
+            dump_join_class_name(buf, sizeof(buf), "N", parts, 4);
+            check("nesting 4: N.A/B/C/D", strcmp(buf, "N.A/B/C/D") == 0);
+        }
+        {
+            const char *parts[] = {"Externa", nullptr};
+            dump_join_class_name(buf, sizeof(buf), "NS", parts, 2);
+            check("part null no caminho → NS.Externa/?", strcmp(buf, "NS.Externa/?") == 0);
+        }
+        {
+            dump_join_class_name(buf, sizeof(buf), "NS", nullptr, 0);
+            check("sem partes → ?", strcmp(buf, "?") == 0);
+            dump_join_class_name(buf, sizeof(buf), "NS", nullptr, 0);
+            check("parts null → ?", strcmp(buf, "?") == 0);
+        }
+        {
+            const char *parts[] = {"Externa", "Interna"};
+            dump_join_class_name(buf, 10, "NS", parts, 2);
+            check("cap pequeno: truncado com NUL, sem estourar", strlen(buf) < 10);
+        }
+    }
+
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;
 }
