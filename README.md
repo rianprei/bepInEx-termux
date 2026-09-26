@@ -101,7 +101,8 @@ Hoje isso já funciona por partes, sem Manager:
   instala e reinicia o jogo; o dump sai em
   `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que o jogo
   abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar o
-  jogo); remova o `u_dump.so` da pasta do jogo quando terminar de usar.
+  jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar
+  de usar.
   No Manager isso vira o botão "Escanear jogo".
 - **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
   `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em

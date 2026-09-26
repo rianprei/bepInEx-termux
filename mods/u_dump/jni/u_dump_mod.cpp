@@ -248,7 +248,7 @@ static void *worker(void *) {
     }
 
     if (!il2cpp_boot(il)) {
-        c1_log(lg, "il2cpp não subiu (timeout ~120s) — desistindo");
+        c1_log(lg, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
         if (lg) fclose(lg);
         return nullptr;
     }
