@@ -30,9 +30,11 @@ else
     echo "bugb2 falhou como esperado"
 fi
 
-echo "== harness estático (Casos 61-64: parse, emissores, guarda, field) =="
-( cd ../../.. && g++ -std=c++17 -Wall -Wextra -Werror -Ijni -Imods/common -Imods/u_patch/jni \
-    -o /tmp/selftest_f4 test/selftest_harness.cpp ) || rc=1
+echo "== harness estático (Casos 61-68: parse, emissores, guarda, field) =="
+# Compila de test/ como o gate faz (CWD afeta includes relativos do harness).
+# De test/device/thunk_exec, ../.. = test/ (nao ../../test = test/device/test).
+( cd ../.. && pwd && g++ -std=c++17 -Wall -Wextra -Werror -I../jni -I../mods/common -I../mods/u_patch/jni \
+    -o /tmp/selftest_f4 selftest_harness.cpp ) || rc=1
 /tmp/selftest_f4 >/dev/null || rc=1
 /tmp/selftest_f4 | tail -1
 

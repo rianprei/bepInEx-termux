@@ -117,6 +117,9 @@ static inline int up_parse_line(char *line, up_rule_t *r) {
             snprintf(r->fmethod, sizeof(r->fmethod), "%s", tok[5]);
             if (!r->fmethod[0]) return -1;
             if (!up_parse_nargs(tok[6], &r->nargs)) return -1;
+            // Regra única C4 (Manager alinhado): nargs -1 é auto-only (5
+            // tokens). Em 7 tokens (método explícito), nargs >= 0 obrigatório.
+            if (r->nargs < 0) return -1;
         }
     }
     if (!up_parse_type(tok[vi], &r->type)) return -1;

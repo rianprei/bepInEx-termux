@@ -310,6 +310,46 @@ int main() {
         check("field size inválido recusa", up_emit_field_thunk(f, fva, sva, 2, 1, 8) == 0);
     }
 
+    // Fixture compartilhada C4 (test/fixtures/c4_lines.tsv): o Manager gera
+    // field de 5 ou 7 tokens e recusa nargs negativo; o u_patch tem que
+    // aceitar/recusar exatamente as mesmas linhas. Comentários (#) e vazias
+    // são ignoradas. Caminho relativo à raiz (o gate compila de lá).
+    {
+        FILE *fp = fopen("test/fixtures/c4_lines.tsv", "r");
+        if (!fp) {
+            check("fixture c4_lines.tsv abriu (rode da raiz do repo)", 0);
+        } else {
+            char line[512];
+            int nlines = 0, nbad = 0;
+            while (fgets(line, sizeof(line), fp)) {
+                char *nl = strchr(line, '\n');
+                if (nl) *nl = '\0';
+                char *hash = strchr(line, '#');
+                if (hash) *hash = '\0';
+                if (line[0] == '\0') continue;
+                char *tab = strchr(line, '\t');
+                if (!tab) continue;
+                *tab = '\0';
+                char *expect = tab + 1;
+                while (*expect == ' ' || *expect == '\t') expect++;
+                up_rule_t r;
+                int got = up_parse_line(line, &r);
+                int want_accept = strcmp(expect, "accept") == 0;
+                int ok = want_accept ? (got == 0) : (got == -1);
+                if (!ok) {
+                    printf("  [FAIL] fixture: '%s' esperava %s, parser deu %d\n",
+                           line, want_accept ? "accept" : "reject", got);
+                    nbad++;
+                }
+                nlines++;
+            }
+            fclose(fp);
+            printf("  [INFO] fixture: %d linhas, %d divergências\n", nlines, nbad);
+            if (nlines < 25) check("fixture tem >= 25 casos", 0);
+            check("fixture: todas as linhas como esperado", nbad == 0);
+        }
+    }
+
     printf("== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

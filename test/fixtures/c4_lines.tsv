@@ -1,0 +1,31 @@
+# C4 shared contract: <line> TAB <accept|reject>. Manager (uni/f5-manager)
+# generates field with 5 tokens (auto) or 7 (method + nargs >= 0) and rejects
+# negative nargs; u_patch must match. nargs -1 is auto-only (5 tokens).
+return ComplexCreature HasAmmo 0 bool true	accept
+return ComplexCreature HasAmmo 0 int 5	accept
+return Projectile GetMovementSpeed 0 float 1.5	accept
+return ComplexCreature HasAmmo 0 bool true extra	reject
+return ComplexCreature HasAmmo -1 bool true	reject
+return ComplexCreature HasAmmo abc bool true	reject
+return ComplexCreature HasAmmo 0 string x	reject
+return ComplexCreature HasAmmo 0 bool	reject
+mul SoundChannel GetPlayingClipIndex 0 int 3	accept
+mul Projectile GetDistanceToTravel 0 float 2.5	accept
+mul SoundChannel GetPlayingClipIndex 0 bool true	reject
+mul SoundChannel GetPlayingClipIndex 0 int 3 extra	reject
+mul SoundChannel GetPlayingClipIndex -1 int 3	reject
+static Game MonstersHaveUniqueSpeed bool true	accept
+static CreatureState WeaponReloadDurationSpeedUpFactor float 2	accept
+static ItemDragHandler MaxFingers int 2	accept
+static ItemDragHandler MaxFingers string x	reject
+static ItemDragHandler MaxFingers bool	reject
+field WeaponInfo unlimitedAmmo bool true	accept
+field WeaponInfo unlimitedAmmo bool true SelectWeapon 1	accept
+field WeaponInfo unlimitedAmmo bool true SelectWeapon 0	accept
+field WeaponInfo unlimitedAmmo bool true SelectWeapon -1	reject
+field WeaponInfo unlimitedAmmo bool true SelectWeapon abc	reject
+field WeaponInfo unlimitedAmmo bool true SelectWeapon	reject
+field WeaponInfo unlimitedAmmo bool true SelectWeapon 1 extra	reject
+field WeaponInfo unlimitedAmmo string true	reject
+field NoSuchClass_xyz Foo 0 bool true	accept
+frobnicate ComplexCreature HasAmmo 0 bool true	reject
