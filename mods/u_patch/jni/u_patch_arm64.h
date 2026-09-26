@@ -76,6 +76,12 @@ static inline uint32_t up_enc_stlr_unlock() {
 static inline uint32_t up_enc_add_x17_imm(uint32_t imm) {
     return 0x91000000u | ((imm & 0xFFFu) << 10) | (16u << 5) | 17u;
 }
+// cbz x0, <palavra> (CBZ 64-bit = 0xB4000000 | imm19 << 5 | Rt). Usado no
+// thunk field: this nulo NÃO pode escrever em [x0+off] (SIGSEGV no jogo).
+static inline uint32_t up_enc_cbz_x0(int this_idx, int target_idx) {
+    int32_t off = (target_idx - this_idx) * 4;
+    return 0xB4000000u | ((((uint32_t)off >> 2) & 0x7FFFFu) << 5) | 0u;
+}
 // cbnz wR, para a palavra (this_idx -> target_idx)
 static inline uint32_t up_enc_cbnz_w(uint32_t r, int this_idx, int target_idx) {
     int32_t off = (target_idx - this_idx) * 4;
@@ -129,14 +135,27 @@ static inline uint32_t up_enc_str_w9(uint32_t off) {
 // Thunk field: escreve o valor em [x0+off] (this = x0) e segue pro original
 // (tail call — x30 do chamador intacto, sem save). Sem lock: o único estado
 // compartilhado é o ponteiro orig, só lido após instalar.
-// Layout: 0 movz w9,lo [1 movk w9,hi] 2 str[b] 3 adrp 4 add 5 ldr 6 br.
-// Retorna nº de palavras, 0 = offset fora do alcance do str[b].
-// bool = size 1 (strb), int/float = size 4 (str, exige off % 4 == 0).
-// Thunk field: escreve o valor em [x0+off] (this = x0) e segue pro original
-// (tail call — x30 do chamador intacto, sem save). Sem lock: o único estado
-// compartilhado é o ponteiro orig, só lido após instalar.
-// Layout: 0 movz w9,lo [1 movk w9,hi] 2 str[b] 3 adrp 4 add 5 ldr 6 br.
-// Retorna nº de palavras (6 ou 7); 0 = offset fora do alcance do str[b].
+//
+// GUARDA DE this NULO (achado do review, CRÍTICO): o jogo chama método de
+// instância com this == nullptr o tempo todo (objeto destruído/unloaded), e o
+// método original em geral abre com `if (!this) return`. Um `str[b] w9, [x0, #off]`
+// sem guarda estoura SIGSEGV dentro do jogo — o que a guarda G1 promete nunca
+// deixar acontecer. Então: cbz x0 no primeiro word, e o this nulo cai no
+// MESMO caminho de "direct" (ldr x16,[x16]; br x16 — tail call, x30 intacto),
+// que é o comportamento que o original teria com this nulo: só não escreve.
+//
+// Layout: 0 adrp x16,slot | 1 add x16 | 2 cbz x0,→direto | 3 movz w9,lo |
+//         [4 movk w9,hi] | 5 str[b] w9,[x0,#off] | 6 ldr x16,[x16] | 7 br x16 |
+//         [8 ldr x16,[x16] | 9 br x16].
+//
+// O adrp/add vem ANTES do cbz de propósito: o caminho direto usa x16 como
+// ponteiro do slot (`ldr x16, [x16]`), então o x16 tem que estar pronto
+// quando o cbz pula pra lá. (A primeira versão punha o cbz na palavra 0 e o
+// caminho direto lia [x16] com o x16 do CHAMADOR — SIGSEGV. Pegado pelo
+// caso de execução com this=NULL, que é exatamente para isso que ele existe.)
+// O índice do caminho direto depende do movk, então a palavra do cbz é
+// escrita DEPOIS que o direto sabe onde ficou.
+// Retorna nº de palavras (9 ou 10); 0 = offset fora do alcance do str[b].
 // bool = size 1 (strb, off 0..4095); int/float = size 4 (str, off % 4 == 0).
 static inline int up_emit_field_thunk(uint32_t *out, const void *thunk_va,
                                       const void *slot_va, int size, uint32_t bits,
@@ -148,20 +167,25 @@ static inline int up_emit_field_thunk(uint32_t *out, const void *thunk_va,
     uint32_t lo = (uint32_t)(slot & 0xFFFu);
     auto at = [&](int i) -> const void * { return (const uint8_t *)thunk_va + (size_t)i * 4; };
     int i = 0;
+    out[i++] = up_enc_adrp_x16(at(0), slot_va);   // x16 = slot (primeiro, por causa do cbz)
+    out[i++] = up_enc_add_x16(lo);
+    int cbz_at = i;                              // destino corrigido no fim
+    out[i++] = 0;
     out[i++] = up_enc_movz_w9((uint16_t)(bits & 0xFFFFu));
     // bool cabe num movz (0/1); int/float com metade alta zerada também.
     if (size == 4 && (bits >> 16) != 0) out[i++] = up_enc_movk_w9_16((uint16_t)(bits >> 16));
     out[i++] = (size == 1) ? up_enc_strb_w9((uint16_t)off) : up_enc_str_w9(off);
-    const void *pc_adrp = at(i);  // (at(i) e i++ na mesma expressão seria UB)
-    out[i++] = up_enc_adrp_x16(pc_adrp, slot_va);
-    out[i++] = up_enc_add_x16(lo);
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BR_X16;
-    return i;  // 6 ou 7
+    int direto = i;  // this nulo: não escreve, só segue pro original (x16 já é o slot)
+    out[i++] = UP_LDR_X16_ORIG;
+    out[i++] = UP_BR_X16;
+    out[cbz_at] = up_enc_cbz_x0(cbz_at, direto);
+    return i;  // 9 (bool/float hi=0) ou 10 (movk)
 }
-#define UP_FIELD_THUNK_WORDS_MAX 7
-// ponytail: teto de 24 thunks field (24*28 = 672 bytes numa página RX de 4096).
+#define UP_FIELD_THUNK_WORDS_MAX 10
 #define UP_FIELD_MAX 24
+// ponytail: teto de 24 thunks field (24*40 = 960 bytes numa página RX de 4096).
 
 // Instrução que termina a função: ret/br (família 0xD61F/0xD65F) ou B
 // incondicional. Se uma aparece antes da última palavra que vamos

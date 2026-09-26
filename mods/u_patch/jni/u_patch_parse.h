@@ -22,7 +22,9 @@ struct up_rule_t {
 // Quebra "Namespace.Nome" no último '.': sem ponto, ns fica "".
 // Retorna false se classe vazia.
 static inline bool up_split_class(const char *cls, char *ns, size_t nsz, char *name, size_t nmsz) {
-    if (!cls || !*cls) return false;
+    // nsz/nmsz == 0 não é caso de chamador: sem isso, `nlen = nsz - 1` vira
+    // SIZE_MAX e o memcpy copia o resto do heap (achado do review).
+    if (!cls || !*cls || nsz == 0 || nmsz == 0) return false;
     const char *dot = strrchr(cls, '.');
     if (!dot) {
         if (nsz) ns[0] = '\0';
@@ -134,6 +136,75 @@ static inline int up_parse_line(char *line, up_rule_t *r) {
 // como <pkg>. Contrato C1: o mod prefere getenv("BEPINEX_PKG").
 static inline bool up_is_zygote(const char *s) {
     return s && strncmp(s, "zygote", 6) == 0;
+}
+
+// --- checagem de tipo antes de escrever (achados #2 e #3 do review) -------
+//
+// O C4 deixa o tipo VIR DA REGRA (bool|int|float) e o jogo decide o tamanho
+// real do campo. Escrever 4 bytes num campo de 1 byte suja os vizinhos do
+// objeto, e num método de STRUCT o x0 nem é ponteiro (é o valor), então o
+// store vai para endereço arbitrário. Estas funções são puras: o mod passa o
+// que o il2cpp respondeu e elas dizem se pode escrever e por que não.
+//
+// Devolve 0 = pode escrever; -1 = recusa, com o motivo em `why`.
+static inline int up_value_size_by_name(const char *type_name) {
+    if (!type_name) return 0;
+    if (strcmp(type_name, "System.Boolean") == 0) return 1;
+    if (strcmp(type_name, "System.Int32") == 0) return 4;
+    if (strcmp(type_name, "System.Single") == 0) return 4;
+    if (strcmp(type_name, "System.Char") == 0) return 2;
+    return 0;  // System.Int64/Double, referência, enum, struct: fora do C4
+}
+
+static inline int up_value_type_check(bool klass_is_valuetype, const char *type_name,
+                                      size_t want_size, char *why, size_t whysz) {
+    if (klass_is_valuetype) {
+        snprintf(why, whysz,
+                 "a classe e STRUCT: em metodo de instancia de struct o x0 nao e ponteiro "
+                 "para o objeto, entao o store iria para endereco arbitrario — o verbo field "
+                 "so vale para classe (para struct, use um metodo estatico com o verbo static)");
+        return -1;
+    }
+    if (!type_name) return 0;  // il2cpp sem type_get_name: segue o comportamento antigo
+    int real = up_value_size_by_name(type_name);
+    if (real == 0) {
+        snprintf(why, whysz,
+                 "campo do tipo %s nao e bool/int/float do C4 (1/4 bytes) — regra recusada "
+                 "para nao escrever em cima dos campos vizinhos", type_name);
+        return -1;
+    }
+    if ((size_t)real != want_size) {
+        snprintf(why, whysz,
+                 "campo e %s (%d byte(s)) e a regra escreve %zu byte(s) — regra recusada "
+                 "para nao corromper o campo vizinho do objeto",
+                 type_name, real, want_size);
+        return -1;
+    }
+    return 0;
+}
+
+// --- #13: percorrer linhas do .patch sem loop infinito -------------------
+//
+// O scanner usa isto no lugar do while manual. O bug historico (linha vazia
+// sem avanco -> while eterno no worker, sem log) fica IMPOSSIVEL aqui: o
+// avanco esta na propria funcao e o harness conta as linhas visitadas.
+typedef int (*up_line_cb)(char *line, int lineno, void *ctx);
+
+static inline int up_foreach_line(char *buf, up_line_cb cb, void *ctx, int max_lines) {
+    if (!buf || !cb) return 0;
+    int visited = 0;
+    char *line = buf;
+    while (line) {
+        if (max_lines > 0 && visited >= max_lines) break;
+        int lineno = visited + 1;
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        cb(line, lineno, ctx);
+        visited++;
+        line = nl ? nl + 1 : nullptr;
+        if (line && !*line) line = nullptr;   // fim do buffer
+    }
+    return visited;
 }
 
 // Conf C3: busca "key=value" no buffer (linhas '\n', '#' comentário).

@@ -27,5 +27,5 @@ field WeaponInfo unlimitedAmmo bool true SelectWeapon abc	reject
 field WeaponInfo unlimitedAmmo bool true SelectWeapon	reject
 field WeaponInfo unlimitedAmmo bool true SelectWeapon 1 extra	reject
 field WeaponInfo unlimitedAmmo string true	reject
-field NoSuchClass_xyz Foo 0 bool true	accept
+field NoSuchClass_xyz Foo bool true	accept
 frobnicate ComplexCreature HasAmmo 0 bool true	reject

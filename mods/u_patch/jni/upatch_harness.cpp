@@ -1,5 +1,5 @@
 // upatch_harness.cpp — teste do u_patch (F4) standalone pro gate verify_all.
-// Roda os Casos 61-64 do selftest_harness (parser C4/C3, emissores arm64,
+// Roda os Casos 69-77 (parser C4/C3, emissores arm64,
 // guarda de método curto, verbo field) sem depender do harness do loader.
 // Compila: g++ -std=c++17 -Wall -Wextra -Werror upatch_harness.cpp -o upatch_harness
 #include <cstdio>
@@ -7,6 +7,18 @@
 
 #include "u_patch_parse.h"
 #include "u_patch_arm64.h"
+#include "u_patch_dedupe.h"
+
+// Callback do Caso 74 (up_foreach_line). Fora do main porque C não aceita
+// definição de função dentro de função.
+struct Ctx { int calls; int last; int empties; };
+static int count_cb(char *line, int lineno, void *vctx) {
+    Ctx *c = (Ctx *)vctx;
+    c->calls++;
+    c->last = lineno;
+    if (line[0] == 0) c->empties++;
+    return 0;
+}
 
 static int g_fail = 0;
 static void check(const char *name, bool cond) {
@@ -16,7 +28,7 @@ static void check(const char *name, bool cond) {
 
 int main() {
     printf("u_patch encoding harness\n");
-    printf("\n[Caso 61] u_patch_parse: regras C4 + conf C3 (motor declarativo F4)\n");
+    printf("\n[Caso 69] u_patch_parse: regras C4 + conf C3 (motor declarativo F4)\n");
     {
         up_rule_t r;
         char line[256];
@@ -74,7 +86,7 @@ int main() {
         check("conf nulo não crasha", !up_conf_get(nullptr, "mult", val, sizeof(val)));
     }
 
-    printf("\n[Caso 62] u_patch_arm64: emissores de patch (F4, palavras conferidas contra llvm-objdump do NDK)\n");
+    printf("\n[Caso 70] u_patch_arm64: emissores de patch (F4, palavras conferidas contra llvm-objdump do NDK)\n");
     {
         // Âncoras geradas pelo assembler do NDK (clang --target=aarch64-linux-android23 -c
         // + llvm-objdump -d; comando/entrada comentados no relatório do commit):
@@ -233,7 +245,7 @@ int main() {
         check("pool cabe numa página RX", (size_t)UP_MUL_MAX * UP_MUL_THUNK_WORDS * 4 <= 4096);
     }
 
-    printf("\n[Caso 63] up_method_fits: guard de método curto (F4 revisão)\n");
+    printf("\n[Caso 71] up_method_fits: guard de método curto (F4 revisão)\n");
     {
         // Getter curto do exemplo da revisão: ldr w0,[x0,#8]; ret (8 bytes).
         const uint32_t getter[] = {0xB9400800u, UP_RET};
@@ -267,7 +279,7 @@ int main() {
         check("pacote real não é zygote", !up_is_zygote("com.hyperdotstudios.swampattack2"));
         check("nulo/vazio não é zygote", !up_is_zygote(nullptr) && !up_is_zygote(""));
     }
-    printf("\n[Caso 64] field C4: parse + emissor do thunk (F4b)\\n");
+    printf("\n[Caso 72] field C4: parse + emissor do thunk (F4b)\\n");
     {
         up_rule_t r;
         char line[256];
@@ -288,22 +300,43 @@ int main() {
         snprintf(line, sizeof(line), "field Foo NoSuchField bool true");
         check("field com campo desconhecido aceita no parse (inexistência é runtime)",
               up_parse_line(line, &r) == 0 && r.kind == UP_FIELD);
-        uint32_t f[8];
+        // Layout (achado #1 do review, CRÍTICO): [0] cbz x0 -> direto |
+        // [1] movz | [2] movk? | [3] str[b] | [4] adrp | [5] add | [6] ldr
+        // | [7] br | [8] ldr | [9] br. Sem o cbz, this==nil escreve em
+        // [0+off] e mata o jogo.
+        uint32_t f[UP_FIELD_THUNK_WORDS_MAX];
         const void *fva = (const void *)0x7A000100ull;
         const void *sva = (const void *)0x7B002234ull;
         int nf = up_emit_field_thunk(f, fva, sva, 1, 1, 112);
-        check("field bool = 6 palavras", nf == 6);
-        check("field bool[0] movz w9,#1", f[0] == 0x52800029u);
-        check("field bool[1] strb w9,[x0,#112]", f[1] == 0x3901C009u);
-        check("field bool termina ldr+br", f[4] == UP_LDR_X16_ORIG && f[5] == UP_BR_X16);
+        check("field bool = 9 palavras (2 a mais pela guarda)", nf == 9);
+        // adrp/add ANTES do cbz: o caminho direto usa x16 como slot, então o
+        // x16 precisa estar pronto antes do salto.
+        check("field bool[0] adrp (x16 = slot antes de qualquer uso)",
+              (f[0] & 0x9F00001Fu) == 0x90000010u);
+        check("field bool[1] add x16 pro lo12 do slot",
+              f[1] == up_enc_add_x16((uint32_t)(0x7B002234ull & 0xFFFull)));
+        check("field bool[2] cbz x0 com destino no caminho direto",
+              f[2] == up_enc_cbz_x0(2, 7));
+        check("campo[2]=0xB40000A0 (CBZ 64, imm19=(7-2)<<5)", f[2] == 0xB40000A0u);
+        check("field bool[3] movz w9,#1", f[3] == 0x52800029u);
+        check("field bool[4] strb w9,[x0,#112]", f[4] == 0x3901C009u);
+        check("field bool[5] ldr + [6] br (tail call do caminho com this)",
+              f[5] == UP_LDR_X16_ORIG && f[6] == UP_BR_X16);
+        check("field bool[7..8] caminho direto ldr+br (this nulo)",
+              f[7] == UP_LDR_X16_ORIG && f[8] == UP_BR_X16);
         int ni = up_emit_field_thunk(f, fva, sva, 4, 0x12345678u, 112);
-        check("field int = 7 palavras", ni == 7);
-        check("field int[1] movk w9 hi", f[1] == (0x72A00000u | (0x1234u << 5) | 9u));
-        check("field int[2] str w9,[x0,#112]", f[2] == 0xB9007009u);
+        check("field int = 10 palavras (movk entra)", ni == 10);
+        check("field int[2] cbz aponta para 8 (destino depois do movk)",
+              f[2] == up_enc_cbz_x0(2, 8));
+        check("field int[4] movk w9 hi", f[4] == (0x72A00000u | (0x1234u << 5) | 9u));
+        check("field int[5] str w9,[x0,#112]", f[5] == 0xB9007009u);
         int nf2 = up_emit_field_thunk(f, fva, sva, 4, 0x00000000u, 112);
-        check("field float 0.0f = 6 palavras", nf2 == 6);
+        check("field float 0.0f = 9 palavras (movk não entra com hi=0)", nf2 == 9);
+        check("field float 0.0f: cbz destino 7", f[2] == up_enc_cbz_x0(2, 7));
         int nf3 = up_emit_field_thunk(f, fva, sva, 4, 0x3F800000u, 112);
-        check("field float 1.0f = 7 palavras", nf3 == 7);
+        check("field float 1.0f = 10 palavras", nf3 == 10);
+        check("teto de palavras cobre o layout novo",
+              UP_FIELD_THUNK_WORDS_MAX >= 10 && UP_FIELD_MAX * UP_FIELD_THUNK_WORDS_MAX * 4 < 4096);
         check("field strb off>4095 recusa", up_emit_field_thunk(f, fva, sva, 1, 1, 4096) == 0);
         check("field str desalinhado recusa", up_emit_field_thunk(f, fva, sva, 4, 1, 114) == 0);
         check("field str off/4>4095 recusa", up_emit_field_thunk(f, fva, sva, 4, 1, 16384) == 0);
@@ -348,6 +381,141 @@ int main() {
             if (nlines < 25) check("fixture tem >= 25 casos", 0);
             check("fixture: todas as linhas como esperado", nbad == 0);
         }
+    }
+
+    // ---- casos novos do review (achados #1, #2/#3, #6/#7, #12, #13) ----
+    // Numeração 73+: a base usa 1-64 e estes aqui 69-72 (o gate de ID único
+    // agora olha TODOS os arquivos que declaram [Caso N]).
+
+    printf("\n[Caso 73] up_value_type_check: escrita só quando o tipo bate (achados #2 e #3)\n");
+    {
+        char why[320];
+        check("bool com want=1 aceita",
+              up_value_type_check(false, "System.Boolean", 1, why, sizeof(why)) == 0);
+        check("Int32 com want=4 aceita",
+              up_value_type_check(false, "System.Int32", 4, why, sizeof(why)) == 0);
+        check("Single com want=4 aceita",
+              up_value_type_check(false, "System.Single", 4, why, sizeof(why)) == 0);
+        check("bool com want=4 RECUSA", up_value_type_check(false, "System.Boolean", 4, why, sizeof(why)) == -1);
+        check("motivo cita o tamanho do campo", strstr(why, "1 byte(s)") != nullptr);
+        check("motivo cita o tamanho da regra", strstr(why, "4 byte(s)") != nullptr);
+        check("Int32 com want=1 RECUSA", up_value_type_check(false, "System.Int32", 1, why, sizeof(why)) == -1);
+        check("STRUCT sempre recusa (want bate)",
+              up_value_type_check(true, "System.Int32", 4, why, sizeof(why)) == -1);
+        check("motivo da struct menciona STRUCT", strstr(why, "STRUCT") != nullptr);
+        check("referência (System.Object) recusa",
+              up_value_type_check(false, "System.Object", 4, why, sizeof(why)) == -1);
+        check("Int64 fora do C4 recusa",
+              up_value_type_check(false, "System.Int64", 8, why, sizeof(why)) == -1);
+        check("Double fora do C4 recusa",
+              up_value_type_check(false, "System.Double", 8, why, sizeof(why)) == -1);
+        check("tipo desconhecido (API fora) aceita como antes",
+              up_value_type_check(false, nullptr, 4, why, sizeof(why)) == 0);
+        check("up_value_size_by_name: Boolean=1",
+              up_value_size_by_name("System.Boolean") == 1);
+        check("up_value_size_by_name: Int32=4",
+              up_value_size_by_name("System.Int32") == 4);
+        check("up_value_size_by_name: String=0 (fora)",
+              up_value_size_by_name("System.String") == 0);
+    }
+
+    printf("\n[Caso 74] up_foreach_line: o loop infinito em linha vazia não existe mais (achado #13)\n");
+    {
+        struct Ctx { int calls; int last; int empties; };
+        Ctx c1 = {0, 0, 0}, c2 = {0, 0, 0}, c3 = {0, 0, 0}, c4 = {0, 0, 0}, c5 = {0, 0, 0}, c6 = {0, 0, 0};
+        char b1[] = "# comentario\n\nreturn A B 0 int 1\n";
+        int n1 = up_foreach_line(b1, count_cb, &c1, 0);
+        check("3 linhas com \\n final: 3 visitas", n1 == 3 && c1.calls == 3);
+        check("2ª linha vazia foi contada", c1.empties == 1);
+        check("numeração de linha 1,2,3", c1.last == 3);
+        char b2[] = "return A B 0 int 1";
+        int n2 = up_foreach_line(b2, count_cb, &c2, 0);
+        check("1 linha sem \\n final: 1 visita", n2 == 1 && c2.calls == 1);
+        char b3[] = "";
+        int n3 = up_foreach_line(b3, count_cb, &c3, 0);
+        // Buffer vazio: 1 visita (a linha vazia É uma linha) e para. O
+        // comportamento é o mesmo do scanner antigo — o que muda é que o
+        // advance está na função, então não há como ficar preso.
+        check("buffer vazio: 1 visita (linha vazia) e para", n3 == 1 && c3.calls == 1);
+        char b4[] = "\n\n\n\n\n\n\n\n";
+        int n4 = up_foreach_line(b4, count_cb, &c4, 0);
+        check("8 linhas vazias: 8 visitas e PARA (nada de laço infinito)",
+              n4 == 8 && c4.calls == 8);
+        char b5[] = "# so comentario\n";
+        check("só comentário: 1 visita", up_foreach_line(b5, count_cb, &c5, 0) == 1);
+        char b6[] = "a\nb\nc\nd\ne\n";
+        check("teto max_lines respeitado", up_foreach_line(b6, count_cb, &c6, 2) == 2);
+        check("nulo não crasha", up_foreach_line(nullptr, count_cb, nullptr, 0) == 0);
+    }
+
+    printf("\n[Caso 75] u_patch_dedupe: hash sem truncamento e log uma vez (achados #6 e #7)\n");
+    {
+        char a[600], b[600];
+        memset(a, 'x', sizeof(a) - 1); a[sizeof(a) - 1] = 0;
+        memset(b, 'x', sizeof(b) - 1); b[sizeof(b) - 1] = 0;
+        a[300] = 'A'; b[300] = 'B';
+        check("textos que só diferem no byte 300 têm hashes diferentes",
+              up_sig_hash(a) != up_sig_hash(b));
+        check("mesmo texto: mesmo hash", up_sig_hash(a) == up_sig_hash(a));
+        check("hash nunca é 0 (0 = nunca visto)", up_sig_hash("") != 0);
+        check("hash de nulo é 0", up_sig_hash(nullptr) == 0);
+
+        static up_applied_t t[UP_APPLIED_MAX];
+        int n = 0;
+        char sig[64];
+        snprintf(sig, sizeof(sig), "regra|1|Foo|Bar|0|1|true");
+        uint64_t h = up_sig_hash(sig);
+        check("1a vez: deve logar", up_dedupe_should_log(t, n, h));
+        check("marca como vista", up_dedupe_mark(t, &n, UP_APPLIED_MAX, h, UP_ST_SEEN));
+        check("2a vez: NÃO deve logar (era inundação de log a cada 2s)",
+              !up_dedupe_should_log(t, n, h));
+        check("estado visível", up_dedupe_find(t, n, h) == 0 && t[0].state == UP_ST_SEEN);
+        check("sucesso sobrescreve o estado", up_dedupe_mark(t, &n, UP_APPLIED_MAX, h, UP_ST_OK));
+        check("aplicada não volta a logar", !up_dedupe_should_log(t, n, h));
+
+        for (int i = 0; i < UP_APPLIED_MAX; i++) {
+            char k[32];
+            snprintf(k, sizeof(k), "regra-%d", i);
+            up_dedupe_mark(t, &n, UP_APPLIED_MAX, up_sig_hash(k), UP_ST_SEEN);
+        }
+        check("tabela cheia depois das marcas", n == UP_APPLIED_MAX && up_dedupe_full(n, UP_APPLIED_MAX));
+        check("regra JÁ vista continua sem log mesmo com a tabela cheia",
+              !up_dedupe_should_log(t, n, h));
+        uint64_t nova = up_sig_hash("regra-nova-depois-cheia");
+        check("regra nova fora da tabela deve logar 1x", up_dedupe_should_log(t, n, nova));
+        check("...e marcar NÃO cabe (finito, em vez de reprocessar para sempre)",
+              !up_dedupe_mark(t, &n, UP_APPLIED_MAX, nova, UP_ST_SEEN));
+    }
+
+    printf("\n[Caso 76] up_split_class: buffer de tamanho 0 não faz memcpy gigante (achado #12)\n");
+    {
+        char ns[64], name[64];
+        check("nspace 0 recusa", !up_split_class("A.B", ns, 0, name, sizeof(name)));
+        check("nname 0 recusa", !up_split_class("A.B", ns, sizeof(ns), name, 0));
+        check("os dois 0 recusa", !up_split_class("A.B", ns, 0, name, 0));
+        check("classe vazia recusa", !up_split_class("", ns, sizeof(ns), name, sizeof(name)));
+        check("nulo recusa", !up_split_class(nullptr, ns, sizeof(ns), name, sizeof(name)));
+        char pns[4], pnm[4];
+        check("buffers pequenos truncam sem crash",
+              up_split_class("Namespace.Classe", pns, sizeof(pns), pnm, sizeof(pnm)));
+    }
+
+    printf("\n[Caso 77] up_enc_cbz_x0: guarda do thunk field (achado #1, o CRÍTICO)\n");
+    {
+        check("cbz x0 imm=0 = 0xB4000000", up_enc_cbz_x0(0, 0) == 0xB4000000u);
+        check("cbz destino 7 tem imm19=7<<5", up_enc_cbz_x0(0, 7) == (0xB4000000u | (7u << 5)));
+        check("cbz destino 8 tem imm19=8<<5", up_enc_cbz_x0(0, 8) == (0xB4000000u | (8u << 5)));
+        check("Rt = x0 (nunca x1/x18)", (up_enc_cbz_x0(0, 4) & 31u) == 0u);
+        uint32_t f[UP_FIELD_THUNK_WORDS_MAX];
+        const void *fva = (const void *)0x7A000100ull;
+        const void *sva = (const void *)0x7B002234ull;
+        int nf = up_emit_field_thunk(f, fva, sva, 1, 1, 8);
+        check("cbz na palavra 2 apontando pro caminho direto (nf-2)",
+              nf > 0 && f[2] == up_enc_cbz_x0(2, nf - 2));
+        check("x16 é calculado ANTES do cbz (senão o caminho direto lê lixo)",
+              (f[0] & 0x9F00001Fu) == 0x90000010u && f[1] == up_enc_add_x16((uint32_t)(0x7B002234ull & 0xFFFull)));
+        check("strb nunca é a palavra 0 nem a 2 (this só é usado depois da guarda)",
+              f[0] != 0x39004009u && f[2] != 0x39004009u);
     }
 
     printf("== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

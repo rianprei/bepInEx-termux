@@ -149,10 +149,13 @@ done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_cl
 
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
-    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- test/selftest_harness.cpp |
+    # TODOS os arquivos que declaram [Caso N] — não só selftest_harness.cpp.
+    # Antes o grep olhava um arquivo só, e a colisão do F4 (61-64 no
+    # upatch_harness x 61-64/65-68 da base) passava reto (achado do review).
+    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- "test/*.cpp" "mods/*/jni/*harness*.cpp" |
         grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
     if [ -n "$duplicates" ]; then
-        printf "IDs duplicados: %s\n" "$duplicates" >&2
+        printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
         exit 1
     fi
 ' bash "$ROOT"

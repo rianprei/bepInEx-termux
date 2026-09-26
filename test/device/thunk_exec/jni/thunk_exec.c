@@ -121,6 +121,12 @@ typedef float (*fn_float)(float);
 // o original lê de volta (prova write+run). No topo: C não aceita função
 // dentro de função.
 static uint8_t o_getb(void *o) { return ((uint8_t *)o)[8]; }
+// Original que NÃO dereferencia this: para o caso this==NULL, onde o thunk
+// tem que pular a escrita e ainda assim chamar o original (achado #1 do
+// review). Se este original lesse o campo, o teste confundiria "thunk protegeu"
+// com "o original também não leu".
+static long g_null_calls;
+static int32_t o_nul_safe(void *o) { (void)o; g_null_calls++; return 42; }
 static int32_t o_geti(void *o) { return *(int32_t *)((uint8_t *)o + 16); }
 static float o_getf(void *o) { return *(float *)((uint8_t *)o + 12); }
 
@@ -281,6 +287,12 @@ int main(int argc, char **argv) {
         if (g_bad == 2) printf("  (1º float errado: rf=%g, válido {2,5})\n", (double)g_bad_rf);
         check("lock int == 0 no fim", slot_i[SLOT_LOCK] == 0);
         check("lock float == 0 no fim", slot_f[SLOT_LOCK] == 0);
+        // #16 do review: g_threaded nunca voltava a 0, então QUALQUER sinal
+        // fatal depois daqui caía no ramo `_exit(86)` do on_fatal e o
+        // processo morria sem imprimir a linha do caso (foi assim que o
+        // caso this=NULL abaixo sumiu do diagnóstico). Zera para o longjmp
+        // voltar a valer: um fault no teste 4 tem que virar [FAIL] impresso.
+        g_threaded = 0;
     } else {
         check("concorrência sobreviveu", 0);
     }
@@ -307,9 +319,11 @@ int main(int argc, char **argv) {
         int nb = up_emit_field_thunk_c(fb_th, fb_th, fslot, 1, 1, 8);
         int ni = up_emit_field_thunk_c(fi_th, fi_th, fslot + 8, 4, 0x12345678u, 16);
         int nf = up_emit_field_thunk_c(ff_th, ff_th, fslot + 16, 4, 0x40200000u, 12);
-        check("field bool emite 6 palavras", nb == 6);
-        check("field int emite 7 palavras", ni == 7);
-        check("field float emite 7 palavras", nf == 7);
+        // Layout novo (achado #1): adrp, add, cbz, movz, strb, ldr, br,
+        // ldr, br = 9 (bool) e 10 (int/float, com movk).
+        check("field bool emite 9 palavras (com guarda this nulo)", nb == 9);
+        check("field int emite 10 palavras (com guarda this nulo)", ni == 10);
+        check("field float emite 10 palavras (com guarda this nulo)", nf == 10);
         *(void **)(fslot + 0) = (void *)o_getb;
         *(void **)(fslot + 8) = (void *)o_geti;
         *(void **)(fslot + 16) = (void *)o_getf;
@@ -322,6 +336,22 @@ int main(int argc, char **argv) {
         check("field float: this.ff=2.5f e orig lê", tf(&obj) == 2.5f && obj.ff == 2.5f);
         check("canários intactos (offset/largura certos)",
               obj.pre == 0xAA55AA55AA55AA55ull && obj.post == 0x55AA55AA55AA55AAull);
+        // #1: this == NULL. O jogo faz isso (objeto destruído) e o método
+        // original em geral abre com `if (!this) return`. O thunk tem que
+        // NÃO escrever em [0+off] (SIGSEGV) e mesmo assim chamar o original.
+        {
+            uint8_t *nslot = (uint8_t *)base + 0x380;
+            uint32_t *nth = (uint32_t *)base + 0x280 / 4;
+            int nn = up_emit_field_thunk_c(nth, nth, nslot, 1, 1, 8);
+            *(void **)(nslot + 0) = (void *)o_nul_safe;
+            __builtin___clear_cache((char *)base + 0x280, (char *)(nth + nn));
+            g_null_calls = 0;
+            int32_t (*tn)(void *) = (void *)nth;
+            check("field bool emite 9 palavras com this=NULL", nn == 9);
+            int32_t r = tn(NULL);
+            check("this=NULL: não escreve, chama o original e devolve o valor dele",
+                  r == 42 && g_null_calls == 1);
+        }
     } else {
         check("field thunk executou sem crash", 0);
     }
