@@ -50,6 +50,7 @@
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
+#include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
 static const char *const T_SRC_DOMAIN[] = {"game", "companion", nullptr};
@@ -1486,7 +1487,7 @@ int main() {
         check("pkg nulo não crasha", !bc_generic_allowlist_contains_buf(buf, nullptr));
     }
 
-    printf("\n[Caso 54] bc_decide_path: caminho por app (BC > mods/<pkg>/ > allowlist > nada)\n");
+    printf("\n[Caso 56] bc_decide_path: caminho por app (BC > mods/<pkg>/ > allowlist > nada)\n");
     {
         check("BC vence tudo (pasta de mods e allowlist presentes)",
               bc_decide_path("jp.co.ponos.battlecatsen", true, true) == BC_PATH_BC);
@@ -1502,6 +1503,127 @@ int main() {
               bc_decide_path("com.foo.cocos", false, false) == BC_PATH_NONE);
         check("pkg nulo não crasha (vira o caminho da pasta)",
               bc_decide_path(nullptr, true, true) == BC_PATH_PKG_MODS);
+    }
+
+    // ================================================================
+    // Caso 57: dump_core (F3 u_dump) — formato C5 exato + pkg C1
+    // (env BEPINEX_PKG vence; cmdline só fora de zygote*). Núcleo puro,
+    // usado por mods/u_dump/jni/u_dump_mod.cpp.
+    // ================================================================
+    {
+        printf("\n[Caso 57] dump_core: formato C5 (dump.tsv) e pkg C1 (u_dump)\n");
+        {
+            char buf[256];
+            int w = dump_write_header(buf, sizeof(buf), "com.foo.game", 1234567, "2022.3.41f1");
+            check("header C5 exato c/ unity", w > 0 && strcmp(buf, "# pkg=com.foo.game il2cpp_size=1234567 unity=2022.3.41f1\n") == 0);
+            w = dump_write_header(buf, sizeof(buf), "com.foo.game", 42, "");
+            check("header C5 unity vazio", w > 0 && strcmp(buf, "# pkg=com.foo.game il2cpp_size=42 unity=\n") == 0);
+            w = dump_write_header(buf, sizeof(buf), nullptr, 1, nullptr);
+            check("header C5 pkg null → vazio (não crasha)", w > 0 && strcmp(buf, "# pkg= il2cpp_size=1 unity=\n") == 0);
+        }
+        {
+            char buf[256];
+            int w = dump_write_class(buf, sizeof(buf), "Assembly-CSharp", "NS.Cls");
+            check("linha C exata", w > 0 && strcmp(buf, "C\tAssembly-CSharp\tNS.Cls\n") == 0);
+            w = dump_write_class(buf, sizeof(buf), nullptr, "Cls");
+            check("linha C assembly null → ?", w > 0 && strcmp(buf, "C\t?\tCls\n") == 0);
+        }
+        {
+            char buf[256];
+            int w = dump_write_method(buf, sizeof(buf), "ComplexCreature", "HasAmmo", 0, "System.Boolean", true);
+            check("linha M exata (static=1)", w > 0 && strcmp(buf, "M\tComplexCreature\tHasAmmo\t0\tSystem.Boolean\t1\n") == 0);
+            w = dump_write_method(buf, sizeof(buf), "NS.Cls", "Foo", 3, "System.Void", false);
+            check("linha M exata (static=0, nargs=3)", w > 0 && strcmp(buf, "M\tNS.Cls\tFoo\t3\tSystem.Void\t0\n") == 0);
+        }
+        {
+            char buf[256];
+            int w = dump_write_field(buf, sizeof(buf), "NS.Cls", "hp", "System.Single", false, 24);
+            check("linha F exata (offset 24)", w > 0 && strcmp(buf, "F\tNS.Cls\thp\tSystem.Single\t0\t24\n") == 0);
+            w = dump_write_field(buf, sizeof(buf), "NS.Cls", "MAX", "System.Int32", true, 0);
+            check("linha F exata (static, offset 0)", w > 0 && strcmp(buf, "F\tNS.Cls\tMAX\tSystem.Int32\t1\t0\n") == 0);
+        }
+        {
+            // Máscaras de atributo fixadas (contrato interno com o mod):
+            check("mask static = 0x0010 (METHOD_ATTRIBUTE_STATIC)", dump_attr_static_mask() == 0x0010);
+            check("mask visibilidade = 0x001F", dump_attr_visibility_mask() == 0x001F);
+        }
+        {
+            char pkg[64];
+            // env vence sempre
+            check("env vence cmdline", dump_pick_pkg("com.via.env", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.env") == 0);
+            // env vazio/ausente → cmdline se não-zygote
+            check("env vazio → cmdline", dump_pick_pkg("", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
+            check("env null → cmdline", dump_pick_pkg(nullptr, "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
+            // cmdline zygote* rejeitado (achado device: constructor lê zygote64)
+            check("cmdline zygote64 → false", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
+            check("cmdline zygote32 → false", !dump_pick_pkg(nullptr, "zygote32", pkg, sizeof(pkg)));
+            check("cmdline zygote → false", !dump_pick_pkg(nullptr, "zygote", pkg, sizeof(pkg)));
+            // cmdline vazio/null → false
+            check("cmdline vazio → false", !dump_pick_pkg(nullptr, "", pkg, sizeof(pkg)));
+            check("cmdline null → false", !dump_pick_pkg(nullptr, nullptr, pkg, sizeof(pkg)));
+            // nada disponível → false (chamador re-tenta depois)
+            check("env null + cmdline zygote → false (fallback espera)", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
+            // truncamento seguro: cap pequeno não estoura
+            char small[8];
+            bool ok = dump_pick_pkg("com.pacote.muito.longo", nullptr, small, sizeof(small));
+            check("cap pequeno: truncado com NUL, sem crash", ok && strlen(small) < sizeof(small));
+        }
+    }
+
+    // ================================================================
+    // Caso 58: dump_join_class_name (F3b) — aninhada C5:
+    // "Namespace.Externa/Interna", namespace e 1º nome da raiz.
+    // ================================================================
+    {
+        printf("\n[Caso 58] dump_join_class_name: aninhada C5\n");
+        char buf[128];
+        {
+            const char *parts[] = {"Externa", "Interna"};
+            dump_join_class_name(buf, sizeof(buf), "NS", parts, 2);
+            check("aninhada com namespace: NS.Externa/Interna", strcmp(buf, "NS.Externa/Interna") == 0);
+        }
+        {
+            const char *parts[] = {"A", "B", "C"};
+            dump_join_class_name(buf, sizeof(buf), "", parts, 3);
+            check("sem namespace: A/B/C", strcmp(buf, "A/B/C") == 0);
+        }
+        {
+            const char *parts[] = {"Solo"};
+            dump_join_class_name(buf, sizeof(buf), nullptr, parts, 1);
+            check("top-level sem ns: Solo", strcmp(buf, "Solo") == 0);
+        }
+        {
+            const char *parts[] = {"A", "B", "C", "D"};
+            dump_join_class_name(buf, sizeof(buf), "N", parts, 4);
+            check("nesting 4: N.A/B/C/D", strcmp(buf, "N.A/B/C/D") == 0);
+        }
+        {
+            const char *parts[] = {"Externa", nullptr};
+            dump_join_class_name(buf, sizeof(buf), "NS", parts, 2);
+            check("part null no caminho → NS.Externa/?", strcmp(buf, "NS.Externa/?") == 0);
+        }
+        {
+            dump_join_class_name(buf, sizeof(buf), "NS", nullptr, 0);
+            check("sem partes → ?", strcmp(buf, "?") == 0);
+            dump_join_class_name(buf, sizeof(buf), "NS", nullptr, 0);
+            check("parts null → ?", strcmp(buf, "?") == 0);
+        }
+        {
+            const char *parts[] = {"Externa", "Interna"};
+            dump_join_class_name(buf, 10, "NS", parts, 2);
+            check("cap pequeno: truncado com NUL, sem estourar", strlen(buf) < 10);
+        }
+        {
+            // Revisão: walk sem teto de 16 — join tem que aguentar cadeia
+            // funda (namespace da raiz, sem truncar nível).
+            const char *parts[20];
+            for (int i = 0; i < 20; i++) parts[i] = "N";
+            char big[256];
+            dump_join_class_name(big, sizeof(big), "R", parts, 20);
+            check("20 níveis: começa em R.N e termina em /N", strncmp(big, "R.N", 3) == 0 &&
+                  strlen(big) == (size_t)(2 + 20 * 2 - 1) &&
+                  strcmp(big + strlen(big) - 2, "/N") == 0);
+        }
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
