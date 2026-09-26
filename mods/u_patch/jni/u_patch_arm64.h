@@ -141,14 +141,20 @@ static inline bool up_method_fits(const uint32_t *orig, int nwords) {
 // R0-R7/stack preservados (só x16/x17/x1 mexidos pós-chamada, todos
 // caller-saved; x18 é reservado da plataforma, nunca usado). Trava curta:
 // reentrância cai no caminho direto (sem mul, sem hang).
-// Layout (20 palavras): 0-1 adrp/add x16=slot, 2 add x17,x16,#24 (lock;
+// Layout (21 palavras): 0-1 adrp/add x16=slot, 2 add x17,x16,#24 (lock;
 // LDXR/STXR não têm imediato), 3 ldaxr w9,[x17] (acquire), 4 cbnz ocupado
 // -> direto, 5 mov w9,#1, 6 stxr w10,w9,[x17], 7 cbnz perdeu->ldxr,
-// 8 str lr, 9 ldr orig, 10 blr, 11-12 adrp/add x16=slot, 13 ldr fator,
-// 14 mul, 15 stlr wzr unlock (release), 16 restore lr, 17 ret,
-// 18-19 caminho direto: ldr x16 + br x16 = TAIL CALL (blr gravaria
-// x30=return-do-thunk e o ret seguinte saltaria pra ele mesmo: loop
-// infinito em recursão/concorrência — achado no disassembly do device).
+// 8 str lr, 9 ldr orig, 10 blr, 11-12 adrp/add x16=slot de novo, 13 add
+// x17,x16,#24 de novo (x16 E x17 são caller-saved: o orig/veneer/PLT pode
+// ter destruído os dois — achado no disassembly do device; reutilizar x17
+// pós-chamada liberava a trava em endereço lixo e a trava real ficava
+// presa pra sempre), 14-15 fator+mul, 16 restore lr, 17 stlr wzr unlock
+// (release), 18 ret, 19-20 caminho direto: ldr x16 + br x16 = TAIL CALL
+// (blr gravaria x30=return-do-thunk e o ret seguinte saltaria pra ele
+// mesmo: loop infinito em recursão/concorrência).
+// ORDEM 16 antes de 17: outra thread que adquirir o lock sobrescreve
+// slot.lr — ler o lr DEPOIS do unlock = retorno pra endereço errado
+// (provado no thunk_exec: reintroduzir a ordem errada falha o teste).
 static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const void *slot_va, bool is_float) {
     uintptr_t slot = (uintptr_t)slot_va;
     uint32_t lo = (uint32_t)(slot & 0xFFFu);
@@ -158,7 +164,7 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = up_enc_add_x16(lo);        // x16 = slot
     out[i++] = up_enc_add_x17_imm(UP_SLOT_LOCK);  // x17 = slot + 24
     out[i++] = up_enc_ldxr_lock();        // ldaxr (acquire)
-    out[i++] = up_enc_cbnz_w(9, 4, 18);   // ocupado -> direto
+    out[i++] = up_enc_cbnz_w(9, 4, 19);   // ocupado -> direto (ldr em 19)
     out[i++] = UP_MOVZ_W9_1;
     out[i++] = up_enc_stxr_lock();
     out[i++] = up_enc_cbnz_w(10, 7, 3);   // perdeu corrida -> refaz ldaxr
@@ -166,7 +172,8 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
     out[i++] = up_enc_adrp_x16(at(11), slot_va);
-    out[i++] = up_enc_add_x16(lo);
+    out[i++] = up_enc_add_x16(lo);        // x16 = slot, de novo
+    out[i++] = up_enc_add_x17_imm(UP_SLOT_LOCK);  // x17 = slot+24, de novo
     if (is_float) {
         out[i++] = up_enc_ldr_s1();
         out[i++] = UP_FMUL_S0;
@@ -174,15 +181,15 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
         out[i++] = up_enc_ldr_x(1, UP_SLOT_VALUE);
         out[i++] = UP_MUL_X0;
     }
-    out[i++] = up_enc_stlr_unlock();      // release, xzr destrava
-    out[i++] = up_enc_ldr_x(30, UP_SLOT_LR);
+    out[i++] = up_enc_ldr_x(30, UP_SLOT_LR);  // x30 ANTES do unlock:
+    out[i++] = up_enc_stlr_unlock();          // lock novo sobrescreve slot.lr
     out[i++] = UP_RET;
-    // caminho direto (18): sem lock, sem save, sem tocar x30 — tail call.
+    // caminho direto (19): sem lock, sem save, sem tocar x30 — tail call.
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BR_X16;
-    return i;  // 20
+    return i;  // 21
 }
-#define UP_MUL_THUNK_WORDS 20
-// ponytail: teto de 24 thunks mul (24*80 = 1920 bytes numa página RX de 4096).
+#define UP_MUL_THUNK_WORDS 21
+// ponytail: teto de 24 thunks mul (24*84 = 2016 bytes numa página RX de 4096).
 // Passou disso, a regra vira log e o jogo segue sem ela.
 #define UP_MUL_MAX 24
