@@ -161,15 +161,17 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     fi
 ' bash "$ROOT"
 
+DOC_REF_COUNT="$TMP/docs-reference-count"
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
-    python3 - "$1" <<"PY"
+    python3 - "$1" "$2" <<"PY"
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-ref_re = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
+count_file = Path(sys.argv[2])
+ref_re = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z_][A-Za-z0-9_]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 files = subprocess.check_output(
     ["git", "ls-files", "docs/*.md", "mods/*/README.md"], cwd=root, text=True
 ).splitlines()
@@ -178,6 +180,7 @@ by_name = {}
 for item in tracked:
     by_name.setdefault(Path(item).name, []).append(item)
 errors = []
+checked = 0
 for doc_name in files:
     doc = root / doc_name
     for line_no, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
@@ -202,6 +205,7 @@ for doc_name in files:
                 errors.append(f"{doc_name}:{line_no}: linha fora do arquivo: {name}:{start}-{end}")
                 continue
             targets.append((target, target_lines))
+            checked += 1
         literals = [
             span for span in re.findall(r"`([^`\n]+)`", line)
             if not ref_re.fullmatch(span) and not ref_re.search(span)
@@ -214,8 +218,12 @@ for doc_name in files:
 if errors:
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)
+count_file.write_text(f"docs: referencias arquivo:linha verificadas: {checked}\n", encoding="utf-8")
 PY
-' bash "$ROOT"
+' bash "$ROOT" "$DOC_REF_COUNT"
+if [ -f "$DOC_REF_COUNT" ]; then
+    cat "$DOC_REF_COUNT"
+fi
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
