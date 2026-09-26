@@ -1583,8 +1583,17 @@ static bc_path_kind g_path_kind = BC_PATH_NONE;
 // processo ainda não tem o uid do app e /data/data/<pkg> não é acessível.
 #define PKG_LOG_CAP (256 * 1024)
 static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...) {
-    char dir[320];
-    snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
+    // files/ pode não existir ainda (app que nunca chamou getFilesDir): sem ele
+    // o mkdir do filho falha com ENOENT e o log some inteiro. 0771 é a
+    // permissão que o próprio Android dá pro files dir do app.
+    char files_dir[320];
+    snprintf(files_dir, sizeof(files_dir), "/data/data/%s/files", pkg);
+    if (mkdir(files_dir, 0771) != 0 && errno != EEXIST) {
+        LOGW("%s: sem log do jogo (%s): %s", pkg, files_dir, strerror(errno));
+        return;
+    }
+    char dir[336];
+    snprintf(dir, sizeof(dir), "%s/bepinex", files_dir);
     if (mkdir(dir, 0700) != 0 && errno != EEXIST) {
         LOGW("%s: sem log do jogo (%s): %s", pkg, dir, strerror(errno));
         return;
