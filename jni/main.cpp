@@ -1263,7 +1263,7 @@ static void load_dynamic_mods() {
             continue;
         }
         if (ops.dlsym(h, "bc_mod_register") == nullptr) {
-            LOGW("mod loader: %s — sem símbolo bc_mod_register, não é mod deste loader",
+            LOGW("mod loader: %s carregado (mod autônomo, sem bc_mod_register)",
                  names[i]);
             ops.dlclose(h);
             failed++;
