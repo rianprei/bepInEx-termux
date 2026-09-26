@@ -209,6 +209,34 @@ public final class SuHelper {
         return deleteFile("/data/data/" + pkg + "/files/bepinex/dump.tsv");
     }
 
+    // --- crashguard (F1d) ---------------------------------------------------
+
+    // O marcador existe em algum dos dois lugares? (state dir do jogo, que e
+    // onde o loader grava, e mods/<pkg>/, que outra versao do loader podia
+    // usar — o jogo nao escreve em /data/local/tmp.)
+    public static boolean hasCrashGuardMarker(String pkg) {
+        Result r = exec("[ -f '" + CrashGuardState.markerPath(pkg) + "' ] || "
+                + "[ -f '" + CrashGuardState.modsMarkerPath(pkg) + "' ] && echo yes || echo no");
+        return r.success && r.stdout.contains("yes");
+    }
+
+    public static CrashGuardState.State readCrashGuard(String pkg) {
+        String counter = readTextFile(CrashGuardState.counterPath(pkg));
+        return CrashGuardState.parse(counter, hasCrashGuardMarker(pkg));
+    }
+
+    // "Reativar": apaga o marcador e zera o contador. Sem zerar, o aviso
+    // continuaria na tela mesmo com o jogo ja abrindo normal (o bloqueio
+    // do loader dura so a janela de 20s, mas o arquivo do marcador nao
+    // some sozinho).
+    public static boolean reactivateMods(String pkg) {
+        Result r = exec("mkdir -p '" + CrashGuardState.stateDir(pkg) + "' && "
+                + "rm -f '" + CrashGuardState.markerPath(pkg) + "' '"
+                + CrashGuardState.modsMarkerPath(pkg) + "' && "
+                + "echo '0 '$(date +%s) > '" + CrashGuardState.counterPath(pkg) + "'");
+        return r.success;
+    }
+
     private static void copyStream(InputStream in, OutputStream out) {
         byte[] buf = new byte[4096];
         int n;

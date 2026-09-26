@@ -18,11 +18,13 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
@@ -51,6 +53,9 @@ public class GameDetailActivity extends Activity {
     private TextView mTvEngine;
     private ListView mListMods;
     private TextView mTvEmptyMods;
+    private LinearLayout mCrashGuardBox;
+    private TextView mTvCrashGuard;
+    private Button mBtnReactivate;
 
     private final List<ModInfo> mMods = new ArrayList<>();
     private ModAdapter mAdapter;
@@ -76,6 +81,9 @@ public class GameDetailActivity extends Activity {
         mTvEngine = findViewById(R.id.detail_tv_engine);
         mListMods = findViewById(R.id.detail_list_mods);
         mTvEmptyMods = findViewById(R.id.detail_tv_empty_mods);
+        mCrashGuardBox = findViewById(R.id.detail_crashguard_box);
+        mTvCrashGuard = findViewById(R.id.detail_tv_crashguard);
+        mBtnReactivate = findViewById(R.id.detail_btn_reactivate);
 
         mTvName.setText(mAppName != null ? mAppName : mPkg);
         mTvPkg.setText(mPkg);
@@ -124,6 +132,32 @@ public class GameDetailActivity extends Activity {
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
             startActivityForResult(intent, REQUEST_PICK_BMOD_FOR_GAME);
+        });
+
+        // Reativar: apaga o marcador do crashguard e zera o contador. Sem
+        // isso o aviso volta a aparecer mesmo com o jogo funcionando.
+        mBtnReactivate.setOnClickListener(v -> {
+            mBtnReactivate.setEnabled(false);
+            new Thread(() -> {
+                boolean ok = SuHelper.reactivateMods(mPkg);
+                mMainHandler.post(() -> {
+                    mBtnReactivate.setEnabled(true);
+                    if (ok) {
+                        mCrashGuardBox.setVisibility(View.GONE);
+                        Toast.makeText(this, R.string.crashguard_reactivated, Toast.LENGTH_LONG).show();
+                        loadMods();
+                    } else {
+                        new AlertDialog.Builder(this)
+                                .setTitle("Nao deu para reativar")
+                                .setMessage("O comando root falhou. Se o Magisk/KernelSU nao esta "
+                                        + "concedendo root ao Manager, o aviso volta a aparecer. "
+                                        + "Detalhe: " + (SuHelper.reactivateMods(mPkg)
+                                        ? "" : "su negado ou pasta do jogo inacessivel."))
+                                .setPositiveButton("OK", null)
+                                .show();
+                    }
+                });
+            }).start();
         });
 
         findViewById(R.id.btn_action_mod_maker).setOnClickListener(v -> {
@@ -208,6 +242,13 @@ public class GameDetailActivity extends Activity {
             List<String> files = SuHelper.listFiles("/data/local/tmp/mods/" + mPkg);
             Map<String, ModInfo> map = new LinkedHashMap<>();
 
+            // Crashguard (F1d): leitura antes da lista, para o aviso aparecer
+            // junto com a lista de mods que ele protege.
+            final CrashGuardState.State cg = SuHelper.isRootAvailable()
+                    ? SuHelper.readCrashGuard(mPkg)
+                    : CrashGuardState.parse(null, false);
+            final boolean cgMostrar = cg.marker;
+
             // 1. Encontra todos os arquivos de mod (.so, .patch, .off)
             boolean gadgetSoFound = false;
             for (String f : files) {
@@ -286,6 +327,12 @@ public class GameDetailActivity extends Activity {
 
             final boolean temGadgetSo = gadgetSoFound;
             mMainHandler.post(() -> {
+                if (cgMostrar) {
+                    mTvCrashGuard.setText(CrashGuardState.describe(cg, System.currentTimeMillis() / 1000L));
+                    mCrashGuardBox.setVisibility(View.VISIBLE);
+                } else {
+                    mCrashGuardBox.setVisibility(View.GONE);
+                }
                 mMods.clear();
                 mMods.addAll(result);
                 mAdapter.notifyDataSetChanged();

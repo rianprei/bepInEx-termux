@@ -125,6 +125,38 @@
         android:textSize="10sp"
         android:layout_marginBottom="12dp" />
 
+    <!-- Aviso do crashguard (F1d): aparece quando o loader gravou
+         disabled_by_crashguard, ou seja, o jogo fechou 2x seguidas depois
+         de carregar mods. some depois de Reativar. -->
+    <LinearLayout
+        android:id="@+id/detail_crashguard_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_background"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/detail_tv_crashguard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/detail_btn_reactivate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_reactivate_mods"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
     <!-- Titulo da Secao de Mods -->
     <TextView
         android:layout_width="wrap_content"
