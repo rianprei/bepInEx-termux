@@ -41,7 +41,8 @@ rm -rf "$STAGE" "$OUT/bepinex-termux-$VERSION.zip"
 mkdir -p "$STAGE/zygisk" "$STAGE/META-INF/com/google/android"
 cp libs/arm64-v8a/libbc-poc.so "$STAGE/zygisk/arm64-v8a.so"
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
-cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh "$STAGE/"
+cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \
+   module/action.sh "$STAGE/"
 
 # --- 3. instalador padrão do Magisk ---------------------------------------------
 # A doc oficial manda baixar o module_installer.sh e renomear pra update-binary.
