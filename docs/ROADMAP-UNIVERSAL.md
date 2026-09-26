@@ -143,7 +143,35 @@ O usuário escolhe um arquivo qualquer + o jogo. O Manager identifica o tipo pel
 
 Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtime.
 
+## Garantias (pedido do usuário: "perfeito, imutável, inquebrável, indestrutível")
+
+"Inquebrável" de verdade não existe: o jogo atualiza, o Android muda, o anti-cheat reage. O que dá pra garantir, e **é obrigatório**:
+
+| Garantia | Como é garantida |
+|---|---|
+| **G1. Mod nunca derruba o jogo pra sempre** | F1d: proteção contra crash em loop. 2 mortes seguidas < 60s depois de carregar mod ⇒ o loader não carrega mais mods daquele jogo até o usuário reativar. |
+| **G2. Mod nunca derruba o celular** | Loader só atua em app com pasta de mods; o resto recebe `DLCLOSE`. Magisk safe mode desliga o módulo se o boot falhar. |
+| **G3. Jogo atualizado não quebra, só desliga o mod** | Tudo resolvido por nome em runtime; não achou ⇒ log claro e segue. Nada de offset fixo. |
+| **G4. Nada no disco do jogo é alterado** | Runtime-only. Nenhum caminho escreve em APK, OBB ou `/data/app`. |
+| **G5. Funciona em celular normal** | Todo teste de device roda em **Permissive e Enforcing**. |
+| **G6. Nada entra sem prova** | Definição de pronto abaixo; o merge só acontece com todos os itens verdes. |
+| **G7. Release imutável** | Tag + zip reproduzível + SHA256 publicado; versão em um lugar só (`VERSION`); dependência externa pinada por hash. |
+
+### Definição de pronto (gate de merge — sem exceção)
+1. `tools/verify_all.sh` verde num checkout limpo: todos os mods e o loader com ndk-build sem warning (fora o `-static-libstdc++`), harness 0 falhas, testes JVM do Manager, `check_sepolicy_rule.sh`, `sh -n`/shellcheck em todo script, encoding arm64 conferido contra o assembler do NDK.
+2. Revisão cruzada por **outro** agente, com todos os achados corrigidos (inclusive os cosméticos).
+3. `tools/device_test.sh` no device, em Permissive **e** Enforcing: SA2 + Battle Cats + o mod novo, zero crash, zero `avc: denied` do nosso caminho, device restaurado no fim.
+4. Soak test: 10 min de jogo com o mod, sem crash, sem ANR e sem crescer memória sem parar.
+
 ## Fases (TODO)
+
+### F1d — Proteção contra crash em loop (G1)
+- [ ] Loader, antes do `dlopen` dos mods: lê `/data/data/<pkg>/files/bepinex/crashguard` (contador + timestamp). Com 2 mortes seguidas < 60s ⇒ não carrega nenhum mod, loga `mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager` e cria o `disabled_by_crashguard`.
+- [ ] Thread do loader zera o contador depois de 60s vivo.
+- [ ] Manager mostra o aviso e tem "Reativar" (apaga os dois arquivos).
+- [ ] Lógica de decisão pura + teste no harness.
+- **Verifica:** mod de teste que dá `abort()` em 2s ⇒ na 3ª abertura o jogo sobe limpo, sem mod, com o aviso no log.
+
 
 ### F1 — Ativação zero-config (loader)
 - [ ] `preAppSpecialize`: `mods/<pkg>/` existe ⇒ caminho genérico, sem precisar da allowlist (1 `stat`, sem scan).
