@@ -1,6 +1,6 @@
 #!/bin/sh
 # T1 kit de validação no device. QUEM EXECUTA É O USUÁRIO (agente não usa adb):
-#   tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run]
+#   tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run] [--force]
 #   (flags sempre DEPOIS dos dois posicionais)
 #
 # Faz: recuperação de run interrompido → snapshot inicial (lista+sha256 de
@@ -30,10 +30,12 @@ shift 2
 TIMEOUT=120
 NO_FRIDA=0
 DRY=0
+FORCE=0
 for a in "$@"; do
     case "$a" in
         --no-frida) NO_FRIDA=1;;
         --dry-run) DRY=1;;
+        --force) FORCE=1;;
         ''|*[!0-9]*) echo "FAIL: arg inválido: $a"; exit 1;;
         *) TIMEOUT=$a;;
     esac
@@ -44,6 +46,8 @@ STAGE="/data/local/tmp/t1-stage-$PKG"
 BAK="/data/local/tmp/t1-bak-$PKG"
 BAK_OUT="/data/local/tmp/t1-bak-out-$PKG"
 MARK="/data/local/tmp/t1-inprogress-$PKG"
+LOCK="/data/local/tmp/t1-lock-$PKG"
+LOCK_MAX_AGE_S=900   # 15 min: run vivo aborta o próximo; depois disso, órfão
 OUT="/data/data/$PKG/files/bepinex"
 EXPECT="$TDIR/expect.txt"
 HOST_TMP="$(mktemp -d)"
@@ -79,15 +83,54 @@ snapshot_to() {
     done" > "$1" 2>/dev/null
 }
 
-# Restaura os dois árboles. O backup de OUT é um CÓPIA da pasta inteira, então
-# arquivo criado durante o teste simplesmente não volta.
+# Hash do CONTEÚDO de uma pasta, independente do caminho (nomes relativos),
+# para provar que um backup é mesmo cópia do que estava lá. Vazio = não existe.
+tree_hash() {
+    dev "if [ -d '$1' ]; then cd '$1' && { stat -c '%n %a %U:%G' .; find . -type f 2>/dev/null | sort | while read -r f; do stat -c '%n %s %a' \"\$f\"; sha256sum \"\$f\"; done; } | sha256sum | cut -d' ' -f1; fi" 2>/dev/null | tr -d '\r' | grep -E '^[0-9a-f]{64}$' || true
+}
+
+# Restaura UM árbol, e só apaga depois de provar que o backup é o original.
+# Sem backup verificado: NÃO APAGA NADA e devolve 1 (o restore vira exit 2, e o
+# marcador fica de pé para o próximo run recuperar). Nada de rm de dado do
+# usuário sem backup correspondente conferido — era o que apagava o
+# files/bepinex inteiro (dump.tsv do u_dump) quando o BAK_OUT não existia.
+restore_one() {
+    _what=$1 _live=$2 _bak=$3 _hash=$4
+    [ -n "$_hash" ] || { echo "  $_what: sem estado inicial registrado, nada a restaurar"; return 1; }
+    if [ -z "$_hash" ] || [ "$_hash" = "AUSENTE" ]; then
+        # não existia antes do teste: o que apareceu é nosso, sai
+        dev "rm -rf $_live" || return 1
+        return 0
+    fi
+    _bakh=$(tree_hash "$_bak")
+    if [ -z "$_bakh" ]; then
+        echo "  $_what: sem backup em $_bak — NADA APAGADO (rode de novo com backup na mão)"
+        return 1
+    fi
+    if [ "$_bakh" != "$_hash" ]; then
+        echo "  $_what: backup em $_bak não bate com o estado inicial ($_bakh != $_hash) — NADA APAGADO"
+        return 1
+    fi
+    dev "rm -rf $_live && cp -a $_bak $_live" || return 1
+    return 0
+}
+
 restore_tree() {
-    dev "test -d $BAK && rm -rf $MODS && mv $BAK $MODS" || true
-    dev "rm -rf $OUT" || true
-    dev "test -d $BAK_OUT && cp -a $BAK_OUT $OUT" || true
-    dev "rm -rf $STAGE $BAK.part $BAK_OUT.part $BAK_OUT" || true
-    dev "rm -f $MARK" || true
+    RC_TREE=0
+    restore_one "mods/$PKG" "$MODS" "$BAK" "$HASH_MODS_INITIAL" || RC_TREE=1
+    restore_one "files/bepinex" "$OUT" "$BAK_OUT" "$HASH_OUT_INITIAL" || RC_TREE=1
+    # staging e .part vão sempre (são nossos); o marcador e os backups SÓ com
+    # as duas árvores de volta no lugar — senão o próximo run não tem como
+    # recuperar.
+    if [ "$RC_TREE" = 0 ]; then
+        dev "rm -rf $STAGE $BAK.part $BAK_OUT.part $BAK_OUT" || true
+        dev "rm -f $MARK" || true
+    else
+        echo "  aviso: marcador e backup mantidos para o próximo run recuperar"
+    fi
     do_adb shell am force-stop "$PKG" >/dev/null 2>&1 || true
+    lock_drop
+    return $RC_TREE
 }
 
 restore() {
@@ -99,7 +142,12 @@ restore() {
         return 0
     fi
     echo "--- restaurando device ---"
-    restore_tree
+    if restore_tree; then
+        TREE_OK=1
+    else
+        TREE_OK=0
+        echo "RESTAURACAO INCOMPLETA: alguma árvore nao tem backup verificado"
+    fi
     snapshot_to "$HOST_TMP/after.txt"
     if [ ! -s "$HOST_TMP/before.txt" ]; then
         echo "RESTAURACAO FALHOU (snapshot inicial vazio — nada conferível)"
@@ -111,7 +159,7 @@ restore() {
         rm -rf "$HOST_TMP"
         exit 2
     fi
-    if diff -q "$HOST_TMP/before.txt" "$HOST_TMP/after.txt" >/dev/null 2>&1; then
+    if [ "$TREE_OK" = 1 ] && diff -q "$HOST_TMP/before.txt" "$HOST_TMP/after.txt" >/dev/null 2>&1; then
         echo "device restaurado (mods + files/bepinex idênticos ao inicial)"
         rm -rf "$HOST_TMP"
         return 0
@@ -144,9 +192,33 @@ if [ "$DRY" = 0 ]; then
     if dev "test -f $MARK || test -d $BAK"; then
         echo "AVISO: run anterior interrompido detectado (marcador ou backup em $BAK)"
         echo "       recuperando os mods do backup antes de seguir"
-        dev "test -d $BAK && rm -rf $MODS && mv $BAK $MODS" || true
-        dev "rm -rf $OUT && test -d $BAK_OUT && cp -a $BAK_OUT $OUT" || true
-        dev "rm -rf $STAGE $BAK.part $BAK_OUT.part $BAK_OUT" || true
+        # Recupera o que der: cada árvore só é tocada com backup verificado
+        # (tree_hash confere). MODS volta do BAK; OUT só volta se o BAK_OUT
+        # existir (senão é o dump.tsv do usuário e NÃO SE APAGA).
+        _rmods=$(tree_hash "$BAK")
+        _rout=$(tree_hash "$BAK_OUT")
+        if [ -n "$_rmods" ]; then
+            dev "rm -rf $MODS && cp -a $BAK $MODS" || true
+            _rnow=$(tree_hash "$MODS")
+            if [ -n "$_rnow" ] && [ "$_rnow" = "$_rmods" ]; then
+                # restaurado e conferido: o backup orfao virou redundante
+                dev "rm -rf $BAK" || true
+                echo "       mods restaurados do backup (hash conferido), backup consumido"
+            else
+                echo "       AVISO: mods restaurados mas o hash nao bate — backup mantido em $BAK"
+            fi
+        else
+            echo "       AVISO: sem backup de mods em $BAK — nada apagado"
+        fi
+        if [ -n "$_rout" ]; then
+            dev "rm -rf $OUT && cp -a $BAK_OUT $OUT" || true
+            echo "       files/bepinex restaurado do backup"
+        elif [ ! -d "$OUT" ]; then
+            echo "       files/bepinex nao existe (nada a restaurar)"
+        else
+            echo "       AVISO: sem backup de files/bepinex em $BAK_OUT — pasta do usuario INTACTA"
+        fi
+        dev "rm -rf $STAGE $BAK.part $BAK_OUT.part" || true
         dev "rm -f $MARK" || true
         echo "       recuperado. Se o dump abaixo mostrar .patch/.conf/.js em mods/<pkg>/, o run"
         echo "       morreu ANTES do marcador e esses arquivos eram do usuário mesmo."
@@ -164,31 +236,118 @@ if [ "$DRY" = 0 ]; then
     echo "  $(wc -l < "$HOST_TMP/before.txt" | tr -d ' ') linhas de estado registradas"
 fi
 
+# Lock de execução concorrente: mkdir é atômico, então dois kits não dividem o
+# device. Lock com pid/ts no nome do arquivo dentro; "vivo" = recente, e aí o
+# outro run ABORTA. Órfão (run morto) só sai com --force.
+lock_take() {
+    if [ "$DRY" = 1 ]; then
+        echo "DRY> tomaria $LOCK"
+        return 0
+    fi
+    _lp=$$
+    _lh=$(hostname 2>/dev/null || echo '?')
+    _lt=$(date +%s)
+    # mkdir é atômico no device: se o dir já existe, o out loses e ninguém dividiu.
+    if dev "mkdir $LOCK 2>/dev/null"; then
+        dev "printf 'pid=$_lp\\nhost=$_lh\\nts=$_lt\\n' > $LOCK/ts" || true
+        echo "  lock pego: $LOCK (pid $_lp)"
+        return 0
+    fi
+    _lts=$(dev "sed -n 's/^ts=//p' $LOCK/ts 2>/dev/null" | tr -d '\r' | head -1)
+    _now=$(date +%s)
+    _age=$(( _now - ${_lts:-0} ))
+    if [ "$FORCE" = 1 ]; then
+        echo "AVISO: --force: quebrando lock $LOCK (idade ${_age}s)"
+        dev "rm -rf $LOCK && mkdir -p $LOCK" || true
+        dev "printf 'pid=$_lp\\nhost=$_lh\\nts=$_lt\\n' > $LOCK/ts" || true
+        return 0
+    fi
+    if [ -n "$_lts" ] && [ "$_age" -ge 0 ] && [ "$_age" -lt "$LOCK_MAX_AGE_S" ]; then
+        echo "FAIL: ja existe um device_test rodando neste device (lock $LOCK, ha ${_age}s)."
+        echo "      Se aquele run morreu, use --force para pegar o lock orfao."
+        return 1
+    fi
+    echo "FAIL: lock orfao em $LOCK (idade ${_age}s, limite ${LOCK_MAX_AGE_S}s). Use --force para pegar."
+    return 1
+}
+
+lock_drop() {
+    if [ "$DRY" = 1 ]; then return 0; fi
+    dev "rm -rf $LOCK" || true
+}
+
 # Daqui pra baixo mexemos no device: o trap entra ANTES do backup.
 trap restore EXIT
 trap 'echo "interrompido — restaurando"; exit 130' INT TERM HUP
 
-echo "--- backup de mods/$PKG e files/bepinex ---"
-# Backup em .part + mv: se morrer no meio da cópia, o BAK final não existe
-# (ou é o do run anterior, já recuperado) e o restore não pode substituir uma
-# pasta boa por uma cópia pela metade.
-dev "rm -rf $STAGE" || true
-dev "cp -a $MODS $BAK.part && mv $BAK.part $BAK" \
-    || { echo "FAIL: sem pasta mods/$PKG no device (instale os mods antes)"; exit 1; }
-if dev "test -d $OUT"; then
-    dev "cp -a $OUT $BAK_OUT.part && mv $BAK_OUT.part $BAK_OUT" || true
-else
-    dev "rm -rf $BAK_OUT"
+if ! lock_take; then
+    echo "FAIL: não peguei o lock de execução" >&2
+    exit 1
 fi
-# Staging precisa ser gravável pelo shell (adb push roda como uid 2000):
-# cria via su e devolve a ele (2000:2000 + 775). Sem isso o push morre com
-# Permission denied (staging herdava dono root do mkdir via su).
-dev "mkdir -p $STAGE && chown 2000:2000 $STAGE && chmod 775 $STAGE" || true
-# Marcador no DEVICE (o flag do host morre com o run): o próximo run sabe que
-# precisa recuperar antes de mexer. Carrega o sha do snapshot inicial, para
-# alguém conferir na mão o que era o estado "original".
-if [ "$DRY" = 0 ]; then
-    dev "printf 'before_sha=%s\n' \"\$(sha256sum $HOST_TMP/before.txt 2>/dev/null | cut -d' ' -f1)\" > $MARK" || true
+
+# Hashes por árvore, do estado INICIAL: o restore só apaga uma árvore se o
+# backup dela bater com este hash (restore_one).
+# Em dry-run nada é copiado, então não há hash para conferir: o caminho seco
+# só mostra o que faria.
+if [ "$DRY" = 1 ]; then
+    echo "--- (dry-run) faria backup de $MODS e de $OUT em .part+rename, conferiria o hash de cada, e gravaria o marcador $MARK ---"
+    HASH_MODS_INITIAL=DRY
+    HASH_OUT_INITIAL=DRY
+else
+    HASH_MODS_INITIAL=$(tree_hash "$MODS")
+    HASH_OUT_INITIAL=$(tree_hash "$OUT")
+    [ -n "$HASH_MODS_INITIAL" ] || HASH_MODS_INITIAL=AUSENTE
+    [ -n "$HASH_OUT_INITIAL" ] || HASH_OUT_INITIAL=AUSENTE
+    echo "  estado inicial: mods=$HASH_MODS_INITIAL files/bepinex=$HASH_OUT_INITIAL"
+
+    echo "--- backup de mods/$PKG e files/bepinex ---"
+    # Backup em .part + mv: se morrer no meio da cópia, o BAK final não existe
+    # (ou é o do run anterior, já recuperado) e o restore não pode substituir uma
+    # pasta boa por uma cópia pela metade.
+    dev "rm -rf $STAGE $BAK.part $BAK_OUT.part" || true
+    # Backup de MODS: copia para .part, CONFERE que a copia é igual (hash) e só
+    # então troca. O `rm -rf $BAK` de dentro só existe depois da prova — um mv
+    # direto com destino já existente (orfao de um run anterior) enterraria a copia
+    # dentro do backup velho.
+    dev "cp -a $MODS $BAK.part" \
+        || { echo "FAIL: sem pasta mods/$PKG no device (instale os mods antes)"; exit 1; }
+    _baknow=$(tree_hash "$BAK.part")
+    _modsnow=$(tree_hash "$MODS")
+    if [ -z "$_baknow" ] || [ "$_baknow" != "$_modsnow" ]; then
+        echo "FAIL: backup de mods não confere ($_baknow != $_modsnow) — nada foi trocado"
+        exit 1
+    fi
+    dev "rm -rf $BAK && mv $BAK.part $BAK" \
+        || { echo "FAIL: não consegui gravar o backup de mods"; exit 1; }
+    if dev "test -d $OUT"; then
+        dev "cp -a $OUT $BAK_OUT.part" || true
+        _bakoutnow=$(tree_hash "$BAK_OUT.part")
+        _outnow=$(tree_hash "$OUT")
+        if [ -n "$_bakoutnow" ] && [ "$_bakoutnow" = "$_outnow" ]; then
+            dev "rm -rf $BAK_OUT && mv $BAK_OUT.part $BAK_OUT" || true
+        else
+            echo "AVISO: backup de files/bepinex não confere — o restore vai recusar apagar essa pasta"
+            dev "rm -rf $BAK_OUT.part" || true
+        fi
+    else
+        dev "rm -rf $BAK_OUT"
+    fi
+    # Staging precisa ser gravável pelo shell (adb push roda como uid 2000):
+    # cria via su e devolve a ele (2000:2000 + 775). Sem isso o push morre com
+    # Permission denied (staging herdava dono root do mkdir via su).
+    dev "mkdir -p $STAGE && chown 2000:2000 $STAGE && chmod 775 $STAGE" || true
+    # Marcador no DEVICE (o flag do host morre com o run): o próximo run sabe que
+    # precisa recuperar antes de mexer. Carrega o sha do snapshot inicial, para
+    # alguém conferir na mão o que era o estado "original".
+    # sha do snapshot inicial calculado NO HOST (o device não tem o path do host:
+    # mandar o sha256sum do arquivo de lá voltaria vazio) e embutido no marcador.
+    if [ "$DRY" = 0 ]; then
+        BEFORE_SHA=$(sha256sum "$HOST_TMP/before.txt" | cut -d' ' -f1)
+        echo "  marcador: before_sha=$BEFORE_SHA"
+        _mh=$(hostname 2>/dev/null || echo '?')
+        _mt=$(date +%s)
+        dev "printf 'before_sha=$BEFORE_SHA\\npid=$$\\nhost=$_mh\\nts=$_mt\\n' > $MARK" || true
+    fi
 fi
 
 NEED_PATCH=0
@@ -245,6 +404,7 @@ if [ "$DRY" = 1 ]; then
     done < "$EXPECT"
     [ "$SKIP_JS" = 0 ] && [ "$NEED_JS" = 1 ] && echo "DRY-WOULD-CHECK: frida_ok.txt + frida_count.txt"
     echo "DRY-RUN OK (nada executado, nada alterado)"
+    rm -rf "$HOST_TMP"   # dry-run também limpa o temp do host
     exit 0
 fi
 

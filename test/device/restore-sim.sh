@@ -26,7 +26,9 @@ bad() { echo "  FALHOU: $1"; FAILED=1; }
 check() { if [ "$1" = 0 ]; then ok "$2"; else bad "$2"; fi; }
 
 ROOT=$(mktemp -d)
-trap 'rm -rf "$ROOT"' EXIT
+# KEEP_SIM_ROOT=1 mantém o device temporário para depurar (imprime o path)
+cleanup() { [ -n "${KEEP_SIM_ROOT:-}" ] || rm -rf "$ROOT"; }
+trap cleanup EXIT
 BINDIR="$ROOT/bin"
 mkdir -p "$BINDIR"
 
@@ -46,10 +48,15 @@ new_device a
 
 # --- adb/su falsos -------------------------------------------------------
 # su: lê o comando do stdin e roda com /data reescrito para $DEV/data.
-cat > "$BINDIR/su" <<EOF
+cat > "$BINDIR/su" <<'EOF'
 #!/bin/sh
-sed "s#/data/#$DEV/data/#g" | sh
+# ${DEV} é do ambiente do SIM, lido agora: cada cenário tem seu device.
+sed "s#/data/#${DEV:?}/data/#g" | sh
 EOF
+# chown/chmod falsos: no device o su é root; aqui não, e o kit tolera a falha
+# mas o push do staging (que exige o dir criado) precisa passar.
+printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chown"
+printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chmod"
 # adb: shell su (stdin) / push / get-state / logcat / am / monkey / pidof.
 cat > "$BINDIR/adb" <<'EOF'
 #!/bin/sh
@@ -68,7 +75,7 @@ case "$1" in
   *) : ;;
 esac
 EOF
-chmod 755 "$BINDIR/su" "$BINDIR/adb"
+chmod 755 "$BINDIR/su" "$BINDIR/adb" "$BINDIR/chown" "$BINDIR/chmod"
 export PATH="$BINDIR:$PATH"
 
 echo "== (a) run anterior interrompido: backup sem a pasta de mods =="
@@ -153,11 +160,64 @@ n=$(grep -c "restaurando device" "$ROOT/out2.txt" || true)
 [ -f "$DEV/data/local/tmp/mods/$PKG/t1_static.patch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
 [ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
 
+echo "== (1) sem backup verificado de files/bepinex: a pasta do usuario NAO e apagada =="
+# O risco do achado: o restore fazia 'rm -rf files/bepinex' e so depois tentava
+# repor do BAK_OUT — se o backup nao existisse (ou nao conferisse), o
+# dump.tsv/crashguard do usuario sumia e o run ainda dizia "restaurado".
+# Aqui o adb falso apaga o BAK_OUT no launch, como se o backup nunca tivesse
+# sido valido.
+new_device g
+printf 'dump do usuario\n' > "$DEV/data/data/$PKG/files/bepinex/dump.tsv"
+cat > "$BINDIR/adb" <<'EOF'
+#!/bin/sh
+case "$1" in
+  get-state) echo device ;;
+  logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
+  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  shell) shift; case "$1" in
+      su) su ;;
+      am) shift 2 >/dev/null; : ;;
+      monkey) rm -rf "$DEV/data/local/tmp/t1-bak-$FAKE_PKG" "$DEV/data/local/tmp/t1-bak-out-$FAKE_PKG" ;;
+      pidof) echo "$FAKE_PID" ;;
+      *) : ;;
+    esac ;;
+  *) : ;;
+esac
+EOF
+chmod 755 "$BINDIR/adb"
+export FAKE_PKG="$PKG"
+sh "$KIT" "$PKG" "$SA2" 6 > "$ROOT/out3.txt" 2>&1 && RC=0 || RC=$?
+unset FAKE_PKG
+grep -q "NADA APAGADO" "$ROOT/out3.txt" && ok "disse que nao apagou" || bad "disse que nao apagou"
+grep -q "device restaurado" "$ROOT/out3.txt" && bad "nao pode dizer 'restaurado'" || ok "nao disse 'restaurado'"
+[ -f "$DEV/data/data/$PKG/files/bepinex/dump.tsv" ] && ok "dump.tsv do usuario intacto" || bad "dump.tsv do usuario intacto"
+[ -f "$DEV/data/local/tmp/t1-inprogress-$PKG" ] && ok "marcador de pé para o proximo run" || bad "marcador de pé para o proximo run"
+[ "$RC" != 0 ] && ok "saida != 0 (foi $RC)" || bad "saida != 0 (veio $RC)"
+# o adb normal volta
+cat > "$BINDIR/adb" <<'EOF'
+#!/bin/sh
+case "$1" in
+  get-state) echo device ;;
+  logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
+  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  shell) shift; case "$1" in
+      su) su ;;
+      am) shift 2 >/dev/null; : ;;
+      monkey) sleep "${FAKE_SLEEP:-0}" ;;
+      pidof) echo "$FAKE_PID" ;;
+      *) : ;;
+    esac ;;
+  *) : ;;
+esac
+EOF
+chmod 755 "$BINDIR/adb"
+
 echo "== (campo) caso field roda separado =="
 new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
 echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
 
+if [ -n "${KEEP_SIM_ROOT:-}" ]; then echo "device temporário: $ROOT"; fi
 if [ "$FAILED" = 0 ]; then
     echo "device_test-sim: OK"
     exit 0
