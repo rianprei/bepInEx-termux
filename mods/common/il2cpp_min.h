@@ -32,6 +32,27 @@ struct Il2Cpp {
     bool (*class_is_valuetype)(void *klass);
     // Handle forte: segura objeto criado pelo mod contra o GC.
     uint32_t (*gchandle_new)(void *obj, bool pinned);
+    // --- Fase F3 (u_dump): enumeração completa pra dump/reflexão. Resolvidos
+    // de forma OPCIONAL no boot: um símbolo faltando (il2cpp velho) não pode
+    // derrubar os mods que já existem — quem usa checa != nullptr.
+    // type_get_name devolve string alocada pelo runtime: copie e solte com
+    // free (il2cpp_free).
+    const char *(*class_get_name)(void *);
+    const char *(*class_get_namespace)(void *);
+    void *(*class_get_declaring_type)(void *);
+    void *(*class_get_methods)(void *, void **);
+    void *(*class_get_fields)(void *, void **);
+    const char *(*field_get_name)(void *);
+    const char *(*method_get_name)(void *);
+    uint32_t (*method_get_param_count)(void *);
+    const void *(*method_get_return_type)(void *);
+    uint32_t (*method_get_flags)(void *, uint32_t *);
+    char *(*type_get_name)(const void *);
+    int (*field_get_flags)(void *);
+    const char *(*image_get_name)(void *);
+    size_t (*image_get_class_count)(void *);
+    void *(*image_get_class)(void *, size_t);
+    void (*free)(void *);
     void *domain;
 
     // Classe pelo nome em todas as imagens carregadas.
@@ -136,6 +157,17 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM(field_get_type); IL2CPP_SYM(class_from_type); IL2CPP_SYM(class_is_valuetype);
     IL2CPP_SYM(gchandle_new);
 #undef IL2CPP_SYM
+    // Enumeração (u_dump, F3): resolução tolerante, ver comentário no struct.
+#define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)
+    IL2CPP_SYM_MAY(class_get_name); IL2CPP_SYM_MAY(class_get_namespace);
+    IL2CPP_SYM_MAY(class_get_declaring_type); IL2CPP_SYM_MAY(class_get_methods);
+    IL2CPP_SYM_MAY(class_get_fields); IL2CPP_SYM_MAY(field_get_name);
+    IL2CPP_SYM_MAY(method_get_name); IL2CPP_SYM_MAY(method_get_param_count);
+    IL2CPP_SYM_MAY(method_get_return_type); IL2CPP_SYM_MAY(method_get_flags);
+    IL2CPP_SYM_MAY(type_get_name); IL2CPP_SYM_MAY(field_get_flags);
+    IL2CPP_SYM_MAY(image_get_name); IL2CPP_SYM_MAY(image_get_class_count);
+    IL2CPP_SYM_MAY(image_get_class); IL2CPP_SYM_MAY(free);
+#undef IL2CPP_SYM_MAY
     // il2cpp_domain_get CRIA o domínio (aloca pelo GC) se ainda não existe:
     // chamado antes do il2cpp_init, crasha o jogo (achado no device com a
     // carga pelo Zygisk, que entra no começo do processo; pelo Frida o jogo já
