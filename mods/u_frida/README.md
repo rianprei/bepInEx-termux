@@ -1,8 +1,12 @@
 # u_frida — scripts Frida `.js` como mod (F11, runtime-only)
 
 O usuário solta `meu_mod.js` na pasta do jogo (`/data/local/tmp/mods/<pkg>/`,
-o Manager copia). Este `u_frida.so` escreve `frida-gadget.config` (modo
-`script-directory` apontando pra pasta) e dá `dlopen` no `frida-gadget.bin`.
+o Manager copia). Este `u_frida.so` copia `frida-gadget.bin` pra
+`/data/data/<pkg>/files/bepinex/` (o jogo não escreve em `/data/local/tmp`,
+só lê — binário + config moram onde ele escreve), escreve
+`frida-gadget.config` ao lado (modo `script-directory` apontando pra pasta
+de mods, de onde os `.js` são só lidos), espera o il2cpp se houver
+(`libil2cpp.so` à vista em 10s, como o sa2ammo) e dá `dlopen` no gadget.
 Sem PC, sem frida-server, sem patch de APK.
 
 - Binário SEM extensão `.so` de propósito: se terminasse em `.so`, o loader
