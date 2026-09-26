@@ -1,0 +1,398 @@
+// u_patch — motor declarativo (FASE F4): lê todo *.patch + <id>.conf de
+// /data/local/tmp/mods/<pkg>/ e aplica as regras C4 (return/mul/static).
+// Regra que não resolve vira log e o jogo segue. Nada de offset fixo: tudo
+// sai da API il2cpp exportada. Log mínimo próprio (F2 dá mod_common.h e a
+// gente troca — até lá, logcat + log.txt C1 aqui mesmo).
+#include <android/log.h>
+#include <dirent.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#include "dobby.h"
+#include "../../common/il2cpp_min.h"
+#include "u_patch_parse.h"
+#include "u_patch_arm64.h"
+
+#define UP_TAG "u_patch"
+#define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
+#define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
+#define UP_RULE_MAX 128   // regras distintas lembradas (dedupe reaplicação)
+#define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
+
+static char up_pkg[128];
+static char up_dir[320];
+
+// Log mínimo C1: logcat + append em log.txt (HH:MM:SS [u_patch] msg, 256KB).
+static void up_log(const char *fmt, ...) {
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    __android_log_print(ANDROID_LOG_INFO, UP_TAG, "%s", msg);
+    if (!up_pkg[0]) return;
+    char path[384];
+    snprintf(path, sizeof(path), UP_LOG_FMT, up_pkg);
+    // mkdir -p files/bepinex (jogo escreve no próprio diretório, ok).
+    char dir[384];
+    snprintf(dir, sizeof(dir), UP_LOG_FMT, up_pkg);
+    char *slash = strrchr(dir, '/');
+    if (slash) { *slash = '\0'; }
+    char *mk = dir + 1;
+    for (char *p = mk; *p; p++) {
+        if (*p == '/') { *p = '\0'; mkdir(dir, 0755); *p = '/'; }
+    }
+    mkdir(dir, 0755);
+    FILE *f = fopen(path, "a");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    if (ftell(f) > 256 * 1024) {  // C1: corta em 256KB
+        fclose(f);
+        f = fopen(path, "w");
+        if (!f) return;
+    }
+    time_t now = time(nullptr);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+    fprintf(f, "%02d:%02d:%02d [%s] %s\n",
+            tmv.tm_hour, tmv.tm_min, tmv.tm_sec, UP_TAG, msg);
+    fclose(f);
+}
+
+// Pacote via /proc/self/cmdline (C1).
+static void up_read_pkg() {
+    FILE *f = fopen("/proc/self/cmdline", "r");
+    if (!f) return;
+    size_t n = fread(up_pkg, 1, sizeof(up_pkg) - 1, f);
+    fclose(f);
+    if (n == 0) return;
+    up_pkg[n] = '\0';
+    snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
+}
+
+static bool up_ends_with(const char *name, const char *suf) {
+    size_t nl = strlen(name), sl = strlen(suf);
+    return nl >= sl && strcmp(name + nl - sl, suf) == 0;
+}
+
+// Lê arquivo inteiro (até 64KB). Retorna malloc'd, *len = tamanho.
+static char *up_read_file(const char *path, size_t *len) {
+    FILE *f = fopen(path, "r");
+    if (!f) return nullptr;
+    char *buf = (char *)malloc(65536);
+    if (!buf) { fclose(f); return nullptr; }
+    size_t n = fread(buf, 1, 65535, f);
+    fclose(f);
+    buf[n] = '\0';
+    if (len) *len = n;
+    return buf;
+}
+
+// Escreve palavras no código do método: mprotect RWX -> escreve ->
+// flush -> volta pra RX. false = mprotect falhou (não escreve).
+static bool up_patch_code(void *addr, const uint32_t *words, int nwords) {
+    long ps = sysconf(_SC_PAGESIZE);
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t end = start + (size_t)nwords * 4;
+    uintptr_t p0 = start & ~((uintptr_t)ps - 1);
+    uintptr_t p1 = (end - 1) & ~((uintptr_t)ps - 1);
+    if (mprotect((void *)p0, (size_t)(p1 - p0 + ps), PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        return false;
+    memcpy((void *)start, words, (size_t)nwords * 4);
+    __builtin___clear_cache((char *)start, (char *)end);
+    mprotect((void *)p0, (size_t)(p1 - p0 + ps), PROT_READ | PROT_EXEC);
+    return true;
+}
+
+// Valor final da regra: número/true/false direto, ou $key do <id>.conf.
+static bool up_resolve_value(const char *raw, const char *conf, char *out, size_t outsz) {
+    if (raw[0] != '$') { snprintf(out, outsz, "%s", raw); return true; }
+    if (!conf || !up_conf_get(conf, raw + 1, out, outsz)) return false;
+    return true;
+}
+
+static bool up_parse_bool(const char *s, int *out) {
+    if (strcmp(s, "true") == 0 || strcmp(s, "1") == 0) { *out = 1; return true; }
+    if (strcmp(s, "false") == 0 || strcmp(s, "0") == 0) { *out = 0; return true; }
+    return false;
+}
+
+// int32 com sinal ou uint32 (0x hex ok). false = fora da faixa/lixo.
+static bool up_parse_int32(const char *s, uint32_t *out) {
+    if (!s || !*s) return false;
+    bool neg = false;
+    if (*s == '-') { neg = true; s++; }
+    int base = 10;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { base = 16; s += 2; }
+    if (!*s) return false;
+    uint64_t v = 0;
+    for (; *s; s++) {
+        int d = -1;
+        if (*s >= '0' && *s <= '9') d = *s - '0';
+        else if (base == 16 && *s >= 'a' && *s <= 'f') d = *s - 'a' + 10;
+        else if (base == 16 && *s >= 'A' && *s <= 'F') d = *s - 'A' + 10;
+        else return false;
+        v = v * (uint64_t)base + (uint64_t)d;
+        if (v > 0xFFFFFFFFull) return false;
+    }
+    if (neg) {
+        if (v > 0x80000000ull) return false;
+        *out = (uint32_t)(0u - (uint32_t)v);
+    } else {
+        *out = (uint32_t)v;
+    }
+    return true;
+}
+
+struct up_applied_t {
+    char sig[224];
+    uint8_t state;  // 1 = falhou 1x (tenta de novo em silêncio), 2 = aplicada
+};
+static up_applied_t up_applied[UP_RULE_MAX];
+static int up_applied_n;
+
+struct up_static_t {
+    void *field;
+    uint8_t bytes[8];
+    size_t size;
+    char sig[224];
+};
+static up_static_t up_statics[UP_STATIC_MAX];
+static int up_statics_n;
+
+// Página RX com os thunks mul + slots em .bss.
+static uint32_t *up_thunk_page;
+static int up_thunk_used;
+struct up_slot_t {
+    void *orig;
+    int64_t ivalue;
+    float fvalue;
+    uint8_t kind;  // 0 = int, 1 = float
+    uint8_t pad[7];
+    uint64_t lr_save;   // +16 (bate com UP_SLOT_LR)
+    uint64_t lock;      // +24 (bate com UP_SLOT_LOCK)
+};
+static up_slot_t up_slots[UP_MUL_MAX];
+
+static int up_find_applied(const char *sig) {
+    for (int i = 0; i < up_applied_n; i++)
+        if (strcmp(up_applied[i].sig, sig) == 0) return i;
+    return -1;
+}
+
+static void up_mark(const char *sig, uint8_t state) {
+    int i = up_find_applied(sig);
+    if (i >= 0) { up_applied[i].state = state; return; }
+    if (up_applied_n >= UP_RULE_MAX) return;
+    snprintf(up_applied[up_applied_n].sig, sizeof(up_applied[0].sig), "%s", sig);
+    up_applied[up_applied_n].state = state;
+    up_applied_n++;
+}
+
+static void up_sig(char *out, size_t n, const char *id, const up_rule_t *r) {
+    snprintf(out, n, "%s|%d|%s|%s|%d|%d|%s", id, (int)r->kind, r->cls,
+             r->member, r->nargs, (int)r->type, r->value);
+}
+
+static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
+    void *m = il.class_get_method_from_name(klass, r->member, r->nargs);
+    if (!m) { up_log("%s: método %s::%s(%d) não achado", sig, r->cls, r->member, r->nargs); return false; }
+    void *code = *(void **)m;  // MethodInfo::methodPointer é o 1º campo
+    if (!code) { up_log("%s: método sem código (genérico/abstrato?)", sig); return false; }
+    if (*(uint32_t *)code == UP_RET) { up_log("%s: método já é só ret, pulando", sig); return false; }
+    uint32_t words[4];
+    int n = 0;
+    if (r->type == UP_BOOL) {
+        int b = 0;
+        if (!up_parse_bool(valstr, &b)) { up_log("%s: bool inválido '%s'", sig, valstr); return false; }
+        n = up_emit_return_bool(words, b);
+    } else if (r->type == UP_INT) {
+        uint32_t v = 0;
+        if (!up_parse_int32(valstr, &v)) { up_log("%s: int inválido '%s'", sig, valstr); return false; }
+        n = up_emit_return_int(words, v);
+    } else {
+        char *end = nullptr;
+        float f = strtof(valstr, &end);
+        if (!end || *end || f != f) { up_log("%s: float inválido '%s'", sig, valstr); return false; }
+        uint32_t bits = 0;
+        memcpy(&bits, &f, 4);
+        n = up_emit_return_float(words, bits);
+    }
+    if (!up_patch_code(code, words, n)) { up_log("%s: mprotect falhou em %p", sig, code); return false; }
+    up_log("%s: return aplicado @%p (%d bytes)", sig, code, n * 4);
+    return true;
+}
+
+static bool up_apply_mul(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
+    if (!up_thunk_page) { up_log("%s: sem página de thunk (mmap falhou)", sig); return false; }
+    if (up_thunk_used >= UP_MUL_MAX) { up_log("%s: teto de %d thunks mul, ignorada", sig, UP_MUL_MAX); return false; }
+    void *m = il.class_get_method_from_name(klass, r->member, r->nargs);
+    if (!m) { up_log("%s: método %s::%s(%d) não achado", sig, r->cls, r->member, r->nargs); return false; }
+    void *code = *(void **)m;
+    if (!code) { up_log("%s: método sem código", sig); return false; }
+    bool is_float = (r->type == UP_FLOAT);
+    up_slot_t *slot = &up_slots[up_thunk_used];
+    memset(slot, 0, sizeof(*slot));
+    if (is_float) {
+        char *end = nullptr;
+        double d = strtod(valstr, &end);
+        if (!end || *end) { up_log("%s: fator float inválido '%s'", sig, valstr); return false; }
+        slot->fvalue = (float)d;
+        slot->kind = 1;
+    } else {
+        char *end = nullptr;
+        long long v = strtoll(valstr, &end, 0);
+        if (!end || *end) { up_log("%s: fator int inválido '%s'", sig, valstr); return false; }
+        slot->ivalue = (int64_t)v;
+    }
+    uint32_t *thunk = up_thunk_page + (size_t)up_thunk_used * UP_MUL_THUNK_WORDS;
+    int n = up_emit_mul_thunk(thunk, thunk, slot, is_float);
+    if (n != UP_MUL_THUNK_WORDS) { up_log("%s: erro interno no thunk", sig); return false; }
+    __builtin___clear_cache((char *)thunk, (char *)(thunk + n));
+    if (DobbyHook(code, (void *)thunk, &slot->orig) != 0) {
+        up_log("%s: DobbyHook falhou @%p", sig, code);
+        return false;
+    }
+    up_log("%s: mul aplicado @%p (thunk %d)", sig, code, up_thunk_used);
+    up_thunk_used++;
+    return true;
+}
+
+static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
+    void *f = il.class_get_field_from_name(klass, r->member);
+    if (!f) { up_log("%s: campo %s::%s não achado", sig, r->cls, r->member); return false; }
+    uint8_t bytes[8] = {};
+    size_t size = 0;
+    if (r->type == UP_BOOL) {
+        int b = 0;
+        if (!up_parse_bool(valstr, &b)) { up_log("%s: bool inválido '%s'", sig, valstr); return false; }
+        bytes[0] = (uint8_t)b;
+        size = 1;
+    } else if (r->type == UP_INT) {
+        uint32_t v = 0;
+        if (!up_parse_int32(valstr, &v)) { up_log("%s: int inválido '%s'", sig, valstr); return false; }
+        memcpy(bytes, &v, 4);
+        size = 4;
+    } else {
+        char *end = nullptr;
+        float fl = strtof(valstr, &end);
+        if (!end || *end || fl != fl) { up_log("%s: float inválido '%s'", sig, valstr); return false; }
+        memcpy(bytes, &fl, 4);
+        size = 4;
+    }
+    il.field_static_set_value(f, bytes);
+    if (up_statics_n < UP_STATIC_MAX) {
+        up_static_t *st = &up_statics[up_statics_n++];
+        st->field = f;
+        memcpy(st->bytes, bytes, size);
+        st->size = size;
+        snprintf(st->sig, sizeof(st->sig), "%s", sig);
+        up_log("%s: static fixado (%zu bytes, reaplica a cada 2s)", sig, size);
+    } else {
+        up_log("%s: static aplicado 1x (teto de %d, sem reaplicação)", sig, UP_STATIC_MAX);
+    }
+    return true;
+}
+
+// Uma passada: lê todo *.patch (menos *.off) + <id>.conf, aplica regra nova.
+// Retorna quantas regras aplicou.
+static int up_scan_apply(const Il2Cpp &il) {
+    int applied = 0;
+    struct dirent **ents = nullptr;
+    int n = scandir(up_dir, &ents, nullptr, alphasort);
+    if (n < 0) return 0;
+    for (int i = 0; i < n; i++) {
+        const char *name = ents[i]->d_name;
+        bool is_patch = up_ends_with(name, ".patch") && !up_ends_with(name, ".off");
+        if (!is_patch) { free(ents[i]); continue; }
+        char id[128] = {};
+        size_t baselen = strlen(name) - 6;  // tira ".patch"
+        if (baselen >= sizeof(id)) baselen = sizeof(id) - 1;
+        memcpy(id, name, baselen);
+        char ppath[448], cpath[448];
+        snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
+        snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
+        char *pbuf = up_read_file(ppath, nullptr);
+        char *cbuf = up_read_file(cpath, nullptr);  // .conf opcional
+        if (!pbuf) { free(ents[i]); free(cbuf); continue; }
+        // Itera linhas sem strtok no buffer inteiro (parse destrói a linha).
+        char *line = pbuf;
+        int lineno = 0;
+        while (line) {
+            lineno++;
+            char *nl = strchr(line, '\n');
+            if (nl) *nl = '\0';
+            up_rule_t r;
+            int pr = up_parse_line(line, &r);
+            if (pr == 0) {
+                char sig[224];
+                up_sig(sig, sizeof(sig), id, &r);
+                int seen = up_find_applied(sig);
+                if (seen < 0 || up_applied[seen].state == 1) {
+                    char valstr[64];
+                    if (!up_resolve_value(r.value, cbuf, valstr, sizeof(valstr))) {
+                        if (seen < 0) up_log("%s:%d: $%s sem valor no %s.conf", id, lineno, r.value + 1, id);
+                        up_mark(sig, 1);
+                    } else {
+                        char nspace[128], cname[128];
+                        void *klass = nullptr;
+                        if (up_split_class(r.cls, nspace, sizeof(nspace), cname, sizeof(cname)))
+                            klass = il.find_class(nspace, cname);
+                        bool ok = false;
+                        if (!klass) {
+                            if (seen < 0) up_log("%s:%d: classe %s não encontrada", id, lineno, r.cls);
+                        } else if (r.kind == UP_RETURN) {
+                            ok = up_apply_return(il, klass, &r, valstr, sig);
+                        } else if (r.kind == UP_MUL) {
+                            ok = up_apply_mul(il, klass, &r, valstr, sig);
+                        } else {
+                            ok = up_apply_static(il, klass, &r, valstr, sig);
+                        }
+                        if (ok) { up_mark(sig, 2); applied++; }
+                        else up_mark(sig, 1);
+                    }
+                }
+            } else if (pr < 0) {
+                up_log("%s:%d: linha inválida, ignorando", id, lineno);
+            }
+            line = nl ? nl + 1 : nullptr;
+            if (line && !*line) line = nullptr;
+        }
+        free(pbuf);
+        free(cbuf);
+        free(ents[i]);
+    }
+    free(ents);
+    return applied;
+}
+
+static void *up_worker(void *) {
+    up_log("carregado, esperando libil2cpp.so");
+    Il2Cpp il;
+    if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em 120s — desistindo"); return nullptr; }
+    // Página RX pros thunks mul (código separado dos dados).
+    up_thunk_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (up_thunk_page == MAP_FAILED) up_thunk_page = nullptr;
+    up_log("il2cpp ok, dir %s", up_dir);
+    for (;;) {
+        int n = up_scan_apply(il);
+        if (n > 0) up_log("%d regra(s) nova(s) aplicada(s)", n);
+        for (int i = 0; i < up_statics_n; i++)
+            il.field_static_set_value(up_statics[i].field, up_statics[i].bytes);
+        sleep(2);  // jogo pode resetar static; regra nova pode ter chegado
+    }
+    return nullptr;
+}
+
+__attribute__((constructor)) static void u_patch_init() {
+    up_read_pkg();
+    pthread_t t;
+    if (pthread_create(&t, nullptr, up_worker, nullptr) == 0) pthread_detach(t);
+}
