@@ -345,6 +345,23 @@ OUT=$(sh "$KIT" "$PKG" "$SA2" 6 --force 2>&1) || RC=$?
 echo "$OUT" | grep -q "lock pego" && ok "--force pegou lock órfão" || bad "--force pegou lock órfão"
 echo "$OUT" | grep -q "device restaurado" && ok "run do órfão completou" || bad "run do órfão completou"
 
+# --- (r6) dois runs seguidos: o 2º NÃO pode cair no caminho de recuperação
+# O bug (b): o restore limpava o BAK_OUT no sucesso mas deixava o BAK (mods)
+# vivo — aí TODO run seguinte entrava em "run anterior interrompido" e
+# "recuperava" de um backup que não era de run morto nenhum.
+echo "== (r6) dois runs com sucesso = 2º sem recovery e sem BAK órfão =="
+new_device r6
+OUT1=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1 || true)
+echo "$OUT1" | grep -q "device restaurado" && ok "1º run restaurou" || bad "1º run restaurou"
+[ ! -d "$DEV/data/local/tmp/t1-bak-$PKG" ] && ok "1º run não deixou BAK órfão" || bad "1º run não deixou BAK órfão"
+[ ! -f "$DEV/data/local/tmp/t1-inprogress-$PKG" ] && ok "1º run não deixou marcador" || bad "1º run não deixou marcador"
+OUT2=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1 || true)
+echo "$OUT2" | grep -q "run anterior interrompido detectado" \
+    && bad "2º run sem caminho de recuperação" || ok "2º run sem caminho de recuperação"
+echo "$OUT2" | grep -q "device restaurado" && ok "2º run restaurou" || bad "2º run restaurou"
+[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário segue lá" || bad "mod do usuário segue lá"
+[ ! -d "$DEV/data/local/tmp/t1-bak-$PKG" ] && ok "sem BAK órfão no fim" || bad "sem BAK órfão no fim"
+
 if [ -n "${KEEP_SIM_ROOT:-}" ]; then echo "device temporário: $ROOT"; fi
 if [ "$FAILED" = 0 ]; then
     echo "device_test-sim: OK"

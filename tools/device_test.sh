@@ -145,9 +145,11 @@ restore_tree() {
     RC_TREE=0
     restore_one "mods/$PKG" "$MODS" "$BAK" "$HASH_MODS_INITIAL" || RC_TREE=1
     restore_one "files/bepinex" "$OUT" "$BAK_OUT" "$HASH_OUT_INITIAL" || RC_TREE=1
-    # staging e .part vão sempre (são nossos); o marcador e os backups SÓ com
+    # staging e .part vão sempre (são nossos); o marcador e o BAK_OUT só com
     # as duas árvores de volta no lugar — senão o próximo run não tem como
-    # recuperar.
+    # recuperar. O BAK (mods) NÃO sai aqui: sai no restore(), depois do diff
+    # final e de conferir a árvore restaurada contra ele (hash) — nunca
+    # apagar backup sem prova.
     if [ "$RC_TREE" = 0 ]; then
         dev "rm -rf $STAGE $BAK.part $BAK_OUT.part $BAK_OUT" || true
         dev "rm -f $MARK" || true
@@ -187,6 +189,21 @@ restore() {
     fi
     if [ "$TREE_OK" = 1 ] && diff -q "$BEFORE_FILE" "$HOST_TMP/after.txt" >/dev/null 2>&1; then
         echo "device restaurado (mods + files/bepinex idênticos ao inicial)"
+        # (b) O backup de mods também some no sucesso VERIFICADO — antes ele
+        # ficava vivo e todo run seguinte caía em "run anterior interrompido".
+        # Mesma regra de sempre: só apaga com prova. Aqui a prova é dupla — o
+        # snapshot final já é idêntico ao inicial (diff acima) e a árvore
+        # restaurada ainda tem que conferir contra o próprio BAK (hash):
+        # se o hash não bater, o BAK fica (fail-safe, aviso no log).
+        if dev "test -d $BAK"; then
+            _restored=$(tree_hash "$MODS")
+            _bakh=$(tree_hash "$BAK")
+            if is_hash "$_restored" && is_hash "$_bakh" && [ "$_restored" = "$_bakh" ]; then
+                dev "rm -rf $BAK" || true
+            else
+                echo "  aviso: BAK de mods mantido (árvore restaurada não confere contra ele)"
+            fi
+        fi
         rm -rf "$HOST_TMP"
         return 0
     fi
