@@ -184,7 +184,7 @@ if [ -f "$ROOT/manager/build.sh" ]; then
         echo "manager/build.sh exists but manager/run_tests.sh is missing" >&2
     fi
 else
-    record "manager JVM tests (not present)" PASS 0
+    record "manager JVM tests (not present)" SKIP 0 0
     echo "AVISO: manager/build.sh ausente; testes JVM ignorados"
 fi
 
