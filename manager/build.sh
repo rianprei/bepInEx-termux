@@ -139,8 +139,15 @@ else
         echo "ERRO: keystore ausente: ${KEYSTORE}; forneça MANAGER_KEYSTORE." >&2
         exit 1
     }
-    # Chave debug (.debug.keystore) mantém pass:android (pública, debug).
-    # Outra chave: alias configurável e senha via env (nunca literal).
+    # Chave debug (.debug.keystore) mantém pass:android: senha pública de
+    # debug, e o keystore vai junto no .gitignore. Qualquer OUTRA chave (a de
+    # release do usuário) entra por MANAGER_KEYSTORE e a senha NUNCA aparece na
+    # linha de comando — `ps` mostra a linha inteira para qualquer usuário da
+    # máquina.dois caminhos, sem literal:
+    #   MANAGER_KS_PASS  -> --ks-pass  env:MANAGER_KS_PASS (não interativo)
+    #   (ausente)        -> sem --ks-pass: o apksigner PERGUNTA no terminal
+    # MANAGER_KEY_PASS é a senha da chave privada; sem ela o apksigner pergunta
+    # também (a do keystore e a da chave costumam ser a mesma, mas não sempre).
     if [[ "${KEYSTORE}" == "${ROOT_DIR}/.debug.keystore" ]]; then
         "${BUILD_TOOLS}/apksigner" sign \
             --ks "${KEYSTORE}" \
@@ -149,26 +156,18 @@ else
             --out "${OUTPUT_APK}" \
             "${BUILD_DIR}/aligned.apk"
     else
-        # Senha via env MANAGER_KS_PASS; sem ela, apksigner pede no terminal.
-        KSDIR="$(dirname "${KEYSTORE}")"
-        KSNAME="$(basename "${KEYSTORE}")"
+        sign_args=(--ks "${KEYSTORE}" --ks-key-alias "${MANAGER_KEY_ALIAS:-manager}")
         if [[ -n "${MANAGER_KS_PASS:-}" ]]; then
-            export MANAGER_KS_PASS
-            "${BUILD_TOOLS}/apksigner" sign \
-                --ks "${KEYSTORE}" \
-                --ks-key-alias "${MANAGER_KEY_ALIAS:-manager}" \
-                --ks-pass env:MANAGER_KS_PASS \
-                --out "${OUTPUT_APK}" \
-                "${BUILD_DIR}/aligned.apk"
-            unset MANAGER_KS_PASS
+            sign_args+=(--ks-pass env:MANAGER_KS_PASS)
         else
-            echo "[*] Senha não fornecida; apksigner pedirá no terminal..." >&2
-            "${BUILD_TOOLS}/apksigner" sign \
-                --ks "${KEYSTORE}" \
-                --ks-key-alias "${MANAGER_KEY_ALIAS:-manager}" \
-                --out "${OUTPUT_APK}" \
-                "${BUILD_DIR}/aligned.apk"
+            echo "[*] MANAGER_KS_PASS não definida: apksigner vai pedir a senha do keystore no terminal." >&2
         fi
+        if [[ -n "${MANAGER_KEY_PASS:-}" ]]; then
+            sign_args+=(--key-pass env:MANAGER_KEY_PASS)
+        fi
+        "${BUILD_TOOLS}/apksigner" sign "${sign_args[@]}" \
+            --out "${OUTPUT_APK}" \
+            "${BUILD_DIR}/aligned.apk"
     fi
 fi
 

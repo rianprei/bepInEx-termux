@@ -520,6 +520,41 @@ normal (zygote tem acesso à APEX), mas o `dlopen()` **dentro do companion**
 falha silenciosamente. `-Wl,--as-needed` garante que nenhuma NEEDED morta
 volte a entrar. NEEDED final esperado: `liblog`, `libc`, `libdl`.
 
+### Assinar o Manager (chave de release)
+
+O `manager/build.sh` assina o APK. Por padrão ele usa o keystore de DEBUG
+(`manager/.debug.keystore`, senha pública `android`) — é um arquivo de
+build, entra no `.gitignore` e não serve para distributing nada.
+
+Para assinar com a sua chave de release:
+
+```bash
+# A chave mora AQUI, fora do repo (o build não versiona nem copia ela):
+#   ~/.config/bepinex-termux/manager-release.jks   (alias "manager")
+# 1) senha no ambiente, build não interativo (não aparece no `ps`):
+export MANAGER_KS_PASS='sua senha'
+export MANAGER_KEY_PASS="$MANAGER_KS_PASS"   # se a chave privada tiver outra
+bash manager/build.sh
+# 2) sem MANAGER_KS_PASS: o apksigner PERGUNTA a senha no terminal
+bash manager/build.sh
+```
+
+Variáveis: `MANAGER_KEYSTORE` (caminho da chave), `MANAGER_KEY_ALIAS`
+(default `manager`), `MANAGER_KS_PASS` (senha do keystore) e
+`MANAGER_KEY_PASS` (senha da chave privada, quando for diferente).
+`tools/build_release.sh` usa a chave de release automaticamente se ela
+existir no caminho acima, e grava o fingerprint SHA-256 do certificado em
+`BUILD-INFO.txt` (extraído do APK assinado com `apksigner verify
+--print-certs` — o certificado é público; a chave nunca é aberta).
+
+**Faça backup da chave. Perder a chave obriga DESINSTALAR o Manager antes de
+instalar a versão nova**: Android recusa atualização quando a assinatura não
+bate com a do APK instalado (erro de `INSTALL_FAILED_UPDATE_INCOMPATIBLE`),
+e a única saída é remover o app (`adb uninstall` ou o botão do sistema) e
+instalar de novo — com o Manager, sem root, você perde as regras e configs
+salvos. A chave de debug não tem esse problema (é pública e reconstruível),
+mas também não é assinatura de release.
+
 ## Empacotamento (módulo Magisk)
 
 ```bash
