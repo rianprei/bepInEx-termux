@@ -1,0 +1,12 @@
+# T1 return — alvos reais do dump SA2 (C5). Sem save/IAP/anúncio.
+# return bool: o que este caso PROVA é que o patch de retorno APLICA (a linha de
+# log "return aplicado"). NÃO prova munição infinita: o jogo decrementa e
+# consulta o campo direto, então o efeito de gameplay vem da regra `field`
+# (ver test/device/sa2-field/).
+return ComplexCreature HasAmmo 0 bool true
+# return int: força prioridade do canal de áudio. Efeito: sons somem/trocam.
+# Só áudio, sem save.
+return SoundChannel GetPlayingPriority 0 int 7
+# return float: velocidade de projétil constante. Efeito: projéteis em
+# velocidade uniforme. Só movimento, sem save.
+return Projectile GetMovementSpeed 0 float 5

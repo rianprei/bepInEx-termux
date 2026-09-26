@@ -1,0 +1,7 @@
+# T1 field — verbo C4 de campo de INSTÂNCIA. Só vale quando o u_patch ganhar
+# o verbo `field` (uni/f4-upatch ainda NÃO tem: 0 hits no parser em b6b5cc0).
+# Alvo real do dump SA2: F WeaponInfo unlimitedAmmo System.Boolean 0 112
+# (o "0" = instância, coluna static do C5).
+# Efeito de gameplay: munição que não acaba. É este caso — e não o `return` —
+# que o ROADMAP aponta como o caminho que funciona para munição infinita.
+field WeaponInfo unlimitedAmmo bool true

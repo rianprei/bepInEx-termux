@@ -1,0 +1,19 @@
+# T1 expectativas: 1 regex (grep -E) por linha contra o log.txt do jogo.
+# Formato do log: HH:MM:SS [u_patch] <assim> ...
+#   - erro de parse:  "<id>.patch:<linha>: <mensagem>"     (up_parse loop)
+#   - aplicação:       "<id>.patch|<kind>|<classe>|<membro>|<nargs>|<tipo>|<valor>: <msg>"
+# As regexes fixam id:linha ou id|alvo para que uma falha de OUTRA regra não
+# satisfaça a expectativa (falso PASS). # aqui é comentário.
+\[u_patch\] t1_return\.patch[|].*[|]HasAmmo[|].*return aplicado
+\[u_patch\] t1_return\.patch[|].*[|]GetPlayingPriority[|].*return aplicado
+\[u_patch\] t1_return\.patch[|].*[|]GetMovementSpeed[|].*return aplicado
+\[u_patch\] t1_mul\.patch[|].*[|]GetPlayingClipIndex[|].*mul aplicado
+\[u_patch\] t1_mul\.patch[|].*[|]GetDistanceToTravel[|].*mul aplicado
+\[u_patch\] t1_static\.patch[|].*[|]MonstersHaveUniqueSpeed[|].*static fixado
+\[u_patch\] t1_static\.patch[|].*[|]WeaponReloadDurationSpeedUpFactor[|].*static fixado
+\[u_patch\] t1_static\.patch[|].*[|]MaxFingers[|].*static fixado
+\[u_patch\] t1_key\.patch[|].*[|]CanAttack[|].*return aplicado
+# casos de falha: fixam o arquivo e a linha do .patch
+\[u_patch\] t1_bad\.patch:1:.*classe NoSuchClass_xyz não encontrada
+\[u_patch\] t1_bad\.patch:2:.*linha inválida, ignorando
+\[u_patch\] t1_bad\.patch[|].*[|]get_IsFinished[|].*metodo curto demais

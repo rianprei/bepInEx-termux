@@ -1,0 +1,7 @@
+# T1 mul — métodos DIFERENTES dos do t1_return.patch de propósito: return
+# reescreve o prólogo e a guarda de método curto recusaria o mul no mesmo
+# endereço. Sem save/IAP/anúncio.
+# mul int: índice do clipe de áudio ×3. Efeito: sons trocam/somem. Só áudio.
+mul SoundChannel GetPlayingClipIndex 0 int 3
+# mul float: distância de projétil ×2. Efeito: alcance dobrado. Só movimento.
+mul Projectile GetDistanceToTravel 0 float 2

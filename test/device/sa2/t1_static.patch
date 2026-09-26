@@ -1,0 +1,10 @@
+# T1 static — campos estáticos reais do dump SA2 (u_patch reaplica a cada
+# 2s). Sem save/IAP/anúncio/economia. Se algum for const (sem storage), o
+# set é ignorado ou o jogo cai — o device_test detecta crash (é pra isso).
+# static bool: variedade de velocidade dos monstros ligada. Efeito: combate
+# com velocidades variadas. Flag de runtime, sem save.
+static Game MonstersHaveUniqueSpeed bool true
+# static float: recarga 2× mais rápida. Efeito visível no combate. Runtime.
+static CreatureState WeaponReloadDurationSpeedUpFactor float 2
+# static int: arrasto com até 2 dedos. Efeito: menus; cosmético.
+static ItemDragHandler MaxFingers int 2
