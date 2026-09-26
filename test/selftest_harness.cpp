@@ -49,6 +49,7 @@
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
+#include "../mods/u_frida/jni/u_frida_config.h"  // F11: config do gadget (puro)
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
@@ -1782,6 +1783,27 @@ int main() {
             count = bc_crashguard_next_count(count, ts, now);
             check("após 40s sem morte: volta a carregar", !blocked && count == 1);
         }
+    }
+
+    // ================================================================
+    // Caso 61: u_frida_config (F11) — núcleo puro do mod u_frida
+    // ================================================================
+    printf("\n[Caso 61] u_frida_config: detecção de .js + JSON do gadget (F11)\n");
+    {
+        check("meu_mod.js é mod", uf_is_js_mod("meu_mod.js"));
+        check("nome sem ext não é", !uf_is_js_mod("meu_mod"));
+        check("foo.js.off não é (.off desliga)", !uf_is_js_mod("foo.js.off"));
+        check("oculto não é", !uf_is_js_mod(".js"));
+        check("subpasta não é", !uf_is_js_mod("a/b.js"));
+        check("nulo/vazio não é", !uf_is_js_mod(nullptr) && !uf_is_js_mod(""));
+        check(".so não é", !uf_is_js_mod("u_frida.so"));
+        char json[512];
+        int n = uf_build_config(json, sizeof(json), "/data/local/tmp/mods/com.foo.bar");
+        check("config JSON exato do modo script-directory", n > 0 &&
+              strcmp(json, "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"/data/local/tmp/mods/com.foo.bar\",\"on_change\":\"ignore\"}}") == 0);
+        check("nomes seguem a regra <stem>.config do gadget",
+              strcmp(UF_GADGET_FILE, "frida-gadget.bin") == 0 &&
+              strcmp(UF_CONFIG_FILE, "frida-gadget.config") == 0);
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

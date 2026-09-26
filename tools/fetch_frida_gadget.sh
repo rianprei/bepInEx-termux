@@ -1,0 +1,30 @@
+#!/bin/sh
+# Baixa o frida-gadget android-arm64 pinado (versão + sha256 verificados).
+# Roda no HOST (curl + xz). O binário NÃO vai pro git (.gitignore cobre
+# mods/u_frida/gadget/): o Manager empacota ele nos assets dele (F5), e o
+# orquestrador usa daqui pro teste no device.
+# Uso: sh tools/fetch_frida_gadget.sh
+set -eu
+VERSION="17.19.0"
+XZ_SHA256="da55241ed73873176997298f2d00aa02729fc6ce935850923b6a28c587a1d9aa"
+XZ_SIZE="6969732"
+# sha256 do .so já desempatado (referência, medido 2026-09-26):
+SO_SHA256="99a5e32fe07d9136571404a33375140386c568bb0953499c7d553056a0b8d674"
+BASE="https://github.com/frida/frida/releases/download/${VERSION}"
+OUTDIR="$(dirname "$0")/../mods/u_frida/gadget"
+mkdir -p "$OUTDIR"
+cd "$OUTDIR"
+XZ="frida-gadget-${VERSION}-android-arm64.so.xz"
+if [ ! -f "$XZ" ]; then
+    curl -sL --fail -o "$XZ" "${BASE}/${XZ}"
+fi
+echo "${XZ_SHA256}  ${XZ}" | sha256sum -c -
+ACTUAL_SIZE="$(wc -c < "$XZ" | tr -d ' ')"
+[ "$ACTUAL_SIZE" = "$XZ_SIZE" ] || { echo "tamanho inesperado: $ACTUAL_SIZE"; exit 1; }
+unxz -k -f "$XZ"
+SO="frida-gadget-${VERSION}-android-arm64.so"
+echo "${SO_SHA256}  ${SO}" | sha256sum -c -
+# Nome final SEM .so (ver u_frida_config.h: loader não pode dlopen'ar sozinho).
+mv -f "$SO" frida-gadget.bin
+echo "$VERSION" > VERSION.txt
+ls -l frida-gadget.bin
