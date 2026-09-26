@@ -48,6 +48,7 @@
 #include "bc_generic_hook.h" // hook de log genérico (DobbyInstrument) em símbolo Java_* descoberto
 #include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
 #include "bc_pattern_scan.h"  // AOB scan — resolve endereço por bytes, sobrevive recompile do jogo
+#include "bc_path_decide.h" // decide_path (F1): caminho do app por pasta de mods/allowlist, núcleo puro
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -329,8 +330,6 @@ static int get_sdk_level(JNIEnv *env) {
     env->DeleteLocalRef(buildClass);
     return sdk;
 }
-
-static bool is_bc(const char *pkg) { return pkg && strstr(pkg, "jp.co.ponos.battlecatsen"); }
 
 static const char *TARGET_LIB = "libnative-lib.so";
 
@@ -1573,6 +1572,45 @@ static bool has_pkg_mods_dir(const char *pkg) {
     return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+// Caminho decidido no preAppSpecialize (bc_decide_path) e lido pela thread de
+// carga — o pthread_create já é barreira de memória, não precisa de atomic.
+static bc_path_kind g_path_kind = BC_PATH_NONE;
+
+// Contrato C1: saída do processo do jogo em /data/data/<pkg>/files/bepinex/ —
+// o jogo não escreve em /data/local/tmp. 1 linha = "HH:MM:SS [mod] msg", append,
+// corta em 256KB (sem rotação: quando o arquivo já passou do teto, zera).
+// Só pode ser chamada DEPOIS do specialize (thread de carga): antes disso o
+// processo ainda não tem o uid do app e /data/data/<pkg> não é acessível.
+#define PKG_LOG_CAP (256 * 1024)
+static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...) {
+    char dir[320];
+    snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
+    if (mkdir(dir, 0700) != 0 && errno != EEXIST) {
+        LOGW("%s: sem log do jogo (%s): %s", pkg, dir, strerror(errno));
+        return;
+    }
+    char path[352];
+    snprintf(path, sizeof(path), "%s/log.txt", dir);
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        LOGW("%s: sem log do jogo (%s): %s", pkg, path, strerror(errno));
+        return;
+    }
+    if (lseek(fd, 0, SEEK_END) >= PKG_LOG_CAP) ftruncate(fd, 0);
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    char stamp[16], body[512], line[640];
+    strftime(stamp, sizeof(stamp), "%H:%M:%S", &tm_now);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(body, sizeof(body), fmt, ap);
+    va_end(ap);
+    int n = snprintf(line, sizeof(line), "%s [%s] %s\n", stamp, tag, body);
+    if (n > 0) write(fd, line, (size_t)n);
+    close(fd);
+}
+
 // Retorna quantos mods carregaram.
 static int load_generic_pkg_mods(const char *pkg) {
     char dir[320];
@@ -1589,13 +1627,23 @@ static int load_generic_pkg_mods(const char *pkg) {
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
         if (bc_loader_is_mod_filename(name)) {
+            // Tag do contrato C1 = nome do mod sem o ".so" (o filtro acima
+            // garante que o nome termina com .so).
+            char tag[64];
+            snprintf(tag, sizeof(tag), "%.*s", (int)(strlen(name) - 3), name);
             char path[640];
             snprintf(path, sizeof(path), "%s/%s", dir, name);
-            if (dlopen(path, RTLD_NOW) == nullptr) {
-                LOGW("%s: dlopen %s falhou: %s", pkg, name, dlerror());
+            void *h = dlopen(path, RTLD_NOW);
+            if (h == nullptr) {
+                // dlerror() consome o erro do thread-local: guarda uma vez só,
+                // senão a segunda leitura devolve NULL e o %s quebra.
+                const char *err = dlerror();
+                LOGW("%s: dlopen %s falhou: %s", pkg, name, err ? err : "(null)");
+                pkg_log_line(pkg, tag, "dlopen falhou: %s", err ? err : "(null)");
             } else {
                 LOGI("%s: mod %s carregado", pkg, name);
                 publish_log("Info", "%s: mod %s carregado", pkg, name);
+                pkg_log_line(pkg, tag, "carregado");
                 loaded++;
             }
         }
@@ -1615,8 +1663,14 @@ static int load_generic_pkg_mods(const char *pkg) {
 // o intervalo de 200ms em vez de 8ms.
 static void *generic_event_thread(void *arg) {
     const char *pkg = (const char *)arg;
-    if (load_generic_pkg_mods(pkg) > 0) {
-        LOGI("%s: mods por pacote ativos — sem detecção de engine/hook de log genérico", pkg);
+    int loaded = load_generic_pkg_mods(pkg);
+    // Pasta de mods (F1): mods autônomos cuidam de tudo — sem cascata de
+    // detecção Cocos2d-x e sem hook de log genérico, mesmo com a pasta vazia
+    // (senão um jogo Unity sem mod cairia no experimento Cocos, que já crashou
+    // o Swamp Attack 2 3s depois de abrir).
+    if (loaded > 0 || g_path_kind == BC_PATH_PKG_MODS) {
+        LOGI("%s: %d mod(s) por pacote%s — sem detecção de engine/hook de log genérico", pkg, loaded,
+             loaded > 0 ? "" : " (pasta vazia)");
         return nullptr;
     }
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
@@ -1660,12 +1714,14 @@ public:
             api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
-        be_bc = is_bc(pkg);
+        be_bc = bc_path_is_bc(pkg);
         if (!be_bc) {
-            // Generalização Cocos2d-x/C++ nativo (pedido do usuário
-            // 2026-09-16): só escaneia/atua em pacote explicitamente na
-            // allowlist — detectar em TODO app do device custaria latência
-            // de boot pra apps que não interessam. bc_generic_allowlist.h.
+            // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
+            // entrar no caminho de mods autônomos — nada de allowlist, nada de
+            // varredura de engine. A allowlist sobrou só pro experimento
+            // Cocos2d-x legado (pacote na lista E sem pasta), e mesmo aí
+            // detectar em TODO app do device custaria latência de boot pra
+            // apps que não interessam. bc_generic_allowlist.h.
             //
             // ACHADO REAL (revisão freebuff, testado ao vivo no device):
             // NÃO detecta aqui — preAppSpecialize roda ANTES do processo
@@ -1677,19 +1733,27 @@ public:
             char pkg_copy[256];
             snprintf(pkg_copy, sizeof(pkg_copy), "%s", pkg);
             env->ReleaseStringUTFChars(args->nice_name, pkg);
-            be_generic_candidate = bc_generic_allowlist_contains(pkg_copy);
+            // F1 (zero-config): 1 stat decide. A allowlist só é lida quando
+            // não há pasta — ela continua servindo ao experimento Cocos2d-x
+            // legado, não é mais pré-requisito de nada. Decisão pura em
+            // bc_path_decide.h (testada no harness), I/O fica aqui.
+            bool dir_exists = has_pkg_mods_dir(pkg_copy);
+            g_path_kind = bc_decide_path(pkg_copy, dir_exists,
+                                         !dir_exists && bc_generic_allowlist_contains(pkg_copy));
+            be_generic_candidate = g_path_kind != BC_PATH_NONE;
             if (be_generic_candidate) {
                 snprintf(be_generic_pkg, sizeof(be_generic_pkg), "%s", pkg_copy);
-                LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
                 // BUG REAL achado por revisão (hermes): sem isso, publish_log()
                 // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
                 // g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
                 // Termux, porque só o caminho be_bc chamava connectCompanion().
                 // Mesma restrição de SELinux do caminho BC: só funciona aqui,
                 // em preAppSpecialize.
-                if (has_pkg_mods_dir(pkg_copy)) {
-                    LOGI("%s: pasta de mods própria — sem companion/console Termux", pkg_copy);
+                if (g_path_kind == BC_PATH_PKG_MODS) {
+                    LOGI("%s: mods/<pkg>/ presente — carga direta, sem allowlist e sem companion",
+                         pkg_copy);
                 } else {
+                    LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
                     int companion_fd = api->connectCompanion();
                     if (companion_fd >= 0) {
                         g_stream_fd.store(companion_fd, std::memory_order_relaxed);
