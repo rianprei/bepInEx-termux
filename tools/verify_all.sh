@@ -12,13 +12,20 @@ TIMEOUT_TEST=${TIMEOUT_TEST:-120}
 declare -a LABELS=()
 declare -a STATUSES=()
 declare -a DURATIONS=()
+declare -a EXITS=()
 OVERALL=0
+SKIPS=0
 
 record() {
     LABELS+=("$1")
     STATUSES+=("$2")
     DURATIONS+=("$3")
-    [ "$2" = PASS ] || OVERALL=1
+    EXITS+=("${4:-0}")
+    if [ "$2" = SKIP ]; then
+        SKIPS=$((SKIPS + 1))
+    elif [ "$2" != PASS ]; then
+        OVERALL=1
+    fi
 }
 
 run_step() {
@@ -41,7 +48,7 @@ run_step() {
     fi
     if [ "$status" -ne 0 ]; then
         cat "$output" >&2
-        record "$label" FAIL "$elapsed"
+        record "$label" FAIL "$elapsed" "$status"
         return 0
     fi
     record "$label" PASS "$elapsed"
@@ -55,7 +62,7 @@ run_ndk() {
     start=$(date +%s)
     if timeout --foreground "$TIMEOUT_BUILD" bash -c '
         cd "$1"
-        NDK_APP_CPPFLAGS="-Wall -Wextra" APP_CFLAGS="-Wall -Wextra" "$2" -B -j4
+        "$2" APP_CFLAGS+="-Wall -Wextra" APP_CPPFLAGS+="-Wall -Wextra" -B -j4
     ' bash "$directory" "$NDK_BUILD" >"$output" 2>&1; then
         status=0
     else
@@ -72,9 +79,9 @@ run_ndk() {
     fi
     if [ "$status" -ne 0 ]; then
         cat "$output" >&2
-        record "$label" FAIL "$elapsed"
+        record "$label" FAIL "$elapsed" "$status"
     else
-        record "$label" PASS "$elapsed"
+        record "$label" PASS "$elapsed" "$status"
     fi
 }
 
@@ -83,19 +90,19 @@ echo "verify_all: $ROOT"
 if [ -x "$NDK_BUILD" ]; then
     run_ndk "ndk-build loader" "$ROOT"
 else
-    record "ndk-build loader" FAIL 0
+    record "ndk-build loader" SKIP 0 0
     echo "missing executable: $NDK_BUILD" >&2
 fi
 while IFS= read -r mod_dir; do
     [ "$(basename "$mod_dir")" = common ] && continue
     label="ndk-build ${mod_dir#"$ROOT"/}"
     if [ ! -f "$mod_dir/jni/Android.mk" ]; then
-        record "$label (missing jni/Android.mk)" FAIL 0
+        record "$label (missing jni/Android.mk)" SKIP 0 0
         echo "$label: missing jni/Android.mk" >&2
     elif [ -x "$NDK_BUILD" ]; then
         run_ndk "$label" "$mod_dir"
     else
-        record "$label" FAIL 0
+        record "$label" SKIP 0 0
         echo "missing executable: $NDK_BUILD" >&2
     fi
 done < <(find "$ROOT/mods" -mindepth 1 -maxdepth 1 -type d -print | sort)
@@ -104,7 +111,7 @@ while IFS= read -r makefile; do
     mod_dir=$(dirname "$(dirname "$makefile")")
     case "$mod_dir" in
         "$ROOT"/mods/common|"$ROOT"/mods/*) ;;
-        *) record "unexpected Android.mk ${makefile#"$ROOT"/}" FAIL 0
+        *) record "unexpected Android.mk ${makefile#"$ROOT"/}" FAIL 0 1
            echo "Android.mk is outside mods/<id>/jni/: $makefile" >&2 ;;
     esac
 done < <(find "$ROOT/mods" -type f -name Android.mk -print | sort)
@@ -129,8 +136,8 @@ while IFS= read -r test_file; do
     fi
 done < <(find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print | sort)
 if ! find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print -quit | grep -q .; then
-    record "host tests" FAIL 0
-    echo "no host tests discovered" >&2
+    record "host tests" SKIP 0 0
+    echo "AVISO: no host tests discovered; testes ignorados" >&2
 fi
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
@@ -154,13 +161,14 @@ if shellcheck_bin=$("$ROOT/tools/fetch_shellcheck.sh"); then
         if timeout --foreground "$TIMEOUT_TEST" "$shellcheck_bin" "$script" >"$shellcheck_output" 2>&1; then
             record "$label" PASS "$(( $(date +%s) - start ))"
         else
+            shellcheck_status=$?
             cat "$shellcheck_output" >&2
             echo "AVISO: $label encontrou achados; scripts de outros agentes nao foram alterados" >&2
-            record "$label (findings reported)" FAIL "$(( $(date +%s) - start ))"
+            record "$label (findings reported)" FAIL "$(( $(date +%s) - start ))" "$shellcheck_status"
         fi
     done < <(find "$ROOT/module" "$ROOT/tools" -maxdepth 1 -type f -name '*.sh' -print | sort)
 else
-    record "shellcheck bootstrap" FAIL 0
+    record "shellcheck bootstrap" FAIL 0 1
     echo "ShellCheck could not be downloaded or verified" >&2
 fi
 
@@ -172,7 +180,7 @@ if [ -f "$ROOT/manager/build.sh" ]; then
             ./run_tests.sh
         ' bash "$ROOT"
     else
-        record "manager JVM tests (missing run_tests.sh)" FAIL 0
+            record "manager JVM tests (missing run_tests.sh)" SKIP 0 0
         echo "manager/build.sh exists but manager/run_tests.sh is missing" >&2
     fi
 else
@@ -192,7 +200,7 @@ if [ -d "$ROOT/mods/u_patch" ]; then
         test "$found" -eq 1
     ' bash "$ROOT" "$TMP"
 else
-    record "u_patch encoding harness (not present)" PASS 0
+    record "u_patch encoding harness (not present)" SKIP 0 0
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
 fi
 
@@ -203,14 +211,15 @@ if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/ma
         test "$version" = "$loader"
     ' bash "$ROOT"
 else
-    record "VERSION matches loader" FAIL 0
+    record "VERSION matches loader" FAIL 0 1
     echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
-printf '\n| Etapa | Resultado | Tempo (s) |\n|---|---:|---:|\n'
+printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
-    printf '| %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${DURATIONS[i]}"
+    printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"
 done
+echo "verify_all: SKIP=${SKIPS}"
 if [ "$OVERALL" -ne 0 ]; then
     echo "verify_all: FAIL"
     exit 1
