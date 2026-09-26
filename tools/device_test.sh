@@ -1,6 +1,7 @@
 #!/bin/sh
 # T1 kit de validação no device. QUEM EXECUTA É O USUÁRIO (agente não usa adb):
 #   tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run]
+#   (flags sempre DEPOIS dos dois posicionais)
 # Faz: snapshot inicial → backup de mods/<pkg>/ → instala artefatos via
 # staging + su (cp/chmod/chcon) → limpa logs → abre o jogo (monkey) → espera
 # as linhas de expect.txt no log.txt → checa crash (pid vazio / Fatal signal
@@ -36,8 +37,13 @@ HOST_TMP="$(mktemp -d)"
 
 # Todos os toques no device passam daqui (dry-run imprime no stderr pra não
 # poluir capturas $(...)).
+# ENTREGA VIA STDIN DE PROPÓSITO: `adb shell su -c "$cmd"` junta os args com
+# espaço e o sh do device re-divide — `su -c test -d X && rm ...` vira su
+# rodando só `test` e o resto como shell sem root (achado no device:
+# chmod/rm/mv com Permission denied). Via stdin o comando chega intacto,
+# com && e aspas (prova em test/device/quoting-check.sh).
 dev() {
-    if [ "$DRY" = 1 ]; then echo "DRY> adb shell su -c '$1'" >&2; else adb shell su -c "$1"; fi
+    if [ "$DRY" = 1 ]; then echo "DRY> printf '%s' | adb shell su : $1" >&2; else printf '%s\n' "$1" | adb shell su; fi
 }
 do_adb() {
     if [ "$DRY" = 1 ]; then echo "DRY> adb $*" >&2; else adb "$@"; fi
