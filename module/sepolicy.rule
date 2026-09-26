@@ -1,0 +1,47 @@
+# F1c — SELinux Enforcing. Magisk e KernelSU aplicam este arquivo no boot:
+# uma policy statement por linha (Magisk Developer Guides, secao sepolicy.rule:
+# https://topjohnwu.github.io/Magisk/guides.html ; KernelSU Module guide:
+# https://kernelsu.org/guide/module.html ). A sintaxe e a do magiskpolicy
+# (https://github.com/topjohnwu/Magisk/blob/master/native/src/sepolicy/statement.rs):
+# "allow <src> <tgt> <class> { <perms> }" e "type <nome> <atributo>". Linhas
+# vazias e linhas comecadas em "#" sao ignoradas pelo parser (statement.rs:606).
+#
+# CONTEXTO DE ROTULO (AOSP platform/system/sepolicy/private/file_contexts):
+#   /data/local/tmp(/.*)?  -> shell_data_file   (linha 626)
+#   /data/(.*)?            -> system_data_file  (linha 589) — appdomain e
+#     zygote ja tem search/getattr nessa arvore, logo /data/local nao e gargalo.
+# Entao o unico obstaculo de travessia ate os mods e o /data/local/tmp, e o
+# unico obstaculo depois dele e o tipo dos arquivos em si (da pra isso um tipo
+# proprio: nao queremos dar leitura de shell_data_file:file pra todo app).
+#
+# TIPOS DE CONTEXTO (dois, e nao se misturam):
+#   zygote    -> o preAppSpecialize roda aqui, antes do dyntransition pro app
+#                (AOSP private/zygote.te: "allow zygote appdomain:process
+#                dyntransition"). O que o loader faz nessa fase: 1 stat() da
+#                pasta de mods (F1 decide_path) e, so se ela nao existir, a
+#                leitura da allowlist legada.
+#   appdomain -> o processo do jogo depois de specialize (atributo que todo
+#                app recebe, AOSP private/app.te). Aqui rodam o scandir() da
+#                pasta de mods e o dlopen() dos .so, na thread de carga.
+
+# --- tipo proprio dos arquivos de mod -----------------------------------------
+type bepinex_mod_file file_type
+
+# --- zygote: o stat() que decide o caminho ------------------------------------
+# search em shell_data_file:dir = entrar em /data/local/tmp.
+allow zygote shell_data_file dir search
+# getattr + search em bepinex_mod_file:dir = stat() do /mods/<pkg>/ e olhar o
+# nome dentro de /mods/ (o stat e do objeto final; o search, do diretorio pai).
+allow zygote bepinex_mod_file dir { getattr search }
+
+# --- appdomain: scandir() + dlopen() dos mods ---------------------------------
+# search em shell_data_file:dir = chegar em /data/local/tmp/mods a partir do
+# processo do jogo. Nada de shell_data_file:file: o jogo nao le nada dali, so
+# desce na arvore.
+allow appdomain shell_data_file dir search
+# search/read/open na pasta: scandir() = opendir() (open) + readdir() (read) e
+# lookup do nome dos .so (search).
+allow appdomain bepinex_mod_file dir { search read open }
+# getattr/open/read/map/execute no .so: dlopen() abre e le o arquivo, mmap com
+# PROT_EXEC (map) e o SO precisa ser executavel (execute).
+allow appdomain bepinex_mod_file file { getattr open read map execute }
