@@ -154,7 +154,7 @@ arquivos de terceiros.
 ### `.so`, `.patch` e `.bmod`
 
 No Manager, usar **+ Instalar mod**, escolher um `.so` de teste e confirmar a
-mensagem `Instalado:` (`manager/src/io/github/rianprei/bepinex/manager/core/LooseModInstaller.java:104`). 
+mensagem `Instalado:` (`manager/src/io/github/rianprei/bepinex/manager/core/LooseModInstaller.java:104`).
 Escolher um `.bmod` compatível; confirmar a tela de confirmação e a mensagem
 do resultado (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:275-292`). Para `.patch`, usar
 um pacote produzido por F4 e confirmar que o arquivo chega em
