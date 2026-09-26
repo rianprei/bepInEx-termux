@@ -65,15 +65,24 @@ static void up_log(const char *fmt, ...) {
     fclose(f);
 }
 
-// Pacote via /proc/self/cmdline (C1).
-static void up_read_pkg() {
-    FILE *f = fopen("/proc/self/cmdline", "r");
-    if (!f) return;
-    size_t n = fread(up_pkg, 1, sizeof(up_pkg) - 1, f);
-    fclose(f);
-    if (n == 0) return;
-    up_pkg[n] = '\0';
+// Pacote (C1): getenv("BEPINEX_PKG"), que o loader seta antes do dlopen.
+// Fallback: cmdline, mas só depois de sair de zygote* (no constructor ela
+// ainda vale zygote64 no device — achado real no SA2). true = resolveu.
+static bool up_read_pkg() {
+    const char *env = getenv("BEPINEX_PKG");
+    if (env && env[0] && !up_is_zygote(env)) {
+        snprintf(up_pkg, sizeof(up_pkg), "%s", env);
+    } else {
+        FILE *f = fopen("/proc/self/cmdline", "r");
+        if (!f) return false;
+        char cmd[128] = {};
+        size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+        fclose(f);
+        if (n == 0 || up_is_zygote(cmd)) return false;  // ainda no zygote
+        snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
+    }
     snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
+    return true;
 }
 
 static bool up_ends_with(const char *name, const char *suf) {
@@ -208,21 +217,31 @@ static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, c
     if (*(uint32_t *)code == UP_RET) { up_log("%s: método já é só ret, pulando", sig); return false; }
     uint32_t words[4];
     int n = 0;
+    const char *tname = "?";
     if (r->type == UP_BOOL) {
+        tname = "bool";
         int b = 0;
         if (!up_parse_bool(valstr, &b)) { up_log("%s: bool inválido '%s'", sig, valstr); return false; }
         n = up_emit_return_bool(words, b);
     } else if (r->type == UP_INT) {
+        tname = "int";
         uint32_t v = 0;
         if (!up_parse_int32(valstr, &v)) { up_log("%s: int inválido '%s'", sig, valstr); return false; }
         n = up_emit_return_int(words, v);
     } else {
+        tname = "float";
         char *end = nullptr;
         float f = strtof(valstr, &end);
         if (!end || *end || f != f) { up_log("%s: float inválido '%s'", sig, valstr); return false; }
         uint32_t bits = 0;
         memcpy(&bits, &f, 4);
         n = up_emit_return_float(words, bits);
+    }
+    // Guard de método curto: escrever além do ret/B vazaria pro método
+    // seguinte. Recusa com log em vez de corromper código alheio.
+    if (!up_method_fits((const uint32_t *)code, n)) {
+        up_log("%s: metodo curto demais pra return %s (%d bytes), pulando", sig, tname, n * 4);
+        return false;
     }
     if (!up_patch_code(code, words, n)) { up_log("%s: mprotect falhou em %p", sig, code); return false; }
     up_log("%s: return aplicado @%p (%d bytes)", sig, code, n * 4);
@@ -373,6 +392,13 @@ static int up_scan_apply(const Il2Cpp &il) {
 }
 
 static void *up_worker(void *) {
+    // O constructor pode ter rodado ainda no zygote (sem env e com cmdline
+    // inútil): espera o pacote resolver antes de qualquer outra coisa.
+    int waits = 0;
+    while (!up_pkg[0] && !up_read_pkg()) {
+        if (++waits % 60 == 1) up_log("sem pacote resolvido ainda, aguardando");
+        sleep(1);
+    }
     up_log("carregado, esperando libil2cpp.so");
     Il2Cpp il;
     if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em 120s — desistindo"); return nullptr; }

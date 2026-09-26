@@ -109,6 +109,12 @@ static inline int up_parse_line(char *line, up_rule_t *r) {
     return 0;
 }
 
+// Nome de processo ainda-zygote (cmdline não especializado): não serve
+// como <pkg>. Contrato C1: o mod prefere getenv("BEPINEX_PKG").
+static inline bool up_is_zygote(const char *s) {
+    return s && strncmp(s, "zygote", 6) == 0;
+}
+
 // Conf C3: busca "key=value" no buffer (linhas '\n', '#' comentário).
 // Retorna true e copia o valor (sem espaços ao redor).
 static inline bool up_conf_get(const char *buf, const char *key, char *out, size_t outsz) {

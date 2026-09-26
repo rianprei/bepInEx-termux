@@ -20,7 +20,10 @@
 #define UP_MUL_X0 0x9B017C00        // mul x0, x0, x1
 #define UP_FMUL_S0 0x1E211C00       // fmul s0, s0, s1
 #define UP_FMOV_S0_W9 0x1E200120    // fmov s0, w9
-#define UP_MOVZ_W17_1 0x52800031    // mov w17, #1
+#define UP_MOVZ_W9_1 0x52800029     // mov w9, #1
+// x18 é reservado da plataforma no Android (ShadowCallStack): o thunk só
+// usa x9/x10 (temporários caller-saved, livres na entrada — args vão em
+// x0-x7 e o chamador não espera x9-x15 vivos depois do bl).
 
 // movz x0, #imm16
 static inline uint32_t up_enc_movz_x0(uint16_t imm) {
@@ -48,13 +51,13 @@ static inline uint32_t up_enc_adrp_x16(const void *pc, const void *target) {
 static inline uint32_t up_enc_add_x16(uint32_t lo12) {
     return 0x91000210u | ((lo12 & 0xFFFu) << 10);
 }
-// ldxr w17, [x16, #24]
+// ldxr w9, [x16, #24]
 static inline uint32_t up_enc_ldxr_lock() {
-    return 0x885F7C00u | (16u << 5) | 17u;
+    return 0x885F7C00u | (16u << 5) | 9u;
 }
-// stxr w18, w17, [x16, #24]
+// stxr w10, w9, [x16, #24]
 static inline uint32_t up_enc_stxr_lock() {
-    return 0x88007C00u | (17u << 16) | (16u << 5) | 18u;
+    return 0x88007C00u | (9u << 16) | (16u << 5) | 10u;
 }
 // cbnz wR, para a palavra (this_idx -> target_idx)
 static inline uint32_t up_enc_cbnz_w(uint32_t r, int this_idx, int target_idx) {
@@ -97,6 +100,26 @@ static inline int up_emit_return_float(uint32_t *out, uint32_t bits) {
     return 4;
 }
 
+// Instrução que termina a função: ret/br (família 0xD61F/0xD65F) ou B
+// incondicional. Se uma aparece antes da última palavra que vamos
+// sobrescrever, o método é mais curto que o patch (ex.: getter de 8 bytes
+// com return float de 16) e escrever vazaria pro método seguinte.
+static inline bool up_is_terminator(uint32_t w) {
+    if ((w & 0xFFFFFC1Fu) == 0xD65F0000u) return true;  // ret
+    if ((w & 0xFFFFFC1Fu) == 0xD61F0000u) return true;  // br
+    if ((w & 0xFC000000u) == 0x14000000u) return true;  // b
+    return false;
+}
+
+// true = dá pra escrever nwords in-place. Só olha [0..n-2]: a última
+// palavra vira o nosso ret, então um ret original exatamente ali é ok.
+static inline bool up_method_fits(const uint32_t *orig, int nwords) {
+    if (!orig || nwords < 2) return false;
+    for (int i = 0; i < nwords - 1; i++)
+        if (up_is_terminator(orig[i])) return false;
+    return true;
+}
+
 // Thunk mul: chama orig com regs intactos, multiplica o retorno.
 // R0-R7/stack preservados (só x16/x17/x18/x1 mexidos pós-chamada, todos
 // caller-saved). Trava curta: reentrância cai no caminho direto (sem mul,
@@ -113,10 +136,10 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = up_enc_adrp_x16(at(0), slot_va);
     out[i++] = up_enc_add_x16(lo);
     out[i++] = up_enc_ldxr_lock();
-    out[i++] = up_enc_cbnz_w(17, 3, 17);  // ocupado -> direto
-    out[i++] = UP_MOVZ_W17_1;
+    out[i++] = up_enc_cbnz_w(9, 3, 17);  // ocupado -> direto
+    out[i++] = UP_MOVZ_W9_1;
     out[i++] = up_enc_stxr_lock();
-    out[i++] = up_enc_cbnz_w(18, 6, 2);  // perdeu corrida -> tenta de novo
+    out[i++] = up_enc_cbnz_w(10, 6, 2);  // perdeu corrida -> tenta de novo
     out[i++] = up_enc_str_x(30, UP_SLOT_LR);
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
