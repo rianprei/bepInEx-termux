@@ -330,6 +330,9 @@ public class ModMakerActivity extends Activity {
         boolean isBoolean = (entry.type != null && (entry.type.contains("Boolean") || entry.type.equalsIgnoreCase("bool")));
         boolean isNumeric = (entry.type != null && (entry.type.contains("Int") || entry.type.contains("Single") || entry.type.contains("Double") || entry.type.equalsIgnoreCase("float")));
 
+        // Só o verbo field (campo de instância) precisa de método + nargs.
+        FieldInputs fieldInputs = null;
+
         if (DumpEntry.KIND_METHOD.equals(entry.kind)) {
             if (isBoolean) {
                 RadioButton rbTrue = new RadioButton(this);
@@ -366,13 +369,9 @@ public class ModMakerActivity extends Activity {
                 rg.addView(rbFixed);
             }
         } else if (DumpEntry.KIND_FIELD.equals(entry.kind)) {
-            RadioButton rbStatic = new RadioButton(this);
-            rbStatic.setText("Fixar Valor do Campo Estático");
-            rbStatic.setChecked(true);
-            rg.addView(rbStatic);
-
             etValue.setHint("Valor (ex: true, 10, 999)");
             etValue.setText(isBoolean ? "true" : "999");
+            fieldInputs = buildFieldInputs(rg, entry);
         } else {
             Toast.makeText(this, "Selecione um método ou campo para aplicar regra.", Toast.LENGTH_SHORT).show();
             return;
@@ -380,8 +379,14 @@ public class ModMakerActivity extends Activity {
 
         layout.addView(rg);
         layout.addView(etValue);
+        if (fieldInputs != null) {
+            layout.addView(fieldInputs.method);
+            layout.addView(fieldInputs.nargs);
+            layout.addView(fieldInputs.note);
+        }
         builder.setView(layout);
 
+        final FieldInputs fi = fieldInputs;
         builder.setPositiveButton("Adicionar Regra", (dialog, which) -> {
             String valType = isBoolean ? "bool" : (isNumeric ? "float" : "int");
             PatchRule rule;
@@ -407,9 +412,34 @@ public class ModMakerActivity extends Activity {
                 } else {
                     rule = PatchRule.makeReturn(entry.className, entry.name, entry.nargs, "int", "0");
                 }
-            } else {
+            } else if (entry.isStatic) {
                 String val = etValue.getText().toString().trim();
                 rule = PatchRule.makeStatic(entry.className, entry.name, valType, val);
+            } else {
+                // Campo de instância: verbo field do C4. Sem método escolhido,
+                // o u_patch escolhe sozinho (regra de 4 campos).
+                String val = etValue.getText().toString().trim();
+                boolean withMethod = (fi != null && rg.getCheckedRadioButtonId() == fi.methodRadioId);
+                if (withMethod) {
+                    String method = fi.method.getText().toString().trim();
+                    if (method.isEmpty()) {
+                        Toast.makeText(this, "Informe o método de instância, ou escolha 'deixar o u_patch escolher'.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    int nargs;
+                    try {
+                        nargs = Integer.parseInt(fi.nargs.getText().toString().trim());
+                    } catch (NumberFormatException e) {
+                        nargs = -1;
+                    }
+                    if (nargs < 0) {
+                        Toast.makeText(this, "nargs inválido: use um número >= 0 (0 = método sem argumentos).", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    rule = PatchRule.makeField(entry.className, entry.name, valType, val, method, nargs);
+                } else {
+                    rule = PatchRule.makeField(entry.className, entry.name, valType, val);
+                }
             }
 
             mCurrentRules.add(rule);
@@ -419,6 +449,73 @@ public class ModMakerActivity extends Activity {
 
         builder.setNegativeButton("Cancelar", null);
         builder.show();
+    }
+
+    // Entradas extras do verbo field (C4) para campo de INSTANCIA: metodo +
+    // nargs + aviso honesto. null quando o campo é estático (verbo static).
+    private static final class FieldInputs {
+        int methodRadioId;
+        EditText method;
+        EditText nargs;
+        TextView note;
+    }
+
+    private FieldInputs buildFieldInputs(RadioGroup rg, DumpEntry entry) {
+        FieldInputs fi = new FieldInputs();
+
+        if (entry.isStatic) {
+            RadioButton rbStatic = new RadioButton(this);
+            rbStatic.setText("Fixar Valor do Campo Estático (static)");
+            rbStatic.setChecked(true);
+            rg.addView(rbStatic);
+            return fi;
+        }
+
+        RadioButton rbMethod = new RadioButton(this);
+        rbMethod.setText("Fixar o campo a cada chamada de um método (field)");
+        rbMethod.setId(View.generateViewId());
+        rbMethod.setChecked(true);
+        rg.addView(rbMethod);
+        fi.methodRadioId = rbMethod.getId();
+
+        RadioButton rbAuto = new RadioButton(this);
+        rbAuto.setText("Deixar o u_patch escolher o método (field sem método)");
+        rbAuto.setId(View.generateViewId());
+        rg.addView(rbAuto);
+
+        fi.method = new EditText(this);
+        fi.method.setTextColor(Color.parseColor("#F8FAFC"));
+        fi.method.setBackgroundResource(R.drawable.card_background);
+        fi.method.setPadding(8, 8, 8, 8);
+        fi.method.setHint("Método de instância da mesma classe (ex: Update)");
+        fi.method.setSingleLine(true);
+
+        fi.nargs = new EditText(this);
+        fi.nargs.setTextColor(Color.parseColor("#F8FAFC"));
+        fi.nargs.setBackgroundResource(R.drawable.card_background);
+        fi.nargs.setPadding(8, 8, 8, 8);
+        fi.nargs.setHint("nargs do método (0 = sem argumentos)");
+        fi.nargs.setText("0");
+        fi.nargs.setSingleLine(true);
+
+        fi.note = new TextView(this);
+        fi.note.setText("field " + entry.className + " " + entry.name + " <tipo> <valor> <Método> <nargs>\n"
+                + "O campo é reescrito a cada chamada do método. Atenção: se o jogo também decrementa/usa o campo "
+                + "direto (sem passar pelo método), o método patchado não segura o valor. "
+                + "O verbo field está no contrato C4 mas o u_patch (F4) ainda não o implementa: a regra é gerada e "
+                + "salva, e só passa a valer quando o u_patch suportar 'field'.");
+        fi.note.setTextColor(Color.parseColor("#94A3B8"));
+        fi.note.setTextSize(11f);
+        fi.note.setPadding(0, 8, 0, 0);
+
+        final EditText methodBox = fi.method;
+        final EditText nargsBox = fi.nargs;
+        rg.setOnCheckedChangeListener((group, checkedId) -> {
+            boolean withMethod = (checkedId == fi.methodRadioId);
+            methodBox.setVisibility(withMethod ? View.VISIBLE : View.GONE);
+            nargsBox.setVisibility(withMethod ? View.VISIBLE : View.GONE);
+        });
+        return fi;
     }
 
     private void updateRulesListUi() {

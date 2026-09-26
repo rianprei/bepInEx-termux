@@ -45,6 +45,22 @@ public final class PatchGenerator {
                     String type = parts[3];
                     String value = parts[4];
                     rules.add(PatchRule.makeStatic(targetClass, field, type, value));
+                } else if ("field".equals(action)) {
+                    // C4: field <Classe> <campo> <bool|int|float> <valor> [<Método> <nargs>]
+                    // 5 tokens = sem método (u_patch escolhe); 7 = método explícito.
+                    // 6 (ou 8+) é linha inválida e some, como o resto do parser.
+                    if (parts.length == 5) {
+                        rules.add(PatchRule.makeField(parts[1], parts[2], parts[3], parts[4]));
+                    } else if (parts.length == 7) {
+                        int nargs;
+                        try {
+                            nargs = Integer.parseInt(parts[6]);
+                        } catch (NumberFormatException e) {
+                            continue;
+                        }
+                        if (nargs < 0) continue;
+                        rules.add(PatchRule.makeField(parts[1], parts[2], parts[3], parts[4], parts[5], nargs));
+                    }
                 }
             }
         } catch (IOException ignored) {}
