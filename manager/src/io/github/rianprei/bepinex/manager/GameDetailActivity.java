@@ -209,9 +209,18 @@ public class GameDetailActivity extends Activity {
             Map<String, ModInfo> map = new LinkedHashMap<>();
 
             // 1. Encontra todos os arquivos de mod (.so, .patch, .off)
+            boolean gadgetSoFound = false;
             for (String f : files) {
                 if (f.equals("u_dump.so") || f.equals("u_patch.so")) {
                     // Arquivos do motor interno do sistema
+                    continue;
+                }
+                if (f.equals("frida-gadget.so") || f.equals("libfrida-gadget.so")) {
+                    // Garantia (c): o gadget como .so NAO entra na lista (nem
+                    // com toggle): o loader da dlopen nele sem config e o jogo
+                    // trava esperando cliente. O lugar certo e frida-gadget.bin
+                    // + frida-gadget.config, que o botao de instalar faz.
+                    gadgetSoFound = true;
                     continue;
                 }
 
@@ -275,11 +284,24 @@ public class GameDetailActivity extends Activity {
 
             List<ModInfo> result = new ArrayList<>(map.values());
 
+            final boolean temGadgetSo = gadgetSoFound;
             mMainHandler.post(() -> {
                 mMods.clear();
                 mMods.addAll(result);
                 mAdapter.notifyDataSetChanged();
                 mTvEmptyMods.setVisibility(mMods.isEmpty() ? View.VISIBLE : View.GONE);
+                if (temGadgetSo) {
+                    new AlertDialog.Builder(this)
+                            .setTitle("frida-gadget no lugar errado")
+                            .setMessage("Tem um frida-gadget.so nesta pasta. Ele NAO e um mod: o jogo "
+                                    + "vai travar esperando um PC conectar, porque o loader abre "
+                                    + "qualquer .so sem o frida-gadget.config.\n\n"
+                                    + "Apague o frida-gadget.so e toque em '+ Instalar mod' escolhendo "
+                                    + "o binario do gadget: ele volta como frida-gadget.bin (sem .so) "
+                                    + "com o frida-gadget.config, e seus .js rodam sem porta.")
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
             });
         }).start();
     }

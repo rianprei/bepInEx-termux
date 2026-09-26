@@ -38,6 +38,12 @@ public final class LooseModInstaller {
     private static final int MARKER_SCAN_LIMIT = 32 * 1024 * 1024;
     private static final int HEAD_SIZE = 64 * 1024;
 
+    // Mesmos nomes que o u_frida exige (mods/u_frida/jni/u_frida_config.h):
+    // <stem>.config ao lado do binario, e o binario SEM .so para o loader
+    // nao da dlopen nele sem config.
+    public static final String GADGET_BIN = "frida-gadget.bin";
+    public static final String GADGET_CONFIG = "frida-gadget.config";
+
     private LooseModInstaller() {}
 
     public static Result installFromFile(File src, String pkg, String engine) {
@@ -64,6 +70,15 @@ public final class LooseModInstaller {
             return new Result(r.success, r.message, det.kind, null);
         }
 
+        // Garantia (c): o frida-gadget NUNCA vira <id>.so. O loader da dlopen
+        // em qualquer .so da pasta, sem config, e o gadget sem config cai no
+        // modo padrao (listen) — abre porta e segura o jogo. Ele entra pelo
+        // caminho certo: frida-gadget.bin (SEM .so) + frida-gadget.config em
+        // modo script-directory apontando para a propria pasta de mods.
+        if (det.kind == ModContentDetector.Kind.FRIDA_GADGET) {
+            return installGadget(src, pkg);
+        }
+
         if (!det.installable) {
             return new Result(false, det.reason, det.kind, null);
         }
@@ -87,6 +102,47 @@ public final class LooseModInstaller {
         }
 
         return new Result(true, "Instalado: " + destName + "\n" + posInstallHint(det), det.kind, destName);
+    }
+
+    // Instala o gadget no lugar certo: frida-gadget.bin + frida-gadget.config
+    // na pasta de mods. NUNCA como .so (veja o comentario do chamador).
+    private static Result installGadget(File src, String pkg) {
+        if (!SuHelper.isRootAvailable()) {
+            return new Result(false, "Permissao root nao disponivel. Impossivel instalar o mod.",
+                    ModContentDetector.Kind.FRIDA_GADGET, null);
+        }
+        String dir = "/data/local/tmp/mods/" + pkg + "/";
+        if (!SuHelper.ensureModDir(pkg)) {
+            return new Result(false, "Nao deu para preparar " + dir + " (sem root?).",
+                    ModContentDetector.Kind.FRIDA_GADGET, null);
+        }
+
+        // 1. Remove um .so do gadget que alguém tenha copiado na mão: o
+        // loader abriria ele sozinho, sem config, e o jogo travaria.
+        SuHelper.deleteFile(dir + "frida-gadget.so");
+        SuHelper.deleteFile(dir + "libfrida-gadget.so");
+
+        // 2. Binário como .bin (sem .so) e config no modo script.
+        if (!SuHelper.installFile(src.getAbsolutePath(), dir + GADGET_BIN, "644")) {
+            return new Result(false, "A copia do frida-gadget falhou. Sem o contexto SELinux "
+                    + "bepinex_mod_file o jogo nao le o binario em modo Enforcing.",
+                    ModContentDetector.Kind.FRIDA_GADGET, null);
+        }
+        String config = "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"" + dir
+                + "\",\"on_change\":\"ignore\"}}";
+        if (!SuHelper.writeTextFile(dir + GADGET_CONFIG, config)) {
+            SuHelper.deleteFile(dir + GADGET_BIN);
+            return new Result(false, "Nao deu para escrever o " + GADGET_CONFIG
+                    + ". Sem ele o gadget roda no modo padrao (listen) e segura o jogo; "
+                    + "por isso o binario tambem foi removido.",
+                    ModContentDetector.Kind.FRIDA_GADGET, null);
+        }
+
+        return new Result(true, "frida-gadget instalado como " + GADGET_BIN + " + " + GADGET_CONFIG
+                + " na pasta do jogo.\n"
+                + "Agora e so largar o script .js nessa mesma pasta e abrir o jogo: o script roda "
+                + "so, sem PC e sem porta aberta. Se a pasta nao tiver nenhum .js, o u_frida nem "
+                + "carrega o gadget.", ModContentDetector.Kind.FRIDA_GADGET, GADGET_BIN);
     }
 
     // O que o usuario precisa saber DEPOIS de instalar (honesto: o que roda,

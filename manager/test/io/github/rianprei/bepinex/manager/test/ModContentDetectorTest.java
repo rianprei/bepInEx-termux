@@ -96,6 +96,15 @@ public class ModContentDetectorTest {
         // .so normal continua passando: a regra nao pode ser "bloqueia tudo".
         Detection normal = ModContentDetector.detect(elf("u_dump.so", 183), true);
         check("so nome com 'u_dump' nao e gadget", normal.kind == Kind.ELF_ARM64);
+
+        // Nome sem "frida"/"gadget" mas com id reservado tambem nao vira mod.
+        Detection curto = ModContentDetector.detect(elf("frida.so", 183), true);
+        check("id frida e reservado", curto.kind == Kind.FRIDA_GADGET && !curto.installable);
+        check("id frida nao ganha .so", curto.targetExt == null);
+
+        // Nada de deteccao pode devolver .so para o gadget, em hipotese nenhuma.
+        check("gadget nunca vira .so", !".so".equals(peloNome.targetExt)
+                && !".so".equals(pelaMarca.targetExt) && !".so".equals(curto.targetExt));
     }
 
     private static void testPatch() {

@@ -83,8 +83,12 @@ public final class ModContentDetector {
 
     // Componentes internos do bepInEx: esses nomes nao podem ser usados por
     // mod de terceiros (o Manager tambem esconde u_dump.so/u_patch.so na lista).
+    // frida-gadget entra aqui pela garantia (c): ele NUNCA pode virar <id>.so.
+    // Nomeado .so, o loader da dlopen sozinho, sem o frida-gadget.config, e o
+    // gadget sem config cai no modo padrao (listen): abre porta e segura o
+    // jogo esperando um PC conectar.
     private static final Set<String> RESERVED_IDS = new HashSet<>(Arrays.asList(
-            "u_patch", "u_dump", "u_frida", "u_manager", "bepinex"));
+            "u_patch", "u_dump", "u_frida", "u_manager", "bepinex", "frida-gadget"));
 
     // Assinaturas de script Frida (C7): o texto tem que falar de Frida.
     private static final String[] JS_MARKERS = {
@@ -216,6 +220,13 @@ public final class ModContentDetector {
                             + "hifen e underscore, ate 48 caracteres (ex: meu_mod.so).", null, null);
         }
         if (RESERVED_IDS.contains(id.toLowerCase(Locale.ROOT))) {
+            if ("frida-gadget".equals(id.toLowerCase(Locale.ROOT))) {
+                return new Detection(Kind.FRIDA_GADGET, label, false,
+                        "Isto e o frida-gadget. Ele nao pode ser instalado como mod: o loader abre "
+                                + "qualquer .so da pasta direto, sem o frida-gadget.config, e o gadget "
+                                + "sem config cai no modo padrao (listen), que abre uma porta e segura "
+                                + "o jogo esperando um PC conectar.", null, null);
+            }
             return new Detection(kind, label, false,
                     "'" + id + "' e nome de componente interno do bepInEx (u_patch/u_dump/u_frida). "
                             + "Renomeie o arquivo para nao sobrescrever o motor do sistema.", null, null);
