@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 NDK_BUILD=${NDK_BUILD:-"$HOME/Android/Sdk/ndk/23.2.8568313/ndk-build"}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+TIMEOUT_BUILD=${TIMEOUT_BUILD:-600}
+TIMEOUT_TEST=${TIMEOUT_TEST:-120}
 
 declare -a LABELS=()
 declare -a STATUSES=()
@@ -20,17 +23,22 @@ record() {
 
 run_step() {
     local label=$1
+    local limit=$2
+    shift
     shift
     local start end elapsed output status
     start=$(date +%s)
     output="$TMP/${#LABELS[@]}.log"
-    if "$@" >"$output" 2>&1; then
+    if timeout --foreground "$limit" "$@" >"$output" 2>&1; then
         status=0
     else
         status=$?
     fi
     end=$(date +%s)
     elapsed=$((end - start))
+    if [ "$status" -eq 124 ]; then
+        echo "timeout after ${limit}s: $label" >&2
+    fi
     if [ "$status" -ne 0 ]; then
         cat "$output" >&2
         record "$label" FAIL "$elapsed"
@@ -45,7 +53,10 @@ run_ndk() {
     local output="$TMP/ndk-${#LABELS[@]}.log"
     local start end elapsed status
     start=$(date +%s)
-    if (cd "$directory" && "$NDK_BUILD" -B -j4) >"$output" 2>&1; then
+    if timeout --foreground "$TIMEOUT_BUILD" bash -c '
+        cd "$1"
+        NDK_APP_CPPFLAGS="-Wall -Wextra" APP_CFLAGS="-Wall -Wextra" "$2" -B -j4
+    ' bash "$directory" "$NDK_BUILD" >"$output" 2>&1; then
         status=0
     else
         status=$?
@@ -69,82 +80,131 @@ run_ndk() {
 
 echo "verify_all: $ROOT"
 
-if [ ! -x "$NDK_BUILD" ]; then
+if [ -x "$NDK_BUILD" ]; then
+    run_ndk "ndk-build loader" "$ROOT"
+else
     record "ndk-build loader" FAIL 0
     echo "missing executable: $NDK_BUILD" >&2
-else
-    run_ndk "ndk-build loader" "$ROOT"
-    while IFS= read -r makefile; do
-        mod_dir=$(dirname "$(dirname "$makefile")")
-        run_ndk "ndk-build ${mod_dir#"$ROOT"/}" "$mod_dir"
-    done < <(find "$ROOT/mods" -mindepth 3 -maxdepth 3 -type f -path '*/jni/Android.mk' -print | sort)
+fi
+while IFS= read -r mod_dir; do
+    [ "$(basename "$mod_dir")" = common ] && continue
+    label="ndk-build ${mod_dir#"$ROOT"/}"
+    if [ ! -f "$mod_dir/jni/Android.mk" ]; then
+        record "$label (missing jni/Android.mk)" FAIL 0
+        echo "$label: missing jni/Android.mk" >&2
+    elif [ -x "$NDK_BUILD" ]; then
+        run_ndk "$label" "$mod_dir"
+    else
+        record "$label" FAIL 0
+        echo "missing executable: $NDK_BUILD" >&2
+    fi
+done < <(find "$ROOT/mods" -mindepth 1 -maxdepth 1 -type d -print | sort)
+
+while IFS= read -r makefile; do
+    mod_dir=$(dirname "$(dirname "$makefile")")
+    case "$mod_dir" in
+        "$ROOT"/mods/common|"$ROOT"/mods/*) ;;
+        *) record "unexpected Android.mk ${makefile#"$ROOT"/}" FAIL 0
+           echo "Android.mk is outside mods/<id>/jni/: $makefile" >&2 ;;
+    esac
+done < <(find "$ROOT/mods" -type f -name Android.mk -print | sort)
+
+while IFS= read -r test_file; do
+    test_name=${test_file#"$ROOT"/}
+    binary="$TMP/$(basename "$test_file" .cpp)"
+    if [[ "$test_file" == */selftest_harness.cpp ]]; then
+        run_step "host $test_name" "$TIMEOUT_TEST" bash -o pipefail -c '
+            cd "$1"
+            g++ -std=c++17 -Wall -Wextra -Werror -I../jni "$2" -o "$3"
+            "$3" | tee "$4"
+            test "${PIPESTATUS[0]}" -eq 0
+            test "$(tail -n 1 "$4")" = "== Resultado: TODOS PASSARAM (0 falhas) =="
+        ' bash "$ROOT/test" "$(basename "$test_file")" "$binary" "$TMP/$(basename "$test_file").out"
+    else
+        run_step "host $test_name" "$TIMEOUT_TEST" bash -c '
+            cd "$1"
+            g++ -std=c++17 -Wall -Wextra -Werror -I../jni "$2" -o "$3"
+            "$3"
+        ' bash "$ROOT/test" "$(basename "$test_file")" "$binary"
+    fi
+done < <(find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print | sort)
+if ! find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print -quit | grep -q .; then
+    record "host tests" FAIL 0
+    echo "no host tests discovered" >&2
 fi
 
-if [ -f "$ROOT/test/selftest_harness.cpp" ]; then
-    run_step "host selftest harness" bash -c '
-        cd "$1/test"
-        g++ -std=c++17 -Wall -Wextra -Werror -I../jni selftest_harness.cpp -o "$2/selftest_harness"
-        "$2/selftest_harness" | tee "$2/selftest.out"
-        grep -Fxq "== Resultado: TODOS PASSARAM (0 falhas) ==" "$2/selftest.out"
-    ' bash "$ROOT" "$TMP"
-else
-    record "host selftest harness" FAIL 0
-    echo "missing test/selftest_harness.cpp" >&2
-fi
-
-run_step "sepolicy grammar" bash -c '
+run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
 ' bash "$ROOT"
 
 while IFS= read -r script; do
-    run_step "sh -n ${script#"$ROOT"/}" sh -n "$script"
+    run_step "sh -n ${script#"$ROOT"/}" "$TIMEOUT_TEST" sh -n "$script"
 done < <(find "$ROOT/module" -maxdepth 1 -type f -name '*.sh' -print | sort)
 
 while IFS= read -r script; do
-    run_step "bash -n ${script#"$ROOT"/}" bash -n "$script"
+    run_step "bash -n ${script#"$ROOT"/}" "$TIMEOUT_TEST" bash -n "$script"
 done < <(find "$ROOT/tools" -maxdepth 1 -type f -name '*.sh' -print | sort)
 
-if command -v shellcheck >/dev/null 2>&1; then
+if shellcheck_bin=$("$ROOT/tools/fetch_shellcheck.sh"); then
     while IFS= read -r script; do
-        run_step "shellcheck ${script#"$ROOT"/}" shellcheck "$script"
+        label="shellcheck ${script#"$ROOT"/}"
+        start=$(date +%s)
+        shellcheck_output="$TMP/shellcheck-${#LABELS[@]}.log"
+        if timeout --foreground "$TIMEOUT_TEST" "$shellcheck_bin" "$script" >"$shellcheck_output" 2>&1; then
+            record "$label" PASS "$(( $(date +%s) - start ))"
+        else
+            cat "$shellcheck_output" >&2
+            echo "AVISO: $label encontrou achados; scripts de outros agentes nao foram alterados" >&2
+            record "$label (findings reported)" FAIL "$(( $(date +%s) - start ))"
+        fi
     done < <(find "$ROOT/module" "$ROOT/tools" -maxdepth 1 -type f -name '*.sh' -print | sort)
 else
-    echo "AVISO: shellcheck não instalado; etapa ignorada"
+    record "shellcheck bootstrap" FAIL 0
+    echo "ShellCheck could not be downloaded or verified" >&2
 fi
 
 if [ -f "$ROOT/manager/build.sh" ]; then
-    manager_command=
-    if grep -Eq 'TestRunner|test' "$ROOT/manager/build.sh"; then
-        manager_command="$ROOT/manager/build.sh test"
-    elif [ -f "$ROOT/manager/TestRunner" ]; then
-        manager_command="$ROOT/manager/TestRunner"
-    fi
-    if [ -n "$manager_command" ]; then
-        run_step "manager JVM tests" bash -c "$manager_command"
+    if [ -x "$ROOT/manager/run_tests.sh" ]; then
+        run_step "manager JVM tests" "$TIMEOUT_TEST" bash -c '
+            cd "$1/manager"
+            ./build.sh
+            ./run_tests.sh
+        ' bash "$ROOT"
     else
-        record "manager JVM tests" FAIL 0
-        echo "manager/build.sh exists but no test command was discoverable" >&2
+        record "manager JVM tests (missing run_tests.sh)" FAIL 0
+        echo "manager/build.sh exists but manager/run_tests.sh is missing" >&2
     fi
 else
+    record "manager JVM tests (not present)" PASS 0
     echo "AVISO: manager/build.sh ausente; testes JVM ignorados"
 fi
 
 if [ -d "$ROOT/mods/u_patch" ]; then
-    if [ -f "$ROOT/mods/u_patch/test/u_patch_arm64.h" ] ||
-        find "$ROOT/mods/u_patch" -type f -iname '*arm64*' -print -quit | grep -q .; then
-        run_step "u_patch arm64 encoding" bash -c '
-            test -x "$1" || exit 1
-            makefile=$(find "$2/mods/u_patch" -type f -name Android.mk -print -quit)
-            test -n "$makefile"
-            (cd "$(dirname "$(dirname "$makefile")")" && "$1" -B -j4)
-        ' bash "$NDK_BUILD" "$ROOT"
-    else
-        record "u_patch arm64 encoding" FAIL 0
-        echo "u_patch exists but no arm64 harness was discoverable" >&2
-    fi
+    run_step "u_patch encoding harness" "$TIMEOUT_TEST" bash -c '
+        cd "$1"
+        found=0
+        while IFS= read -r test_file; do
+            found=1
+            g++ -std=c++17 -Wall -Wextra -Werror "$test_file" -o "$2/$(basename "$test_file" .cpp)"
+            "$2/$(basename "$test_file" .cpp)"
+        done < <(find mods/u_patch -type f \( -name "*harness*.cpp" -o -name "*test*.cpp" \) -print)
+        test "$found" -eq 1
+    ' bash "$ROOT" "$TMP"
 else
+    record "u_patch encoding harness (not present)" PASS 0
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
+fi
+
+if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/main.cpp"; then
+    run_step "VERSION matches loader" "$TIMEOUT_TEST" bash -c '
+        version=$(awk "{print \$1}" "$1/VERSION")
+        loader=$(sed -n "s/^#define BC_LOADER_VERSION \"\\(.*\\)\"/\\1/p" "$1/jni/main.cpp")
+        test "$version" = "$loader"
+    ' bash "$ROOT"
+else
+    record "VERSION matches loader" FAIL 0
+    echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
 printf '\n| Etapa | Resultado | Tempo (s) |\n|---|---:|---:|\n'
