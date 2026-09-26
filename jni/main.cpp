@@ -42,6 +42,8 @@
 #include "bc_hook_logic.h" // dispatcher Prefix/Postfix + lógica unpatch/repatch (single source of truth, testado no harness)
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
 #include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
+#include "bc_signal.h"    // sinais companion<->poll SEM __system_property_set (Enforcing)
+#include "bc_hook_overhead.h"  // média de overhead pro companion (contadores moram aqui)
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
@@ -75,6 +77,29 @@ static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro co
 // Métrica de overhead do dispatcher (clock_gettime MONOTONIC)
 static std::atomic<uint64_t> g_hook_overhead_ns{0};      // nanos totais no dispatcher
 static std::atomic<uint64_t> g_hook_overhead_count{0};   // nº de medições
+// Sinais companion -> poll (in-process, ver bc_signal.h). Definitions aqui
+// porque main.cpp é quem consome; o companion só publica.
+std::atomic<unsigned> g_sig_reload_config{0};
+std::atomic<unsigned> g_sig_reload_mods{0};
+std::atomic<unsigned> g_sig_patches_req{0};
+bc_named_req g_sig_unpatch;
+bc_named_req g_sig_repatch;
+// Último valor visto de cada signal de property (canal root externo, só
+// leitura): com bc_seq_take o app age uma vez por mudança de valor, em vez de
+// reagir a um flag que ele não tem permissão de limpar.
+static char g_seq_reload_config[32] = {};
+static char g_seq_unpatch[32] = {};
+static char g_seq_repatch[32] = {};
+static char g_seq_reload_mods[32] = {};
+static char g_seq_patches_req[32] = {};
+
+// os contadores são static deste TU; o accessor é a porta que o companion usa
+// (mesmo processo, mesmo .so — ver bc_hook_overhead.h).
+double bc_hook_overhead_avg_us() {
+    uint64_t total_ns = g_hook_overhead_ns.load(std::memory_order_relaxed);
+    uint64_t count = g_hook_overhead_count.load(std::memory_order_relaxed);
+    return count > 0 ? (double)total_ns / (double)count / 1000.0 : 0.0;
+}
 // Forward decl: publish_log usado por verify_build_id (linha ~166), que vem
 // antes da definição real (perto de publish_event, mais abaixo no arquivo).
 static void publish_log(const char *level, const char *fmt, ...);
@@ -1442,19 +1467,24 @@ static void *event_thread(void *) {
         unsigned n = PLANS[i]->hits.load(std::memory_order_relaxed);
         if (n > 0) LOGI("%s: %u interceptações", PLANS[i]->shortname, n);
     }
-    // Hot-reload de config: polling de system property (companion seta
-    // persist.bc_poc.reload_config=1 via comando 'reload_config'). Se
-    // detectado, recarrega bc_mods.conf e zera a property. Polling a cada
-    // 1s — custo aceitável fora do hot path de hooks.
+    // Hot-reload de config: dois canais de sinal, nenhum deles escreve property
+    // (achado Enforcing: app não tem permission_set; ver bc_signal.h):
+    //   1. companion in-process: g_sig_reload_config, consumido uma vez;
+    //   2. root externo (su/Manager): property persist.bc_poc.reload_config com
+    //      uma SEQ, lida aqui — o app age quando o VALOR muda, não quando um
+    //      flag está ligado (não existe mais como o app limpar o flag).
     for (;;) {
         sleep(1);
         char buf[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("persist.bc_poc.reload_config", buf) > 0 &&
-            strcmp(buf, "1") == 0) {
+        unsigned inproc = g_sig_reload_config.exchange(0, std::memory_order_acq_rel);
+        if (inproc) snprintf(buf, sizeof(buf), "c%u", inproc);
+        else __system_property_get("persist.bc_poc.reload_config", buf);  // só leitura
+        if (bc_seq_take(buf, g_seq_reload_config, sizeof(g_seq_reload_config))) {
             struct bc_mod_entry before[8];
             memcpy(before, g_cfg, sizeof(before));
             load_mods_config();
-            __system_property_set("persist.bc_poc.reload_config", "0");
+            // (sem reset: o app não pode escrever property — o companion é quem
+            //  incrementa a seq do canal externo, se for o caso.)
             // Guard de no-op (BepInEx SettingChanged só dispara em delta real):
             // compara antes/depois, só loga o que mudou de fato.
             int changed = 0;
@@ -1487,58 +1517,50 @@ static void *event_thread(void *) {
                 publish_log("Info", "config recarregado (reload_config, %d mudança(s))", changed);
             }
         }
-        // unpatch_mod <nome>: companion sinaliza via property (não tem acesso
-        // à memória do game process pra chamar DobbyDestroy direto), game
-        // process poll aqui e executa o unpatch real.
+        // unpatch_mod <nome>: companion sinaliza (in-process) ou root escreve
+        // a property (só leitura). game process executa o unpatch real.
         char unbuf[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("persist.bc_poc.unpatch_target", unbuf) > 0 &&
-            unbuf[0] != '\0') {
+        unsigned un_seq = 0;
+        if (g_sig_unpatch.take(unbuf, sizeof(unbuf), &un_seq) ||
+            (__system_property_get("persist.bc_poc.unpatch_target", unbuf) > 0 &&
+             bc_seq_take(unbuf, g_seq_unpatch, sizeof(g_seq_unpatch)))) {
             LOGI("unpatch_mod signal detectado: %s", unbuf);
             unpatch_hook(unbuf);
-            __system_property_set("persist.bc_poc.unpatch_target", "");
         }
-        // repatch_mod <nome>: mesmo padrão cross-process — companion sinaliza
-        // via property, game process poll e re-instala SÓ o hook nomeado.
+        // repatch_mod <nome>: mesmo padrão — re-instala SÓ o hook nomeado.
         char rebuf[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("persist.bc_poc.repatch_target", rebuf) > 0 &&
-            rebuf[0] != '\0') {
+        unsigned re_seq = 0;
+        if (g_sig_repatch.take(rebuf, sizeof(rebuf), &re_seq) ||
+            (__system_property_get("persist.bc_poc.repatch_target", rebuf) > 0 &&
+             bc_seq_take(rebuf, g_seq_repatch, sizeof(g_seq_repatch)))) {
             LOGI("repatch_mod signal detectado: %s", rebuf);
             repatch_hook(rebuf);
-            __system_property_set("persist.bc_poc.repatch_target", "");
         }
-        // reload_mods: companion sinaliza que um push_mod escreveu (ou removeu)
-        // .so em BC_MODS_DIR. O game process re-executa o MESMO
-        // load_dynamic_mods() (bc_loader.h + bc_mod_graph.h, fase de
-        // descoberta→grafo→carga) — NÃO existe um caminho de load separado pro
-        // push; o push só grava o arquivo, o loader canônico enxerga a mudança
-        // assim que roda de novo. Cross-process: companion seta a property,
-        // este processo faz o poll (mesmo padrão do unpatch/repatch/reload).
+        // reload_mods: re-executa o MESMO load_dynamic_mods() (bc_loader.h +
+        // bc_mod_graph.h, fase descoberta→grafo→carga) — não existe caminho de
+        // load separado pro push; o push só grava o arquivo.
         char rmbuf[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("persist.bc_poc.reload_mods", rmbuf) > 0 &&
-            strcmp(rmbuf, "1") == 0) {
+        unsigned rm_inproc = g_sig_reload_mods.exchange(0, std::memory_order_acq_rel);
+        if (rm_inproc) snprintf(rmbuf, sizeof(rmbuf), "c%u", rm_inproc);
+        else __system_property_get("persist.bc_poc.reload_mods", rmbuf);
+        if (bc_seq_take(rmbuf, g_seq_reload_mods, sizeof(g_seq_reload_mods))) {
             LOGI("reload_mods signal detectado — re-executando load_dynamic_mods()");
             load_dynamic_mods();
-            __system_property_set("persist.bc_poc.reload_mods", "0");
         }
-        // Exportar overhead do dispatcher via property (companion lê pro comando hook_overhead)
-        uint64_t total_ns = g_hook_overhead_ns.load(std::memory_order_relaxed);
-        uint64_t count = g_hook_overhead_count.load(std::memory_order_relaxed);
-        char overhead_buf[64];
-        if (count > 0) {
-            double avg_us = (double)total_ns / count / 1000.0;
-            snprintf(overhead_buf, sizeof(overhead_buf), "%.2f", avg_us);
-        } else {
-            snprintf(overhead_buf, sizeof(overhead_buf), "0");
-        }
-        __system_property_set("persist.bc_poc.hook_overhead_us", overhead_buf);
-        // list_patches: companion pediu snapshot do estado dos hooks
-        // (persist.bc_poc.patches_req = seq do pedido). Responde escrevendo
-        // o snapshot com a MESMA seq — o companion só serve arquivo com a
-        // seq do pedido atual (nunca snapshot órfão de boot anterior).
+        // hook_overhead: mais property. O companion roda no mesmo processo, então
+        // ele lê os contadores direto (bc_hook_overhead_avg_us abaixo) em vez de
+        // o jogo publicar num property que ele não tem como escrever.
+        // list_patches: pedido chega in-process (g_sig_patches_req, valor = seq)
+        // ou por property (só leitura); o snapshot vai pro arquivo com a MESMA
+        // seq, e o companion só serve conteúdo com a seq do pedido atual.
         char pqbuf[PROP_VALUE_MAX] = {0};
-        if (__system_property_get(BC_PQ_PROP, pqbuf) > 0 && pqbuf[0] != '\0') {
+        unsigned pq_seq = g_sig_patches_req.exchange(0, std::memory_order_acq_rel);
+        if (pq_seq) {
+            snprintf(pqbuf, sizeof(pqbuf), "c%u", pq_seq);
+            write_patches_snapshot(pq_seq);
+        } else if (__system_property_get(BC_PQ_PROP, pqbuf) > 0 &&
+                   bc_seq_take(pqbuf, g_seq_patches_req, sizeof(g_seq_patches_req))) {
             write_patches_snapshot((unsigned)strtoul(pqbuf, nullptr, 10));
-            __system_property_set(BC_PQ_PROP, "");
         }
     }
     return nullptr;

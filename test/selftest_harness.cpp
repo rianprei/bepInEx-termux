@@ -50,6 +50,7 @@
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
+#include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
@@ -1623,6 +1624,65 @@ int main() {
             check("20 níveis: começa em R.N e termina em /N", strncmp(big, "R.N", 3) == 0 &&
                   strlen(big) == (size_t)(2 + 20 * 2 - 1) &&
                   strcmp(big + strlen(big) - 2, "/N") == 0);
+        }
+    }
+
+    // Caso 59: bc_seq_take / bc_named_req — o app não escreve property em
+    // Enforcing, então o poll age só quando o VALOR muda (achado no device).
+    printf("\n[Caso 59] bc_seq_take/bc_named_req: age só quando muda (Enforcing)\n");
+    {
+        char seen[16] = {};
+        check("vazio não é pedido", !bc_seq_take("", seen, sizeof(seen)));
+        check("null não é pedido", !bc_seq_take(nullptr, seen, sizeof(seen)));
+        check("primeiro valor conta como novo", bc_seq_take("1", seen, sizeof(seen)));
+        check("mesmo valor não repete", !bc_seq_take("1", seen, sizeof(seen)));
+        check("valor diferente conta", bc_seq_take("2", seen, sizeof(seen)));
+        check("voltou pro valor antigo: é novo de novo (seq do companion)",
+              bc_seq_take("1", seen, sizeof(seen)));
+        check("vazio depois de valor não limpa o visto", !bc_seq_take("", seen, sizeof(seen)) &&
+              bc_seq_take("2", seen, sizeof(seen)));
+        check("nulo em last_seen não crasha", !bc_seq_take("9", nullptr, 8));
+        {
+            char tiny[4] = {};
+            check("buffer pequeno trunca com NUL, sem estourar",
+                  bc_seq_take("abcdef", tiny, sizeof(tiny)) && strlen(tiny) == 3);
+        }
+        {
+            // poll repetido com o MESMO valor de property: o reload_config só
+            // pode rodar uma vez (era o bug: flag de 1 que o app não limpa).
+            char prop[32] = {};
+            char last[32] = {};
+            int reloads = 0;
+            const char *poll_values[] = {"1", "1", "1", "1", "1", "1"};
+            for (size_t i = 0; i < sizeof(poll_values) / sizeof(poll_values[0]); i++) {
+                snprintf(prop, sizeof(prop), "%s", poll_values[i]);
+                if (bc_seq_take(prop, last, sizeof(last))) reloads++;
+            }
+            check("6 polls com a property parada => 1 reload só", reloads == 1);
+            // companion in-process: contador sempre novo => age toda vez
+            char last2[32] = {};
+            int acts = 0;
+            for (unsigned inproc = 1; inproc <= 3; inproc++) {
+                char v[32];
+                snprintf(v, sizeof(v), "c%u", inproc);
+                if (bc_seq_take(v, last2, sizeof(last2))) acts++;
+            }
+            check("3 seqs do companion => 3 ações", acts == 3);
+        }
+        {
+            bc_named_req r;
+            char out[64] = {};
+            unsigned last = 0;
+            check("sem pedido não devolve nome", !r.take(out, sizeof(out), &last));
+            r.put("sa2ammo");
+            check("pedido com nome sai uma vez", r.take(out, sizeof(out), &last) &&
+                  strcmp(out, "sa2ammo") == 0);
+            check("mesmo pedido não repete", !r.take(out, sizeof(out), &last));
+            r.put("sa2content");
+            check("novo nome passa", r.take(out, sizeof(out), &last) &&
+                  strcmp(out, "sa2content") == 0);
+            r.put(nullptr);
+            check("put nulo não é pedido", !r.take(out, sizeof(out), &last));
         }
     }
 
