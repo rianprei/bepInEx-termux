@@ -1575,7 +1575,7 @@ int main() {
         }).result == BC_ELF_FILE_NO_SYMBOL);
     }
 
-    printf("\n[Caso 54] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
+    printf("\n[Caso 62] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
     {
         const char *buf = "com.foo.bar\n# comentario\n\ncom.baz.qux \n  com.indentado\n";
         check("pacote exato na lista é achado", bc_generic_allowlist_contains_buf(buf, "com.foo.bar"));

@@ -137,6 +137,16 @@ if [ ! -f "$ROOT/test/selftest_harness.cpp" ]; then
     echo "selftest_harness.cpp ausente: teste central do loader" >&2
 fi
 
+run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
+    cd "$1"
+    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- test/selftest_harness.cpp |
+        grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
+    if [ -n "$duplicates" ]; then
+        printf "IDs duplicados: %s\n" "$duplicates" >&2
+        exit 1
+    fi
+' bash "$ROOT"
+
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
