@@ -51,6 +51,7 @@
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
+#include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
 #include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
@@ -1694,6 +1695,53 @@ int main() {
                 check("2 requests, 2 seqs => 2 unpatch (repete nome com seq nova)",
                       fired == 2);
             }
+        }
+    }
+
+    // Caso 60: bc_crashguard_blocks/next_count (F1d, G1) — o portão que impede
+    // crash em loop de mod.
+    printf("\n[Caso 60] bc_crashguard_blocks/next_count: 2 mortes em <60s (F1d)\n");
+    {
+        const long long T0 = 1000000;
+        check("sem registro (0) não bloqueia", !bc_crashguard_blocks(0, 0, T0));
+        check("1 morte não bloqueia", !bc_crashguard_blocks(1, T0, T0 + 10));
+        check("2 mortes em 5s bloqueia", bc_crashguard_blocks(2, T0, T0 + 5));
+        check("2 mortes em 59s bloqueia", bc_crashguard_blocks(2, T0, T0 + 59));
+        check("2 mortes em 60s NÃO bloqueia (janela fechou)", !bc_crashguard_blocks(2, T0, T0 + 60));
+        check("3 mortes em 30s bloqueia", bc_crashguard_blocks(3, T0, T0 + 30));
+        // timestamp no futuro (relógio andou pra trás) não abre a janela
+        check("ts no futuro não abre a janela", bc_crashguard_blocks(2, T0 + 500, T0));
+        // next_count: como o contador evolui a cada abertura
+        check("sem registro => 1", bc_crashguard_next_count(0, 0, T0) == 1);
+        check("registro expirado => 1", bc_crashguard_next_count(2, T0, T0 + 61) == 1);
+        check("registro recente => incrementa", bc_crashguard_next_count(1, T0, T0 + 3) == 2);
+        check("2 recentes => 3 (mas já bloqueou antes de chegar aqui)",
+              bc_crashguard_next_count(2, T0, T0 + 3) == 3);
+        // a sequência que o device tem que ver: 1a abre (1), morre, 2a abre
+        // (2, e morre), 3a NÃO carrega mod nenhum
+        {
+            long long now = T0;
+            int count = 0, ts = 0;
+            bool blocked[3];
+            for (int i = 0; i < 3; i++) {
+                blocked[i] = bc_crashguard_blocks(count, ts, now);
+                if (!blocked[i]) {
+                    count = bc_crashguard_next_count(count, ts, now);
+                    ts = now;
+                }
+                now += 2;  // o jogo morre 2s depois de carregar (mod t_crash)
+            }
+            check("abertura 1: carrega", !blocked[0]);
+            check("abertura 2: carrega (1 morte ainda não bloqueia)", !blocked[1]);
+            check("abertura 3: NÃO carrega (2 mortes em 4s)", blocked[2]);
+        }
+        // sobreviveu 60s => contador zerado e a 4a volta a carregar
+        {
+            long long now = T0 + 200;
+            int count = 0, ts = 0;
+            bool blocked = bc_crashguard_blocks(count, ts, now);
+            count = bc_crashguard_next_count(count, ts, now);
+            check("após 200s sem morte: volta a carregar", !blocked && count == 1);
         }
     }
 

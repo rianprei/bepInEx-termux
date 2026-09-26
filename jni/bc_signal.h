@@ -38,7 +38,8 @@
 // Respostas do jogo para o companion (contrato C1). O caminho BC tem pkg fixo
 // (o caminho BC só roda no Battle Cats); o companion e o jogo concordam porque
 // a constante é esta.
-#define BC_STATE_DIR "/data/data/jp.co.ponos.battlecatsen/files/bepinex"
+#define BC_BC_PKG "jp.co.ponos.battlecatsen"
+#define BC_STATE_DIR "/data/data/" BC_BC_PKG "/files/bepinex"
 #define BC_OVERHEAD_FILE BC_STATE_DIR "/bc_hook_overhead_us"
 #define BC_PATCHES_FILE BC_STATE_DIR "/bc_patches.txt"
 

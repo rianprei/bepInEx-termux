@@ -43,6 +43,7 @@
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
 #include "bc_loader.h"    // loader de mods .so (discovery + dlopen + isolamento)
 #include "bc_signal.h"    // sinais companion<->poll SEM __system_property_set (Enforcing)
+#include "bc_crashguard.h"  // F1d: 2 mortes em <60s => não carrega mods (lógica pura)
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
@@ -88,17 +89,11 @@ static char g_seq_patches_req[32] = {};
 static char g_last_overhead[64] = {};
 
 // mkdir -p do diretório C1 do jogo: única coisa que o app domain escreve com
-// folga (é o diretório dele próprio). Usado pelas respostas ao companion.
-static void bc_state_dir_ensure() {
-    char dir[320];
-    snprintf(dir, sizeof(dir), "%s", BC_STATE_DIR);
-    char *slash = strrchr(dir, '/');
-    if (slash == nullptr) return;
-    *slash = '\0';
-    for (char *p = dir + 1; *p; p++)
-        if (*p == '/') { *p = '\0'; mkdir(dir, 0755); *p = '/'; }
-    mkdir(dir, 0755);
-}
+// folga (é o diretório dele próprio). Usado pelas respostas ao companion e pelo
+// crashguard. Definição mais abaixo, junto das outras funções de state dir.
+static void state_dir_ensure(const char *pkg);
+static bool crashguard_gate(const char *pkg, const char *tag);  // F1d, definido com o I/O
+static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...);
 // Forward decl: publish_log usado por verify_build_id (linha ~166), que vem
 // antes da definição real (perto de publish_event, mais abaixo no arquivo).
 static void publish_log(const char *level, const char *fmt, ...);
@@ -1254,6 +1249,9 @@ static void load_dynamic_mods() {
     bool opened[BC_MOD_GRAPH_MAX_MODS] = {};
     int failed = 0;
 
+    // F1d: mesmo portão no caminho BC, antes de dlopen de qualquer mod.
+    if (crashguard_gate(BC_BC_PKG, "crashguard")) return;
+
     for (int i = 0; i < n_names; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
@@ -1553,7 +1551,7 @@ static void *event_thread(void *) {
                      count > 0 ? (double)total_ns / (double)count / 1000.0 : 0.0);
             if (strcmp(overhead_buf, g_last_overhead) != 0) {
                 snprintf(g_last_overhead, sizeof(g_last_overhead), "%s", overhead_buf);
-                bc_state_dir_ensure();
+                state_dir_ensure(BC_BC_PKG);
                 FILE *of = fopen(BC_OVERHEAD_FILE, "w");
                 if (of) {
                     fputs(overhead_buf, of);
@@ -1612,6 +1610,91 @@ static bc_path_kind g_path_kind = BC_PATH_NONE;
 // Só pode ser chamada DEPOIS do specialize (thread de carga): antes disso o
 // processo ainda não tem o uid do app e /data/data/<pkg> não é acessível.
 #define PKG_LOG_CAP (256 * 1024)
+// --- F1d: crashguard ----------------------------------------------------------
+// State dir do jogo (contrato C1). Por pkg, porque o caminho BC tem pkg fixo e
+// o genérico tem o do jogo atual.
+static void state_dir_pkg(const char *pkg, char *out, size_t outsz) {
+    snprintf(out, outsz, "/data/data/%s/files/bepinex", pkg);
+}
+
+static void state_dir_ensure(const char *pkg) {
+    char dir[320];
+    state_dir_pkg(pkg, dir, sizeof(dir));
+    char *slash = strrchr(dir, '/');
+    if (slash == nullptr) return;
+    *slash = '\0';
+    for (char *p = dir + 1; *p; p++)
+        if (*p == '/') { *p = '\0'; mkdir(dir, 0755); *p = '/'; }
+    mkdir(dir, 0755);
+}
+
+// Lê "<count> <ts>"; ausente/corrompido = 0 (fail-safe: não bloqueia).
+static void crashguard_read(const char *pkg, int *count, long long *ts) {
+    char path[384];
+    snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
+    *count = 0;
+    *ts = 0;
+    FILE *f = fopen(path, "r");
+    if (f == nullptr) return;
+    int c = 0;
+    long long t = 0;
+    int got = fscanf(f, "%d %lld", &c, &t);
+    fclose(f);
+    if (got == 2 && c >= 0 && t > 0) { *count = c; *ts = t; }
+}
+
+static void crashguard_write(const char *pkg, int count, long long ts) {
+    state_dir_ensure(pkg);
+    char path[384];
+    snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
+    FILE *f = fopen(path, "w");
+    if (f == nullptr) return;
+    fprintf(f, "%d %lld\n", count, ts);
+    fclose(f);
+}
+
+// Zera o contador depois de sobreviver à janela: o jogo ficou de pé, a morte
+// anterior (ou a atual) não tem relação com mod.
+struct crashguard_clear_arg { char pkg[128]; };
+static void *crashguard_clear_thread(void *arg) {
+    crashguard_clear_arg *a = (crashguard_clear_arg *)arg;
+    sleep(BC_CRASHGUARD_WINDOW_S);
+    crashguard_write(a->pkg, 0, (long long)time(nullptr));
+    free(a);
+    return nullptr;
+}
+
+// Chamado ANTES de qualquer dlopen. Bate o contador e devolve true quando os
+// mods deste jogo devem ficar de fora (F1d).
+static bool crashguard_gate(const char *pkg, const char *tag) {
+    long long now = (long long)time(nullptr);
+    int count = 0;
+    long long ts = 0;
+    crashguard_read(pkg, &count, &ts);
+    if (bc_crashguard_blocks(count, ts, now)) {
+        char mark[384];
+        state_dir_ensure(pkg);
+        snprintf(mark, sizeof(mark), "/data/data/%s/files/bepinex/disabled_by_crashguard", pkg);
+        FILE *m = fopen(mark, "w");
+        if (m != nullptr) fclose(m);
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager");
+        LOGE("%s: %s", pkg, msg);
+        pkg_log_line(pkg, tag, "%s", msg);
+        return true;
+    }
+    crashguard_write(pkg, bc_crashguard_next_count(count, ts, now), now);
+    crashguard_clear_arg *a = (crashguard_clear_arg *)malloc(sizeof(*a));
+    if (a != nullptr) {
+        snprintf(a->pkg, sizeof(a->pkg), "%s", pkg);
+        pthread_t t;
+        if (pthread_create(&t, nullptr, crashguard_clear_thread, a) == 0) pthread_detach(t);
+        else free(a);
+    }
+    return false;
+}
+
 static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...) {
     // files/ pode não existir ainda (app que nunca chamou getFilesDir): sem ele
     // o mkdir do filho falha com ENOENT e o log some inteiro. 0771 é a
@@ -1667,6 +1750,9 @@ static int load_generic_pkg_mods(const char *pkg) {
     // (o dlopen roda no constructor, antes do specialize virar app). A env
     // precisa estar posta ANTES do loop: o constructor do mod lê no dlopen.
     setenv("BEPINEX_PKG", pkg, 1);
+    // F1d: antes de qualquer dlopen. 2 mortes seguidas < 60s => nenhum mod
+    // deste jogo entra (e o aviso vai pro log C1).
+    if (crashguard_gate(pkg, "crashguard")) return 0;
     int loaded = 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
