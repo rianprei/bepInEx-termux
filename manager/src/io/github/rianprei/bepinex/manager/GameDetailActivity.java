@@ -147,12 +147,17 @@ public class GameDetailActivity extends Activity {
                         Toast.makeText(this, R.string.crashguard_reactivated, Toast.LENGTH_LONG).show();
                         loadMods();
                     } else {
+                        // A PRIMEIRA chamada ja falhou: mostrar o resultado
+                        // dela, nao rodar o comando root de novo dentro da
+                        // mensagem de erro (isso reescrevia o contador do
+                        // crashguard sem o usuario pedir, e o texto ficava
+                        // mentindo sobre o que aconteceu).
                         new AlertDialog.Builder(this)
                                 .setTitle("Nao deu para reativar")
                                 .setMessage("O comando root falhou. Se o Magisk/KernelSU nao esta "
                                         + "concedendo root ao Manager, o aviso volta a aparecer. "
-                                        + "Detalhe: " + (SuHelper.reactivateMods(mPkg)
-                                        ? "" : "su negado ou pasta do jogo inacessivel."))
+                                        + "O aviso do crashguard continua valendo: abra o jogo de novo "
+                                        + "depois de conceder root ao Manager.")
                                 .setPositiveButton("OK", null)
                                 .show();
                     }

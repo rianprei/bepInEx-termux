@@ -28,6 +28,7 @@ public final class ModContentDetector {
         BMOD,             // zip com manifest.json (C2)
         ZIP_PLAIN,        // zip sem manifest.json
         ELF_ARM64,        // ELF E_AARCH64 (183): mod nativo Android arm64
+        ELF_MALFORMED,    // ELF arm64 com cabecalho/PT_LOAD incoerente
         ELF_OTHER_ARCH,   // ELF de outra arquitetura
         FRIDA_GADGET,     // frida-gadget: nunca entra como .so de mod
         PATCH,            // texto com regra do contrato C4
@@ -70,14 +71,21 @@ public final class ModContentDetector {
         public final String text;          // conteudo como texto, null se binario
         public final boolean zipHasManifest;
         public final boolean fridaMarker;  // assinatura do gadget no conteudo
+        public final long length;          // tamanho REAL do arquivo em bytes
 
         public Sample(String fileName, byte[] head, String text,
                       boolean zipHasManifest, boolean fridaMarker) {
+            this(fileName, head, text, zipHasManifest, fridaMarker, (head != null) ? head.length : 0L);
+        }
+
+        public Sample(String fileName, byte[] head, String text,
+                      boolean zipHasManifest, boolean fridaMarker, long length) {
             this.fileName = (fileName != null) ? fileName : "";
             this.head = (head != null) ? head : new byte[0];
             this.text = text;
             this.zipHasManifest = zipHasManifest;
             this.fridaMarker = fridaMarker;
+            this.length = length;
         }
     }
 
@@ -134,6 +142,18 @@ public final class ModContentDetector {
             }
             int machine = elfMachine(h);
             if (machine == 183) { // E_AARCH64: o unico que o loader da dlopen no Android
+                // Antes de virar <id>.so, o ELF64 tem que ser um .so de verdade:
+                // ET_DYN, cabecalho e tabela de programas coerentes com o
+                // tamanho REAL do arquivo, todo PT_LOAD dentro do arquivo.
+                // Truncado (download cortado) ou adulterado e recusado com o
+                // motivo, em vez de o jogo fechar ao tentar abrir.
+                ElfCheck elf = validateElf64Arm64(h, s.length);
+                if (!elf.ok) {
+                    return new Detection(Kind.ELF_MALFORMED, "ELF arm64 invalido", false,
+                            "O arquivo e arm64, mas esta corrompido ou adulterado: " + elf.reason
+                                    + ". O Manager nao instala .so pela metade — o jogo tentaria abrir "
+                                    + "isso e fecharia junto. Baixe o mod de novo.", null, null);
+                }
                 return installAs(s, ".so", Kind.ELF_ARM64, "mod nativo .so (arm64)");
             }
             return new Detection(Kind.ELF_OTHER_ARCH, "binario ELF de outra arquitetura", false,
@@ -257,6 +277,116 @@ public final class ModContentDetector {
         while (id.endsWith("-")) id = id.substring(0, id.length() - 1);
         if (id.isEmpty() || id.length() > 48) return null;
         return id;
+    }
+
+    // --- validacao de ELF64 (so o que o loader vai mesmo abrir) -------------
+
+    public static final class ElfCheck {
+        public final boolean ok;
+        public final String reason;   // null quando ok
+
+        ElfCheck(boolean ok, String reason) {
+            this.ok = ok;
+            this.reason = reason;
+        }
+    }
+
+    private static final int EI_CLASS = 4, EI_DATA = 5;
+    private static final int ELFCLASS64 = 2, ELFDATA2LSB = 1;
+    private static final int EM_AARCH64 = 183;
+    private static final int ET_DYN = 3, ET_EXEC = 2;
+    private static final int EH_SIZE_64 = 64, PH_ENT_SIZE_64 = 56, PH_NUM_MAX = 128;
+    private static final int PT_LOAD = 1;
+
+    // Devolve null quando o arquivo nem e ELF (o chamador so chama em isElf).
+    // A partir dai, ok/reason dizem se da para tratar como .so arm64.
+    public static ElfCheck validateElf64Arm64(byte[] h, long fileLength) {
+        if (h.length < 24) {
+            return new ElfCheck(false, "cabecalho cortado (" + h.length + " bytes lidos, ELF64 precisa de 64)");
+        }
+        if ((h[EI_CLASS] & 0xFF) != ELFCLASS64) {
+            return new ElfCheck(false, "nao e ELF64 (classe " + (h[EI_CLASS] & 0xFF) + ")");
+        }
+        if ((h[EI_DATA] & 0xFF) != ELFDATA2LSB) {
+            return new ElfCheck(false, "nao e little-endian (EI_DATA " + (h[EI_DATA] & 0xFF) + ")");
+        }
+
+        int eType = u16(h, 16);
+        if (eType == ET_EXEC) {
+            return new ElfCheck(false, "e_type e ET_EXEC (executavel); mod tem que ser ET_DYN (biblioteca)");
+        }
+        if (eType != ET_DYN) {
+            return new ElfCheck(false, "e_type " + eType + " diferente de ET_DYN (3)");
+        }
+        if (elfMachine(h) != EM_AARCH64) {
+            return new ElfCheck(false, "e_machine " + elfMachine(h) + " nao e arm64 (183)");
+        }
+        if (fileLength < EH_SIZE_64) {
+            return new ElfCheck(false, "arquivo de " + fileLength + " bytes nao cabe um ELF64");
+        }
+
+        int eEhsize = u16(h, 52);
+        if (eEhsize != EH_SIZE_64) {
+            return new ElfCheck(false, "e_ehsize " + eEhsize + " (esperado 64)");
+        }
+        int ePhentsize = u16(h, 54);
+        if (ePhentsize != PH_ENT_SIZE_64) {
+            return new ElfCheck(false, "e_phentsize " + ePhentsize + " (esperado 56)");
+        }
+        int ePhnum = u16(h, 56);
+        if (ePhnum == 0) {
+            return new ElfCheck(false, "e_phnum 0: sem programa carregavel, nao e .so utilizavel");
+        }
+        if (ePhnum > PH_NUM_MAX) {
+            return new ElfCheck(false, "e_phnum " + ePhnum + " absurdo (teto " + PH_NUM_MAX + ")");
+        }
+        long ePhoff = u64(h, 32);
+        if (ePhoff < EH_SIZE_64 || ePhoff + (long) ePhnum * ePhentsize > fileLength) {
+            return new ElfCheck(false, "tabela de programas fora do arquivo (e_phoff " + ePhoff
+                    + ", e_phnum " + ePhnum + ", arquivo " + fileLength + " bytes)");
+        }
+        if (ePhoff + (long) ePhnum * ePhentsize > h.length) {
+            return new ElfCheck(false, "tabela de programas cortada: o arquivo tem " + h.length
+                    + " bytes lidos e a tabela precisa de " + (ePhoff + (long) ePhnum * ePhentsize));
+        }
+
+        boolean sawLoad = false;
+        for (int i = 0; i < ePhnum; i++) {
+            int off = (int) (ePhoff + (long) i * ePhentsize);
+            int pType = u32(h, off);
+            long pOffset = u64(h, off + 8);
+            long pFilesz = u64(h, off + 32);
+            if (pType != PT_LOAD) continue;
+            sawLoad = true;
+            if (pFilesz == 0 || pOffset < 0 || pOffset > fileLength || pFilesz > fileLength - pOffset) {
+                return new ElfCheck(false, "PT_LOAD nao cabe no arquivo (offset " + pOffset
+                        + " + " + pFilesz + " bytes, arquivo " + fileLength + ")");
+            }
+        }
+        if (!sawLoad) {
+            return new ElfCheck(false, "nenhum PT_LOAD: a biblioteca nao tem codigo para o linker mapear");
+        }
+        return new ElfCheck(true, null);
+    }
+
+    private static int u16(byte[] h, int off) {
+        if (off + 2 > h.length) return -1;
+        return (h[off] & 0xFF) | ((h[off + 1] & 0xFF) << 8);
+    }
+
+    private static int u32(byte[] h, int off) {
+        if (off + 4 > h.length) return -1;
+        return (h[off] & 0xFF) | ((h[off + 1] & 0xFF) << 8)
+                | ((h[off + 2] & 0xFF) << 16) | ((h[off + 3] & 0xFF) << 24);
+    }
+
+    private static long u64(byte[] h, int off) {
+        if (off + 8 > h.length) return -1L;
+        long v = 0;
+        for (int i = 7; i >= 0; i--) {
+            v = (v << 8) | (h[off + i] & 0xFFL);
+        }
+        return v;
     }
 
     public static boolean isFridaGadgetName(String fileName) {

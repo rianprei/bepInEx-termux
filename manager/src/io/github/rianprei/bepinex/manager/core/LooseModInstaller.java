@@ -183,8 +183,11 @@ public final class LooseModInstaller {
         }
         boolean fridaMarker = (text != null && ModContentDetector.hasFridaMarker(text))
                 || scanFridaMarker(src);
-        String name = src.getName();
-        return new ModContentDetector.Sample(name, head, text, zipHasManifest, fridaMarker);
+        // length = tamanho REAL do arquivo: a checagem de PT_LOAD compara
+        // offset+tamanho com ele. Um .so pela metade (corte de download)
+        // passa no magic e morre aqui.
+        return new ModContentDetector.Sample(src.getName(), head, text, zipHasManifest,
+                fridaMarker, src.length());
     }
 
     private static byte[] readHead(File src, int max) throws IOException {

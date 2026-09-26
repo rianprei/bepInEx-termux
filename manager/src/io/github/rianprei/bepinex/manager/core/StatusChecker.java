@@ -45,7 +45,16 @@ public final class StatusChecker {
 
             if (bepinexModuleDir != null) {
                 status.moduleInstalled = true;
-                SuHelper.Result disRes = SuHelper.exec("[ -f '" + bepinexModuleDir + "/disable' ] && echo 'disabled' || echo 'enabled'");
+                // O caminho veio de um `ls` do device: entra no comando abaixo
+                // so depois da validacao central (o device e root, mas a lista
+                // pode ter sido adulterada por outro app).
+                SuHelper.Result disRes;
+                try {
+                    SuHelper.requirePath(bepinexModuleDir, "module dir");
+                    disRes = SuHelper.exec("[ -f '" + bepinexModuleDir + "/disable' ] && echo 'disabled' || echo 'enabled'");
+                } catch (IllegalArgumentException e) {
+                    disRes = SuHelper.exec("echo invalid");
+                }
                 if (disRes.success && "disabled".equals(disRes.stdout.trim())) {
                     status.moduleActive = false;
                     status.moduleInfo = "Instalado (Desativado no Magisk)";

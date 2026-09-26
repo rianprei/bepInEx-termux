@@ -18,6 +18,7 @@ public class ModContentDetectorTest {
         testDotNet();
         testOtherBinaries();
         testBaseId();
+        testElfMalformed();
         System.out.println("  [OK] ModContentDetectorTest (C7)");
     }
 
@@ -32,14 +33,50 @@ public class ModContentDetectorTest {
         return new Sample("mod.bmod", head, null, withManifest, false);
     }
 
-    /** ELF com e_machine no offset 18. */
+    /**
+     * ELF64 LE minimo e COERENTE: cabecalho de 64 bytes, uma tabela com um
+     * PT_LOAD de 256 bytes em 0x1000, arquivo de 0x2000 bytes. E o .so
+     * sintetico que o C7 precisa aceitar.
+     */
     private static Sample elf(String name, int machine) {
-        byte[] h = new byte[64];
+        byte[] h = new byte[4096];
         h[0] = 0x7F; h[1] = 'E'; h[2] = 'L'; h[3] = 'F';
-        h[4] = 2; h[5] = 1; h[6] = 1;   // ELF64, little endian
-        h[18] = (byte) (machine & 0xFF);
-        h[19] = (byte) ((machine >> 8) & 0xFF);
-        return new Sample(name, h, null, false, false);
+        h[4] = 2;          // ELFCLASS64
+        h[5] = 1;          // ELFDATA2LSB
+        h[6] = 1;          // EV_CURRENT
+        put16(h, 16, 3);   // e_type = ET_DYN (biblioteca)
+        put16(h, 18, machine);
+        put32(h, 20, 1);   // e_version
+        put64(h, 32, 64);  // e_phoff = logo depois do cabecalho
+        put16(h, 52, 64);  // e_ehsize
+        put16(h, 54, 56);  // e_phentsize
+        put16(h, 56, 1);   // e_phnum
+        // programa 0 em 64
+        put32(h, 64, 1);   // p_type = PT_LOAD
+        put32(h, 64 + 4, 5);   // p_flags = R+X
+        put64(h, 64 + 8, 0x1000L);   // p_offset
+        put64(h, 64 + 16, 0x1000L);  // p_vaddr
+        put64(h, 64 + 24, 0x1000L);  // p_paddr
+        put64(h, 64 + 32, 256);      // p_filesz
+        put64(h, 64 + 40, 256);      // p_memsz
+        put64(h, 64 + 48, 0x1000L);  // p_align
+        return new Sample(name, h, null, false, false, 0x2000L);
+    }
+
+    private static void put16(byte[] b, int off, int v) {
+        b[off] = (byte) v;
+        b[off + 1] = (byte) (v >> 8);
+    }
+
+    private static void put32(byte[] b, int off, int v) {
+        b[off] = (byte) v;
+        b[off + 1] = (byte) (v >> 8);
+        b[off + 2] = (byte) (v >> 16);
+        b[off + 3] = (byte) (v >> 24);
+    }
+
+    private static void put64(byte[] b, int off, long v) {
+        for (int i = 0; i < 8; i++) b[off + i] = (byte) (v >> (8 * i));
     }
 
     private static Sample text(String name, String content) {
@@ -179,6 +216,62 @@ public class ModContentDetectorTest {
         Detection reservado = ModContentDetector.detect(elf("u_patch.so", 183), true);
         check("u_patch.so é nome reservado", reservado.kind == Kind.ELF_ARM64 && !reservado.installable);
         check("explica o conflito", reservado.reason.contains("interno"));
+    }
+
+    // ELF pela metade ou adulterado nao pode virar <id>.so: o dlopen disso
+    // dentro do jogo fecha o processo.
+    private static void testElfMalformed() {
+        // (1) truncado: o arquivo tem menos bytes do que o PT_LOAD exige.
+        Sample trunc = elf("meu.so", 183);
+        Sample cortado = new Sample("meu.so", trunc.head, null, false, false, 0x1080L);
+        ModContentDetector.Detection d1 = ModContentDetector.detect(cortado, true);
+        check("ELF truncado recusado", d1.kind == Kind.ELF_MALFORMED && !d1.installable);
+        check("diz que o PT_LOAD nao cabe", d1.reason.contains("PT_LOAD") || d1.reason.contains("fora do arquivo"));
+        check("diz que o Manager nao instala pela metade", d1.reason.contains("metade"));
+
+        // (2) e_phoff apontando depois do fim do arquivo.
+        Sample fora = elf("meu.so", 183);
+        put64(fora.head, 32, 0x900000L);
+        ModContentDetector.Detection d2 = ModContentDetector.detect(
+                new Sample("meu.so", fora.head, null, false, false, 0x2000L), true);
+        check("e_phoff fora do arquivo recusado", d2.kind == Kind.ELF_MALFORMED && !d2.installable);
+        check("o motivo cita a tabela de programas", d2.reason.contains("programas"));
+
+        // (3) ET_EXEC: executavel, nao biblioteca.
+        Sample exec = elf("meu.so", 183);
+        put16(exec.head, 16, 2);
+        ModContentDetector.Detection d3 = ModContentDetector.detect(exec, true);
+        check("ET_EXEC recusado", d3.kind == Kind.ELF_MALFORMED && !d3.installable);
+        check("o motivo explica ET_DYN", d3.reason.contains("ET_DYN"));
+
+        // (4) e_phentsize / e_ehsize errados (cabeçalho adulterado).
+        Sample phent = elf("meu.so", 183);
+        put16(phent.head, 54, 32);
+        check("e_phentsize errado recusado",
+                ModContentDetector.detect(phent, true).kind == Kind.ELF_MALFORMED);
+
+        Sample ehsize = elf("meu.so", 183);
+        put16(ehsize.head, 52, 40);
+        check("e_ehsize errado recusado",
+                ModContentDetector.detect(ehsize, true).kind == Kind.ELF_MALFORMED);
+
+        // (5) sem PT_LOAD nenhum: nao ha codigo para o linker mapear.
+        Sample semLoad = elf("meu.so", 183);
+        put32(semLoad.head, 64, 4);   // PT_NOTE
+        check("sem PT_LOAD recusado",
+                ModContentDetector.detect(semLoad, true).kind == Kind.ELF_MALFORMED);
+
+        // (6) ELF32/ big-endian nao passam como arm64.
+        Sample elf32 = elf("meu.so", 183);
+        elf32.head[4] = 1;   // ELFCLASS32
+        check("ELF32 recusado", ModContentDetector.detect(elf32, true).kind == Kind.ELF_MALFORMED);
+        Sample big = elf("meu.so", 183);
+        big.head[5] = 2;     // ELFDATA2MSB
+        check("big-endian recusado", ModContentDetector.detect(big, true).kind == Kind.ELF_MALFORMED);
+
+        // (7) o caminho feliz nao pode quebrar: ELF64 arm64 coerente instala.
+        ModContentDetector.Detection ok = ModContentDetector.detect(elf("meu.so", 183), true);
+        check("ELF64 arm64 coerente instala", ok.kind == Kind.ELF_ARM64 && ok.installable);
     }
 
     private static void testBaseId() {
