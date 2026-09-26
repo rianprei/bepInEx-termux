@@ -165,7 +165,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         with open(path, "rb") as fh:
             zf.writestr(info, fh.read())
 PYEOF
-echo "pronto: $ZIP (SOURCE_DATE_EPOCH=$EPOCH, $(ls -l "$ZIP" | awk '{print $5}') bytes)"
+echo "pronto: $ZIP (SOURCE_DATE_EPOCH=$EPOCH, $(stat -c '%s' "$ZIP") bytes)"
 sha256sum "$ZIP"
 echo "  unzip -l \"$ZIP\""
 echo "  instalar: copiar pro device e flashear pelo app Magisk (ou Recovery), depois reiniciar"
