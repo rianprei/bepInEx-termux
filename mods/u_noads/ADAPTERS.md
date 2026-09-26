@@ -26,7 +26,8 @@ Unity — é lá que jogo chama Show), com `thread_attach` antes de qualquer
   ponte interna (`_client`), que o jogo não enxerga — por isso a revisão apontou
   que ele nunca fechava nada.
 - Fonte: https://github.com/googleads/googleads-mobile-unity/tree/v11.5.0
-  `source/plugin/Assets/GoogleMobileAds/Api/InterstitialAd.cs:54`
+  `source/plugin/Assets/GoogleMobileAds/Api/InterstitialAd.cs` (linha 54,
+  fonte externo)
   (`public event Action OnAdFullScreenContentClosed;`), `:229-231` (é ele que
   dispara no close) e `:175` (`public void Show()`); v6 no histórico do
   repositório principal `googleads-mobile-unity`, em
@@ -82,7 +83,8 @@ Unity — é lá que jogo chama Show), com `thread_attach` antes de qualquer
   onAdHiddenEvent System.Action<System.String,MaxSdkBase.AdInfo> 1 64`.
 - Fonte (DEFINIÇÃO da API, não um chamador):
   https://github.com/AppLovin/AppLovin-MAX-Unity-Plugin
-  `DemoApp/Assets/MaxSdk/Scripts/MaxSdkAndroid.cs:621` (`ShowInterstitial`) e
+  `DemoApp/Assets/MaxSdk/Scripts/MaxSdkAndroid.cs` (linha 621, fonte externo)
+  (`ShowInterstitial`) e
   `:698` (`ShowAppOpenAd`) — esse caminho `DemoApp/Assets/MaxSdk/Scripts/` é o
   plugin que a loja/instalador copia pro projeto, é a implementação da API.
   Callbacks em `.../MaxSdkCallbacks.cs`.

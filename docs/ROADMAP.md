@@ -19,7 +19,8 @@ pedido do usuário — não fazem parte do objetivo real. O objetivo é só:
   `Read`/`ReadLine`/`ReadKey`/`Console.In` em toda a classe. Só emite log,
   nunca aceita comando digitado de volta.
 - **Ciclo de vida do console BepInEx** (kilo, `ConsoleManager.cs`/
-  `ConsoleWindow.cs`, permalinks no fonte): abre no `Preloader.cs:39` via
+  `ConsoleWindow.cs`, permalinks no fonte): abre no `Preloader.cs` (linha 39,
+  fonte externo) via
   `AllocConsole`, acompanha o processo do jogo desde o início; fecha
   implicitamente com o processo (sem `DetachConsole` explícito no shutdown).
   `PreventClose` só remove o botão X da UI, não impede fechamento por
@@ -91,7 +92,8 @@ background na mesma sessão.
 - [x] **3.5** Requisito documentado: `allow-external-apps=true` em
       `~/.termux/termux.properties`, senão o RunCommandService recusa
       silenciosamente.
-- [x] **3.6** enum `LogLevel` confirmado (hermes, `LogLevel.cs:5`,
+- [x] **3.6** enum `LogLevel` confirmado (hermes, `LogLevel.cs` (linha 5,
+      fonte externo),
       `[Flags]`): `None=0, Fatal=1, Error=2, Warning=4, Message=8, Info=16,
       Debug=32, All=63`. Cores (`GetConsoleColor`, mesmo arquivo):
       Fatal=Red, Error=DarkRed, Warning=Yellow, Message=White,

@@ -42,8 +42,10 @@ estiver disponível. Confirmar no log após o reboot:
 adb shell su -c "grep -E 'módulo carregado|mods/<pkg>/ presente|instalação concluída' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Fontes: `jni/main.cpp:1894`, `jni/main.cpp:1943`,
-`jni/main.cpp:1501`. Restaurar desinstalando o módulo pelo Magisk e
+Fontes: `módulo carregado — %s` (`jni/main.cpp:1894`),
+`mods/<pkg>/ presente — carga direta, sem allowlist e sem companion`
+(`jni/main.cpp:1943`), `instalação concluída — state: %s`
+(`jni/main.cpp:1501`). Restaurar desinstalando o módulo pelo Magisk e
 recolocando a cópia de `/data/local/tmp/round-backup/$PKG`.
 
 ## Permissive e Enforcing
@@ -85,8 +87,8 @@ adb shell monkey -p "$PKG" 1
 adb shell su -c "grep -E 'carregado, esperando libil2cpp|il2cpp ok|il2cpp não subiu' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Esperado: `carregado, esperando libil2cpp` ou `il2cpp ok` de
-`mods/_template/jni/mod.cpp:20-27`. Confirmar que o processo abre e que a
+Esperado: `carregado, esperando libil2cpp.so` ou `il2cpp ok`
+(`mods/_template/jni/mod.cpp:20-27`). Confirmar que o processo abre e que a
 linha aparece em `log.txt`. Restaurar com:
 
 ```bash
@@ -133,8 +135,8 @@ adb shell su -c "test -f /data/adb/modules/bc-poc/module.prop && cat /data/adb/m
 adb shell su -c "magisk --path 2>/dev/null || true"
 ```
 
-Esperado no runtime: `módulo carregado — v0.4.1`
-(`jni/main.cpp:1894`). Confirmar o Manager no launcher e abrir SA2. Para
+Esperado no runtime: `módulo carregado — %s` (`jni/main.cpp:1894`).
+Confirmar o Manager no launcher e abrir SA2. Para
 KernelSU, instalar o mesmo zip pelo app KernelSU + ZygiskNext e repetir o
 reboot. Restaurar removendo o módulo pelo app correspondente e reiniciando.
 
@@ -143,10 +145,12 @@ reboot. Restaurar removendo o módulo pelo app correspondente e reiniciando.
 ### Status, jogos, tela do jogo e log
 
 Abrir o Manager, confirmar `Root: OK`, `Módulo: OK`, `Zygisk: OK` e a versão
-`Manager: 0.4.1` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:211-222`). Selecionar SA2
+0.4.1. `Root: OK` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:211-222`);
+`Manager: ` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:211-222`).
+Selecionar SA2
 e testar **Reiniciar jogo**, switch do mod e **Ver log**. A tela de log deve
 mostrar `/data/data/$PKG/files/bepinex/log.txt`
-(`manager/src/io/github/rianprei/bepinex/manager/LogViewerActivity.java:35-66`).
+`/data/data/` (`manager/src/io/github/rianprei/bepinex/manager/LogViewerActivity.java:35-66`).
 
 Restaurar o switch ao estado original e usar **Reiniciar jogo**; não excluir
 arquivos de terceiros.
@@ -156,7 +160,7 @@ arquivos de terceiros.
 No Manager, usar **+ Instalar mod**, escolher um `.so` de teste e confirmar a
 mensagem `Instalado:` (`manager/src/io/github/rianprei/bepinex/manager/core/LooseModInstaller.java:104`).
 Escolher um `.bmod` compatível; confirmar a tela de confirmação e a mensagem
-do resultado (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:275-292`). Para `.patch`, usar
+`Deseja instalar o mod` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:275-292`). Para `.patch`, usar
 um pacote produzido por F4 e confirmar que o arquivo chega em
 `/data/local/tmp/mods/$PKG/`.
 
@@ -179,10 +183,11 @@ sleep 4
 adb shell su -c "grep 'mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Esperado: `carregado: vou abortar em 2s` e
-`abortando de proposito: teste do crashguard (F1d)` em
-`mods/t_crash/jni/t_crash_mod.cpp:35-43`, seguido da linha de bloqueio em
-`jni/main.cpp:1724-1732`. Na terceira abertura o mod não deve carregar.
+Esperado: `carregado: vou abortar em %ds` e
+`abortando de proposito: teste do crashguard (F1d)`
+(`mods/t_crash/jni/t_crash_mod.cpp:24-29`), seguido de
+`mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager`
+(`jni/main.cpp:1724-1732`). Na terceira abertura o mod não deve carregar.
 No Manager, o banner deve oferecer **Reativar**; a ação apaga marcador e
 contador (`GameDetailActivity.java:137-159`, `SuHelper.java:389-405`).
 Restaurar removendo `t_crash.so` e pressionando Reativar.
@@ -211,14 +216,14 @@ os dois arquivos locais de medição.
 No Manager, abrir **Escanear Jogo**. O APK deve ter `assets/u_dump.so`; instalar
 o scanner, deixar o jogo iniciar e aguardar até 240s. A UI esperada é
 `Scanner concluído: dump.tsv gerado.` ou `Erro ao escanear: ...`
-(`manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:167-197`). O arquivo esperado é:
+`Scanner concluído: dump.tsv gerado.` (`manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:167-197`). O arquivo esperado é:
 
 ```bash
 adb shell su -c "test -s /data/data/$PKG/files/bepinex/dump.tsv && grep -E 'ComplexCreature|HasAmmo' /data/data/$PKG/files/bepinex/dump.tsv"
 adb shell su -c "test ! -e /data/local/tmp/mods/$PKG/u_dump.so"
 ```
 
-O log do mod deve conter `dump.tsv pronto: ... linhas, ... assemblies`
+O log do mod deve conter `dump.tsv pronto: %lld linhas, %zu assemblies`
 (`mods/u_dump/jni/u_dump_mod.cpp:313`). Confirmar busca paginada por classe,
 método e campo, e gerar uma regra pela UI. Restaurar apagando apenas o dump
 de teste pelo botão/Manager; o scanner é removido sempre pelo fluxo.
@@ -231,8 +236,8 @@ adb shell am force-stop "$PKG"; adb shell monkey -p "$PKG" 1
 adb shell su -c "grep -E 'u_noads|fechamento falhou|suprimido com fechamento' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Esperado de `mods/u_noads/jni/u_noads_mod.cpp:70-76`: `intersticial/app-open
-suprimido com fechamento do próprio SDK`; se o callback não for seguro, a
+Esperado: `intersticial/app-open suprimido com fechamento do próprio SDK`
+(`mods/u_noads/jni/u_noads_mod.cpp:70-76`); se o callback não for seguro, a
 linha deve dizer `fechamento falhou ... anúncio volta a aparecer`. Verificar
 que anúncios forçados entre fases não aparecem e que rewarded/IAP continuam
 normais. Depois religar:
@@ -243,7 +248,7 @@ adb shell am force-stop "$PKG"; adb shell monkey -p "$PKG" 1
 adb shell su -c "grep -E 'sa2content|item\\(ns\\) trocados|Apply (ok|LANÇOU EXCEÇÃO)' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Esperado: `wep: N item(ns) trocados, Apply ok`, `red: ...` e `ld: ...`
+Esperado: `item(ns) trocados, Apply %s (retorno %d)`
 (`mods/sa2content/jni/sa2content_mod.cpp:87-90`). Restaurar o estado original
 do `.so.off`.
 
@@ -255,7 +260,8 @@ Com `tools/deploy_frida.sh "$PKG" smoke.js`, abrir o jogo e confirmar:
 adb shell su -c "grep -E 'il2cpp ok, carregando gadget|gadget ativo|dlopen do gadget falhou|config fora do modo script' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-As mensagens são de `mods/u_frida/jni/u_frida_mod.cpp:105-130`; o smoke deve
+As mensagens `gadget ativo (type=%s, pasta %s, 1º script %s)`
+(`mods/u_frida/jni/u_frida_mod.cpp:105-130`) devem aparecer; o smoke deve
 escrever sua marca em `files/bepinex/`. Para a guarda, copiar o gadget real com
 nome `renamed_mod.so` para a pasta de mods e abrir o jogo:
 
@@ -265,9 +271,9 @@ adb shell am force-stop "$PKG"; adb shell monkey -p "$PKG" 1
 adb shell su -c "grep -E 'frida-gadget|renamed_mod' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Esperado: rejeição antes de executar como mod; guardar a linha exata do
-loader (`jni/main.cpp:1200-1217` para pré-varredura e
-`jni/main.cpp:1349-1353` para estados). Restaurar removendo
+Esperado: `mod loader: %s carregado e ativo` (`jni/main.cpp:1349-1353`);
+guardar a linha exata da rejeição antes de executar como mod
+(`jni/main.cpp:1200-1217`). Restaurar removendo
 `renamed_mod.so`, `frida-gadget.bin`, config e `.js`.
 
 ## Soak e coleta final
