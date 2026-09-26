@@ -112,7 +112,7 @@ C  <assembly>  <Namespace.Classe>
 M  <Namespace.Classe>  <método>  <nargs>  <tipo_retorno>  <static 0|1>
 F  <Namespace.Classe>  <campo>  <tipo>  <static 0|1>  <offset>
 ```
-Separador TAB. Gera se não existir. Pra refazer, o Manager apaga o arquivo e reinicia o jogo.
+Separador TAB. Classe aninhada: `Namespace.Externa/Interna` (sobe `class_get_declaring_type` até a raiz). Gera se não existir. Pra refazer, o Manager apaga o arquivo e reinicia o jogo.
 
 ### C6. Detecção de engine (Manager, sem abrir o jogo)
 Lista `lib/arm64-v8a/` no APK base + splits (`ApplicationInfo.sourceDir` + `splitSourceDirs`, via `ZipFile`) ou em `nativeLibraryDir`:
