@@ -150,6 +150,13 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 - [ ] Loader escreve em `/data/data/<pkg>/files/bepinex/log.txt` quais mods carregaram ou falharam (contrato C1).
 - **Verifica:** SA2 fora da allowlist carrega os mods; app sem pasta não gera log novo; BC intacto; harness 0 falhas; build 0 warnings.
 
+### F1c — SELinux Enforcing (obrigatório pra gente normal)
+Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso que o zygote lê `/data/local/tmp` e o jogo faz `dlopen` de lá (o logcat mostra `avc: denied ... permissive=1`). Num celular comum (Enforcing) nada disso carrega.
+- [ ] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app.
+- [ ] `module/post-fs-data.sh`: cria `/data/local/tmp/mods` e aplica `chcon -R` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo.
+- [ ] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento.
+- **Verifica:** `setenforce 1` no device de teste → SA2 carrega os mods e o u_patch aplica; `dmesg`/logcat sem `avc: denied` do nosso caminho → `setenforce 0` de volta.
+
 ### F2 — SDK de mod + kit
 - [ ] `mods/common/mod_common.h`: `mod_pkg()`, `mod_dir()`, `mod_log(tag, fmt, ...)` (logcat + log.txt C1), `mod_conf_get(id, key, default)` (C3).
 - [ ] `mods/_template/` (Android.mk, Application.mk, `mod.cpp` com boot il2cpp + log).
