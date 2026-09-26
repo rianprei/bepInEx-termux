@@ -3,6 +3,7 @@
 //   mod_pkg              — env BEPINEX_PKG primeiro; fallback cmdline
 //                          cacheado depois da 1ª leitura boa (C1)
 //   mod_dir              — /data/local/tmp/mods/<pkg> (C1)
+//   mod_log_format_line  — a linha "HH:MM:SS [tag] msg" do log.txt (C1)
 //   mod_conf_find        — parser key=value, '#' comenta, trim (C3)
 //   conf_as_*            — conversões bool/int/float com default (C3)
 //   mod_conf_get         — default quando arquivo/key não existe (C3)
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <ctime>
 #include <unistd.h>
 #include "../mods/common/mod_common.h"
 
@@ -108,6 +110,62 @@ int main(int argc, char **argv) {
         check("bool default true", mod_conf_bool("id", "k", true));
         check("bool default false", !mod_conf_bool("id", "k", false));
         unsetenv("BEPINEX_PKG");
+    }
+
+    // A linha do log.txt é contrato: o u_dump, o Manager e o kit leem esse
+    // arquivo. O formato vem de mod_log_format_line com o time_t injetado,
+    // então dá pra conferir no host sem device e sem depender do fuso: o
+    // esperado é montado aqui com o PRÓPRIO strftime. São duas cópias
+    // independentes da máscara "%H:%M:%S" de propósito — se alguém trocar o
+    // separador num dos dois lados, este teste acusa.
+    printf("[mod_log_format_line] (C1: linha do log.txt)\n");
+    {
+        char line[640], want[640], stamp[16];
+        time_t when = 1758000000;  // fixo: o host não pode depender do agora
+        struct tm tmw;
+        localtime_r(&when, &tmw);
+        strftime(stamp, sizeof(stamp), "%H:%M:%S", &tmw);
+
+        size_t n = mod_log_format_line(line, sizeof(line), "u_dump", "dump.tsv pronto: 42 linhas", when);
+        snprintf(want, sizeof(want), "%s [u_dump] dump.tsv pronto: 42 linhas\n", stamp);
+        check("linha completa = HH:MM:SS [tag] msg\\n", n == strlen(want) && strcmp(line, want) == 0);
+        check("tamanho devolvido bate com a linha", n == strlen(line));
+
+        // Separador: o campo da hora tem que ter ':' e o tamanho certo.
+        check("hora com 2 dígitos e ':'", strlen(stamp) == 8 && stamp[2] == ':' && stamp[5] == ':');
+
+        // Tag e corpo mudam; a moldura não.
+        mod_log_format_line(line, sizeof(line), "sa2ammo", "ativo", when);
+        snprintf(want, sizeof(want), "%s [sa2ammo] ativo\n", stamp);
+        check("tag diferente, mesma moldura", strcmp(line, want) == 0);
+
+        mod_log_format_line(line, sizeof(line), "u_dump", "", when);
+        snprintf(want, sizeof(want), "%s [u_dump] \n", stamp);
+        check("corpo vazio ainda fecha a linha", strcmp(line, want) == 0);
+
+        // Corpo grande DENTRO do teto (o mod_log trunca em MOD_LOG_BODY_MAX
+        // antes de chamar): cabe na linha de 640 e fecha com \n.
+        char big[MOD_LOG_BODY_MAX];
+        memset(big, 'x', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+        n = mod_log_format_line(line, sizeof(line), "u_dump", big, when);
+        check("corpo no teto cabe na linha", n > 0 && n < sizeof(line));
+        check("corpo no teto não perde o \n final", line[n - 1] == '\n');
+
+        // Corpo MAIOR que a linha inteira: devolve 0 em vez de truncar meio
+        // e escrever lixo. No caminho real não acontece (o vsnprintf do
+        // mod_log corta em 512 antes), mas a função é honesta sobre isso.
+        char huge[900];
+        memset(huge, 'y', sizeof(huge) - 1);
+        huge[sizeof(huge) - 1] = '\0';
+        check("corpo maior que a linha devolve 0",
+              mod_log_format_line(line, sizeof(line), "u_dump", huge, when) == 0);
+
+        // Buffer pequeno demais: devolve 0 e não escreve por fora.
+        char tiny[8];
+        check("buffer curto devolve 0", mod_log_format_line(tiny, sizeof(tiny), "u_dump", "x", when) == 0);
+        check("nulo é recusado", mod_log_format_line(nullptr, 100, "u_dump", "x", when) == 0);
+        check("tag nulo é recusado", mod_log_format_line(line, sizeof(line), nullptr, "x", when) == 0);
     }
 
     printf("[mod_log] (smoke: nunca derruba mesmo sem conseguir escrever)\n");

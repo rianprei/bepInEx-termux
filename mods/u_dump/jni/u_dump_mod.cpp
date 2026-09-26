@@ -11,12 +11,11 @@
 // assemblies: não trava o jogo (boot do il2cpp é lá dentro — domain_get
 // antes do init crasha, sa2ammo).
 //
-// pkg (C1 2026-09-26+): getenv("BEPINEX_PKG") primeiro (o loader Zygisk seta
-// antes do dlopen); /proc/self/cmdline no constructor ainda é "zygote64"
-// (achado em device), então o fallback espera o cmdline virar o do app.
-// Log mínimo próprio (mod_common.h chega na F2): logcat tag "u_dump" +
-// append em files/bepinex/log.txt (formato C1: HH:MM:SS [u_dump] msg).
-#include <android/log.h>
+// pkg e log (C1, F2): mod_common.h. O loader Zygisk posta BEPINEX_PKG antes
+// do dlopen (jni/main.cpp:1800), então o pacote resolve no constructor; o
+// fallback por cmdline do mod_common (que rejeita "zygote64") só entra se a
+// env faltar, e aí o wait_for_pkg() abaixo espera. Linha de log no mesmo
+// formato de antes: "HH:MM:SS [u_dump] msg" em files/bepinex/log.txt.
 #include <pthread.h>
 #include <sched.h>
 #include <sys/stat.h>
@@ -28,61 +27,48 @@
 #include <cstdint>
 #include "../../common/il2cpp_min.h"
 #include "../../common/dump_core.h"
+#include "../../common/mod_common.h"
 
 #define TAG "u_dump"
-#define LOG(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOG(...) mod_log(TAG, __VA_ARGS__)
 
 static Il2Cpp il;
 
-// --- log C1 (mínimo da F3; migra pra mod_common.h na F2 sem mudar formato) ---
-// files/bepinex/log.txt, append, 1 linha = HH:MM:SS [u_dump] msg, corta em 256KB.
-static FILE *log_open_append(const char *pkg) {
-    char dir[352], path[384];
-    snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
-    mkdir(dir, 0755);  // existe = ok; permissão vem do dono (o próprio app)
-    snprintf(path, sizeof(path), "%s/log.txt", dir);
-    struct stat st;
-    if (stat(path, &st) == 0 && st.st_size > 256 * 1024) {
-        FILE *f = fopen(path, "w");  // corta: contrato não fala de rotação
-        if (f) fclose(f);
-    }
-    return fopen(path, "a");
-}
+// --- C1: pacote e log (mod_common, F2) ---
+//
+// O C1 inteiro deste mod era duplicado (log_open_append + c1_log +
+// read_cmdline + resolve_pkg). Agora é o mod_common: mod_log escreve no
+// logcat E em files/bepinex/log.txt, e mod_pkg resolve o pacote. O FORMATO
+// DA LINHA NÃO MUDA: era "HH:MM:SS [u_dump] msg" e continua (o mod_common
+// monta a mesma linha, e test/mod_common_test.cpp fixa o formato).
+//
+// O que o mod perde com a troca: nada de comportamento. O que ganha: o
+// mod_common também cai no logcat quando não tem pkg (degradação silenciosa
+// em vez de abrir arquivo com path quebrado), e o teto de rotação passa a
+// ser o do contrato (256KB) em vez de um número copiado aqui.
 
-static void c1_log(FILE *f, const char *msg) {
-    LOG("%s", msg);
-    if (!f) return;
-    time_t now = time(nullptr);
-    struct tm tmv;
-    localtime_r(&now, &tmv);
-    fprintf(f, "%02d:%02d:%02d [u_dump] %s\n", tmv.tm_hour, tmv.tm_min, tmv.tm_sec, msg);
-    fflush(f);
-}
-
-// --- filesystem ---
-
-// cmdline real do processo ("com.foo.app", 1º token).
-static bool read_cmdline(char *out, size_t cap) {
-    FILE *f = fopen("/proc/self/cmdline", "rb");
-    if (!f) return false;
-    size_t n = fread(out, 1, cap - 1, f);
-    fclose(f);
-    out[n] = '\0';
-    return n > 0 && out[0] != '\0';
-}
-
-// pkg do processo (C1): env do loader, senão cmdline fora de zygote*.
-// Loop até resolver, sem teto: o specialize sempre reescreve o argv do
-// processo-app, e a thread dormindo não custa nada. Teto de 10s abortava
-// device lento antes do cmdline virar o do app (achado da revisão).
-static void resolve_pkg(char *pkg, size_t cap) {
-    if (dump_pick_pkg(getenv("BEPINEX_PKG"), nullptr, pkg, cap)) return;
-    char cmd[256];
-    for (;;) {
-        if (read_cmdline(cmd, sizeof(cmd)) && dump_pick_pkg(nullptr, cmd, pkg, cap))
-            return;
+// Espera o pacote do contrato C1. Teto de 120s, nunca infinito.
+//
+// Evidência de que no caminho normal isto volta na primeira tentativa: o
+// loader posta BEPINEX_PKG em jni/main.cpp:1800, dentro de
+// load_dynamic_mods(), logo ANTES do loop de dlopen (o comentário de lá
+// diz isso: "o constructor do mod lê no dlopen"). Então, no caminho
+// genérico, a env já está posta quando este constructor roda.
+//
+// O retry fica para o resto: mod_pkg() cai no cmdline só quando a env
+// falta, e nesse caso pode ser cedo demais (cmdline ainda "zygote64",
+// rejeitado por mod_pkg_from_cmdline). Antes isto era um for(;;) sem teto
+// — e um teto curto (10s, o que a revisão dedevice reclamou) matava o
+// dump em device lento. 120s é o mesmo orçamento do il2cpp_boot logo
+// abaixo. Estourou o teto? O dump é abortado: um dump.tsv com
+// "# pkg=" vazio não serve para nada.
+static const char *wait_for_pkg(int timeout_s) {
+    for (int i = 0; i <= timeout_s * 5; i++) {
+        const char *p = mod_pkg();
+        if (p) return p;
         usleep(200 * 1000);
     }
+    return nullptr;
 }
 
 // Tamanho do mapeamento da libil2cpp (header do C5): soma os PT_LOAD.
@@ -229,9 +215,13 @@ static long long dump_class(FILE *out, void *image, void *klass, const char *cls
 }
 
 static void *worker(void *) {
-    char pkg[256], msg[256];
-    resolve_pkg(pkg, sizeof(pkg));  // sempre resolve pós-specialize
-    FILE *lg = log_open_append(pkg);
+    char msg[256];
+    const char *pkg = wait_for_pkg(120);
+    if (!pkg) {
+        LOG("pacote (C1) não resolveu em 120s — dump abortado: o cabeçalho C5 "
+            "exige # pkg=<pkg> e um dump sem pacote não serve para nada");
+        return nullptr;
+    }
 
     char dir[352], path[384], tmp[448];
     snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
@@ -242,40 +232,35 @@ static void *worker(void *) {
     if (stat(path, &st) == 0) {
         snprintf(msg, sizeof(msg), "dump.tsv já existe (%lld bytes) — nada a fazer",
                  (long long)st.st_size);
-        c1_log(lg, msg);
-        if (lg) fclose(lg);
+        LOG("%s", msg);
         return nullptr;
     }
 
     if (!il2cpp_boot(il)) {
-        c1_log(lg, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
-        if (lg) fclose(lg);
+        LOG("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
         return nullptr;
     }
     // Enumeração obrigatória (opcionais: flags/image_get_name, com fallback).
     if (!il.image_get_class_count || !il.image_get_class || !il.class_get_name ||
         !il.class_get_namespace || !il.type_get_name || !il.method_get_param_count ||
         !il.method_get_return_type || !il.class_get_methods || !il.class_get_fields) {
-        c1_log(lg, "API de enumeração ausente nesta libil2cpp — desistindo");
-        if (lg) fclose(lg);
+        LOG("API de enumeração ausente nesta libil2cpp — desistindo");
         return nullptr;
     }
 
     FILE *out = fopen(tmp, "w");
     if (!out) {
         snprintf(msg, sizeof(msg), "não abriu %s (SELinux/perm?) — desistindo", tmp);
-        c1_log(lg, msg);
-        if (lg) fclose(lg);
+        LOG("%s", msg);
         return nullptr;
     }
 
     size_t nasms = 0;
     void **asms = il.domain_get_assemblies(il.domain, &nasms);
     if (!asms || nasms == 0) {
-        c1_log(lg, "nenhum assembly no domínio — desistindo");
+        LOG("nenhum assembly no domínio — desistindo");
         fclose(out);
         unlink(tmp);
-        if (lg) fclose(lg);
         return nullptr;
     }
 
@@ -305,14 +290,12 @@ static void *worker(void *) {
     fclose(out);
     if (rename(tmp, path) != 0) {
         snprintf(msg, sizeof(msg), "rename %s -> %s falhou — dump descartado", tmp, path);
-        c1_log(lg, msg);
+        LOG("%s", msg);
         unlink(tmp);
-        if (lg) fclose(lg);
         return nullptr;
     }
     snprintf(msg, sizeof(msg), "dump.tsv pronto: %lld linhas, %zu assemblies", total, nasms);
-    c1_log(lg, msg);
-    if (lg) fclose(lg);
+    LOG("%s", msg);
     return nullptr;
 }
 
