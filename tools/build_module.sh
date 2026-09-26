@@ -56,6 +56,10 @@ echo "${UPDATE_BINARY_SHA256}  ${ZIP_IN}" | sha256sum -c - >/dev/null || {
 # Zygisk exige zygisk/<abi>.so (o nome do módulo sai do nome do .so? não: o
 # loader é carregado em todo app, não por nome de módulo — arm64-v8a.so basta).
 [ -x "$NDK/ndk-build" ] || { echo "ERRO: ndk-build não encontrado em $NDK" >&2; exit 1; }
+# Antes de compilar: o sepolicy.rule tem que estar na gramática do magiskpolicy,
+# senão o Magisk aplica o arquivo em parte (statement ruim = warn e segue) e a
+# política do módulo fica pela metade, sem ninguém avisar.
+tools/check_sepolicy_rule.sh
 mkdir -p "$OUT"
 BUILD_LOG="$OUT/build.log"
 # Nada de >/dev/null: warning de compilação é sinal, e o único tolerado é o
