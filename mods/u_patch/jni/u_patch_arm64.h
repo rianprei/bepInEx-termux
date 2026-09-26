@@ -13,13 +13,13 @@
 #define UP_SLOT_LOCK 24   // spinlock (reentrância vira chamada direta, sem travar)
 #define UP_SLOT_SIZE 32
 
-// Opcodes fixos (ARM ARM, testados no harness contra os valores conhecidos).
-#define UP_RET 0xD65F03C0          // ret
-#define UP_BLR_X16 0xD63F0200      // blr x16
-#define UP_LDR_X16_ORIG 0xF9400210  // ldr x16, [x16, #0]
+// Opcodes fixos (codificação conferida contra llvm-objdump do NDK — Caso 57).
+#define UP_RET 0xD65F03C0           // ret
+#define UP_BLR_X16 0xD63F0200       // blr x16
+#define UP_LDR_X16_ORIG 0xF9400210  // ldr x16, [x16]
 #define UP_MUL_X0 0x9B017C00        // mul x0, x0, x1
-#define UP_FMUL_S0 0x1E211C00       // fmul s0, s0, s1
-#define UP_FMOV_S0_W9 0x1E200120    // fmov s0, w9
+#define UP_FMUL_S0 0x1E210800       // fmul s0, s0, s1
+#define UP_FMOV_S0_W9 0x1E270120    // fmov s0, w9
 #define UP_MOVZ_W9_1 0x52800029     // mov w9, #1
 // x18 é reservado da plataforma no Android (ShadowCallStack): o thunk só
 // usa x9/x10 (temporários caller-saved, livres na entrada — args vão em
@@ -51,13 +51,25 @@ static inline uint32_t up_enc_adrp_x16(const void *pc, const void *target) {
 static inline uint32_t up_enc_add_x16(uint32_t lo12) {
     return 0x91000210u | ((lo12 & 0xFFFu) << 10);
 }
-// ldxr w9, [x16, #24]
+// LDXR/STXR NÃO têm imediato de offset (exclusivas só endereço base).
+// Lock: x17 = x16 + 24 no thunk (adrp+add), então endereça [x17] direto.
+// ldxr w9, [x17]
 static inline uint32_t up_enc_ldxr_lock() {
-    return 0x885F7C00u | (16u << 5) | 9u;
+    return 0x885F7E29u;
 }
-// stxr w10, w9, [x16, #24]
+// stxr w10, w9, [x17] (Rs=w10 grava status, Rt=w9 é o dado)
 static inline uint32_t up_enc_stxr_lock() {
-    return 0x88007C00u | (9u << 16) | (16u << 5) | 10u;
+    return 0x880A7E29u;
+}
+// adrp x17, <página de target> (pc = endereço da instrução)
+static inline uint32_t up_enc_adrp_x17(const void *pc, const void *target) {
+    int64_t off = ((int64_t)(uintptr_t)target >> 12) - ((int64_t)(uintptr_t)pc >> 12);
+    uint32_t o = (uint32_t)(off & 0x1FFFFF);
+    return 0x90000011u | ((o & 3u) << 29) | (((o >> 2) & 0x7FFFFu) << 5);
+}
+// add x17, x17, #lo12 (lo12 < 4096)
+static inline uint32_t up_enc_add_x17(uint32_t lo12) {
+    return 0x91000251u | ((lo12 & 0xFFFu) << 10);
 }
 // cbnz wR, para a palavra (this_idx -> target_idx)
 static inline uint32_t up_enc_cbnz_w(uint32_t r, int this_idx, int target_idx) {
@@ -74,7 +86,7 @@ static inline uint32_t up_enc_ldr_x(uint32_t r, uint32_t off) {
 }
 // ldr s1, [x16, #8]
 static inline uint32_t up_enc_ldr_s1() {
-    return 0x3D400000u | ((2u & 0xFFFu) << 10) | (16u << 5) | 1u;
+    return 0xBD400A01u;
 }
 
 // return bool: movz x0, #v; ret — 2 palavras (8 bytes).
@@ -121,29 +133,34 @@ static inline bool up_method_fits(const uint32_t *orig, int nwords) {
 }
 
 // Thunk mul: chama orig com regs intactos, multiplica o retorno.
-// R0-R7/stack preservados (só x16/x17/x18/x1 mexidos pós-chamada, todos
-// caller-saved). Trava curta: reentrância cai no caminho direto (sem mul,
-// sem hang). Retorna nº de palavras (20 = 80 bytes).
-// Layout: 0-1 adrp/add slot, 2-6 lock, 7 str lr, 8 ldr orig, 9 blr,
-// 10-11 adrp/add, 12 ldr fator, 13 mul, 14 unlock, 15 restore lr, 16 ret,
-// 17-19 caminho direto (ldr orig, blr, ret).
+// R0-R7/stack preservados (só x16/x17/x1 mexidos pós-chamada, todos
+// caller-saved; x18 é reservado da plataforma, nunca usado). Trava curta:
+// reentrância cai no caminho direto (sem mul, sem hang).
+// Layout (22 palavras): 0-1 adrp/add slot(x16), 2-3 adrp/add x17=x16+24
+// (LDXR/STXR não têm imediato: endereço do lock vai em x17), 4 ldxr w9,[x17],
+// 5 cbnz ocupado->direto, 6 mov w9,#1, 7 stxr w10,w9,[x17],
+// 8 cbnz perdeu->ldxr, 9 str lr, 10 ldr orig, 11 blr, 12-13 adrp/add slot,
+// 14 ldr fator, 15 mul, 16 str xzr unlock, 17 restore lr, 18 ret,
+// 19-21 caminho direto (ldr orig, blr, ret).
 static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const void *slot_va, bool is_float) {
     uintptr_t slot = (uintptr_t)slot_va;
     uint32_t lo = (uint32_t)(slot & 0xFFFu);
-    const uint32_t *base = out;
+    uint32_t lock_lo = (uint32_t)(((slot + UP_SLOT_LOCK) & 0xFFFu));
     auto at = [&](int i) -> const void * { return (const uint8_t *)thunk_va + (size_t)i * 4; };
     int i = 0;
     out[i++] = up_enc_adrp_x16(at(0), slot_va);
     out[i++] = up_enc_add_x16(lo);
+    out[i++] = up_enc_adrp_x17(at(2), slot_va);
+    out[i++] = up_enc_add_x17(lock_lo);   // x17 = slot + UP_SLOT_LOCK
     out[i++] = up_enc_ldxr_lock();
-    out[i++] = up_enc_cbnz_w(9, 3, 17);  // ocupado -> direto
+    out[i++] = up_enc_cbnz_w(9, 5, 19);   // ocupado -> direto
     out[i++] = UP_MOVZ_W9_1;
     out[i++] = up_enc_stxr_lock();
-    out[i++] = up_enc_cbnz_w(10, 6, 2);  // perdeu corrida -> tenta de novo
+    out[i++] = up_enc_cbnz_w(10, 8, 4);   // perdeu corrida -> refaz ldxr (x17 já aponta pro lock; NÃO refaz o add)
     out[i++] = up_enc_str_x(30, UP_SLOT_LR);
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
-    out[i++] = up_enc_adrp_x16(at(10), slot_va);
+    out[i++] = up_enc_adrp_x16(at(12), slot_va);
     out[i++] = up_enc_add_x16(lo);
     if (is_float) {
         out[i++] = up_enc_ldr_s1();
@@ -155,14 +172,14 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = up_enc_str_x(31, UP_SLOT_LOCK);  // xzr destrava
     out[i++] = up_enc_ldr_x(30, UP_SLOT_LR);
     out[i++] = UP_RET;
-    // caminho direto (17): sem lock, sem save — lr intacto, só repassa.
-    out[i++] = UP_LDR_X16_ORIG;  // x16 ainda = slot (cbnz não mexe)
+    // caminho direto (19): sem lock, sem save — lr intacto, só repassa.
+    // x16 ainda = slot (só adrp/add dele até aqui; cbnz não mexe).
+    out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
     out[i++] = UP_RET;
-    (void)base;
-    return i;  // 20
+    return i;  // 22
 }
-#define UP_MUL_THUNK_WORDS 20
-// ponytail: teto de 24 thunks mul (24*80 = 1920 bytes numa página RX de
-// 4096). Passou disso, a regra vira log e o jogo segue sem ela.
+#define UP_MUL_THUNK_WORDS 22
+// ponytail: teto de 24 thunks mul (24*88 = 2112 bytes numa página RX de 4096).
+// Passou disso, a regra vira log e o jogo segue sem ela.
 #define UP_MUL_MAX 24

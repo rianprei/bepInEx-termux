@@ -166,6 +166,11 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM(gc_wbarrier_set_field); IL2CPP_SYM(field_get_value); IL2CPP_SYM(field_set_value);
     IL2CPP_SYM(field_get_type); IL2CPP_SYM(class_from_type); IL2CPP_SYM(class_is_valuetype);
     IL2CPP_SYM(gchandle_new);
+    // Opcionais (ver comentário no struct): tolerantes a símbolo ausente.
+#define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)
+    IL2CPP_SYM_MAY(class_get_namespace);
+    IL2CPP_SYM_MAY(field_get_flags);
+#undef IL2CPP_SYM_MAY
 #undef IL2CPP_SYM
     // Enumeração (u_dump, F3): resolução tolerante, ver comentário no struct.
 #define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)
