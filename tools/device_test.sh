@@ -52,6 +52,10 @@ BAK_OUT="/data/local/tmp/t1-bak-out-$PKG"
 MARK="/data/local/tmp/t1-inprogress-$PKG"
 LOCK="/data/local/tmp/t1-lock-$PKG"
 LOCK_MAX_AGE_S=900   # 15 min: run vivo aborta o próximo; depois disso, órfão
+# ADB por caminho absoluto: o restore-sim passa o falso dele aqui, então nem
+# uma quebra de PATH pode fazer o kit alcançar um adb real (o sim blinda com
+# ANDROID_SERIAL/ADB_SERVER_SOCKET e guarda de resolução — ver restore-sim).
+ADB=${ADB:-adb}
 OUT="/data/data/$PKG/files/bepinex"
 EXPECT="$TDIR/expect.txt"
 HOST_TMP="$(mktemp -d)"
@@ -74,10 +78,10 @@ PKG_RE=$(printf '%s' "$PKG" | sed 's/[.[\*^$()+?{|]/\\&/g')
 # chmod/rm/mv com Permission denied). Via stdin o comando chega intacto,
 # com && e aspas (prova em test/device/quoting-check.sh).
 dev() {
-    if [ "$DRY" = 1 ]; then echo "DRY> printf '%s' | adb shell su : $1" >&2; else printf '%s\n' "$1" | adb shell su; fi
+    if [ "$DRY" = 1 ]; then echo "DRY> printf '%s' | $ADB shell su : $1" >&2; else printf '%s\n' "$1" | "$ADB" shell su; fi
 }
 do_adb() {
-    if [ "$DRY" = 1 ]; then echo "DRY> adb $*" >&2; else adb "$@"; fi
+    if [ "$DRY" = 1 ]; then echo "DRY> $ADB $*" >&2; else "$ADB" "$@"; fi
 }
 
 # Estado canônico: lista + modo + sha256 de TUDO dentro de mods/<pkg>/ e de
@@ -217,9 +221,14 @@ restore() {
 [ -d "$TDIR" ] || { echo "FAIL: dir de teste ausente: $TDIR"; exit 1; }
 [ -f "$EXPECT" ] || { echo "FAIL: sem expect.txt em $TDIR"; exit 1; }
 if [ "$DRY" = 0 ]; then
-    command -v adb >/dev/null 2>&1 || { echo "FAIL: adb não encontrado"; exit 1; }
-    [ "$(adb get-state 2>/dev/null)" = "device" ] || { echo "FAIL: device não conectado"; exit 1; }
-    adb shell su -c true 2>/dev/null || { echo "FAIL: su sem resposta (root?)"; exit 1; }
+    command -v "$ADB" >/dev/null 2>&1 || { echo "FAIL: adb não encontrado ($ADB)"; exit 1; }
+    [ "$("$ADB" get-state 2>/dev/null)" = "device" ] || { echo "FAIL: device não conectado"; exit 1; }
+    # </dev/null DE PROPÓSITO: com adb real isso é inócuo (su -c não lê stdin),
+    # e no restore-sim o su FALSO é um filtro de stream (sed|sh) que espera EOF
+    # no stdin herdado — sem o redirect o kit bloqueia no stdin do processo
+    # que o chamou (PTY do gate; achado 2026-09-27: trava de 300s no gate,
+    # sed/sh presos em anon_pipe_read, evidência ps/wchan no fim do arquivo).
+    "$ADB" shell su -c true </dev/null 2>/dev/null || { echo "FAIL: su sem resposta (root?)"; exit 1; }
     dev "command -v sha256sum" >/dev/null || { echo "FAIL: sem sha256sum no device (restauração não verificável)"; exit 1; }
 else
     echo "DRY-RUN: nenhum comando executa de verdade"
