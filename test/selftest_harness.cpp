@@ -1594,6 +1594,17 @@ int main() {
             dump_join_class_name(buf, 10, "NS", parts, 2);
             check("cap pequeno: truncado com NUL, sem estourar", strlen(buf) < 10);
         }
+        {
+            // Revisão: walk sem teto de 16 — join tem que aguentar cadeia
+            // funda (namespace da raiz, sem truncar nível).
+            const char *parts[20];
+            for (int i = 0; i < 20; i++) parts[i] = "N";
+            char big[256];
+            dump_join_class_name(big, sizeof(big), "R", parts, 20);
+            check("20 níveis: começa em R.N e termina em /N", strncmp(big, "R.N", 3) == 0 &&
+                  strlen(big) == (size_t)(2 + 20 * 2 - 1) &&
+                  strcmp(big + strlen(big) - 2, "/N") == 0);
+        }
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

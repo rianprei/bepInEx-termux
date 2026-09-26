@@ -50,8 +50,11 @@ struct Il2Cpp {
     char *(*type_get_name)(const void *);
     int (*field_get_flags)(void *);
     const char *(*image_get_name)(void *);
-    size_t (*image_get_class_count)(void *);
-    void *(*image_get_class)(void *, size_t);
+    // Tipos exatos do il2cpp-api (BepInEx Il2CppInterop IL2CPP.cs: uint
+    // il2cpp_image_get_class_count / IntPtr il2cpp_image_get_class(IntPtr,
+    // uint)): size_t leria metade alta indefinida do x0 no arm64.
+    uint32_t (*image_get_class_count)(void *);
+    void *(*image_get_class)(void *, uint32_t);
     void (*free)(void *);
     void *domain;
 

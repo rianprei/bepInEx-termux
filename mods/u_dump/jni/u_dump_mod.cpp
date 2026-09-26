@@ -71,17 +71,18 @@ static bool read_cmdline(char *out, size_t cap) {
     return n > 0 && out[0] != '\0';
 }
 
-// pkg do processo (C1): env do loader, senão cmdline fora de zygote* (retry:
-// no constructor o cmdline ainda é zygote64 — achado em device com u_patch).
-static bool resolve_pkg(char *pkg, size_t cap) {
-    if (dump_pick_pkg(getenv("BEPINEX_PKG"), nullptr, pkg, cap)) return true;
+// pkg do processo (C1): env do loader, senão cmdline fora de zygote*.
+// Loop até resolver, sem teto: o specialize sempre reescreve o argv do
+// processo-app, e a thread dormindo não custa nada. Teto de 10s abortava
+// device lento antes do cmdline virar o do app (achado da revisão).
+static void resolve_pkg(char *pkg, size_t cap) {
+    if (dump_pick_pkg(getenv("BEPINEX_PKG"), nullptr, pkg, cap)) return;
     char cmd[256];
-    for (int i = 0; i < 50; i++) {
+    for (;;) {
         if (read_cmdline(cmd, sizeof(cmd)) && dump_pick_pkg(nullptr, cmd, pkg, cap))
-            return true;
+            return;
         usleep(200 * 1000);
     }
-    return false;
 }
 
 // Tamanho do mapeamento da libil2cpp (header do C5): soma os PT_LOAD.
@@ -117,15 +118,18 @@ static const char *full_class_name(void *klass, char *out, size_t cap) {
         snprintf(out, cap, "%s.%s", ns, nm);
         return out;
     }
-    const char *parts[16];  // nesting além disso é patológico: trunca
+    const char *parts[256];  // C5: namespace vem da RAIZ de verdade.
+    // Sobe a cadeia inteira (cadeia real é curta e finita); teto 256 só
+    // contra metadata corrompida em loop — aí a linha vira "?" em vez de
+    // sair com namespace do meio (bug da revisão).
     int nparts = 0;
     void *k = klass, *root = klass;
-    while (k && nparts < 16) {
+    while (k && nparts < 256) {
         parts[nparts++] = il.class_get_name(k);
         root = k;
         k = il.class_get_declaring_type(k);
     }
-    if (nparts == 0) { snprintf(out, cap, "?"); return out; }
+    if (nparts == 0 || nparts == 256) { snprintf(out, cap, "?"); return out; }
     for (int i = 0; i < nparts / 2; i++) {  // coletei fundo→raiz; C5 é raiz→fundo
         const char *tn = parts[i];
         parts[i] = parts[nparts - 1 - i];
@@ -133,6 +137,36 @@ static const char *full_class_name(void *klass, char *out, size_t cap) {
     }
     dump_join_class_name(out, cap, il.class_get_namespace(root), parts, nparts);
     return out;
+}
+
+// unity= do header C5 ("versão se achar"): UnityEngine.Application.
+// get_unityVersion via runtime_invoke. Seguro fora da main thread: thread
+// anexada (il2cpp_boot) + getter estático folha, o mesmo mecanismo das
+// calls do sa2content (Apply/Deserialize na worker). Qualquer falha =
+// string vazia (comportamento anterior). String il2cpp é UTF-16 em
+// +0x14/len +0x10, mesmo layout do il2cpp_str_eq (il2cpp_min.h).
+static bool unity_version_str(char *out, size_t cap) {
+    out[0] = '\0';
+    void *app = il.find_class("UnityEngine", "Application");
+    if (!app) return false;
+    bool ok = false;
+    void *s = il.call_static(app, "get_unityVersion", nullptr, 0, &ok);
+    if (!ok || !s || cap < 8) return false;
+    int32_t len = *(const int32_t *)((const uint8_t *)s + 0x10);
+    const uint16_t *c = (const uint16_t *)((const uint8_t *)s + 0x14);
+    if (len <= 0 || len >= (int32_t)cap) return false;
+    for (int32_t i = 0; i < len; i++) {
+        if (c[i] > 0x7E) return false;  // versão é ASCII ("2022.3.21f1")
+        out[i] = (char)c[i];
+    }
+    out[len] = '\0';
+    bool dot = false, dig = false;  // parece versão? exige dígito + ponto
+    for (int32_t i = 0; i < len; i++) {
+        if (out[i] == '.') dot = true;
+        if (out[i] >= '0' && out[i] <= '9') dig = true;
+    }
+    if (!dot || !dig) { out[0] = '\0'; return false; }
+    return true;
 }
 
 // Nome legível do tipo (type_get_name aloca pelo runtime: copia e solta).
@@ -196,10 +230,7 @@ static long long dump_class(FILE *out, void *image, void *klass, const char *cls
 
 static void *worker(void *) {
     char pkg[256], msg[256];
-    if (!resolve_pkg(pkg, sizeof(pkg))) {
-        LOG("pkg desconhecido (sem BEPINEX_PKG e cmdline zygote) — desistindo");
-        return nullptr;
-    }
+    resolve_pkg(pkg, sizeof(pkg));  // sempre resolve pós-specialize
     FILE *lg = log_open_append(pkg);
 
     char dir[352], path[384], tmp[448];
@@ -249,8 +280,9 @@ static void *worker(void *) {
     }
 
     {
-        char hdr[512];
-        int w = dump_write_header(hdr, sizeof(hdr), pkg, il2cpp_mapped_size(), "");
+        char hdr[512], unity[64];
+        unity_version_str(unity, sizeof(unity));  // vazio se não achar (C5: opcional)
+        int w = dump_write_header(hdr, sizeof(hdr), pkg, il2cpp_mapped_size(), unity);
         fwrite(hdr, 1, (size_t)w, out);
     }
 
