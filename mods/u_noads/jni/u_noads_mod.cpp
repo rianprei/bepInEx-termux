@@ -20,127 +20,14 @@
 #include <vector>
 
 #include "../../common/il2cpp_min.h"
+#include "u_noads_closers.h"  // closers por SDK (host-testável)
 #include "u_noads_pure.h"
 #include "u_noads_targets.h"
 
-// --- closers no escopo GLOBAL (fora de namespace{} anônimo): a tabela em
-// u_noads_targets.h guarda o endereço deles, então declaração e definição
-// têm que ser o mesmo símbolo. Definidos em anônimo seriam outros símbolos:
-// o clang acusa unused e o link falharia com undefined reference.
-static bool uno_read_ifield(const Il2Cpp &il, void *klass, void *obj, const char *name,
-                            void *&out) {
-    void *f = il.class_get_field_from_name(klass, name);
-    if (!f) return false;
-    il.field_get_value(obj, f, &out);
-    return true;
-}
-
-static bool uno_read_sfield(const Il2Cpp &il, void *klass, const char *name, void *&out) {
-    void *f = il.class_get_field_from_name(klass, name);
-    if (!f) return false;
-    il.field_static_get_value(f, &out);
-    return true;
-}
-
-// Chama Delegate.Invoke com N args. Delegate null = sem inscritos: nada a
-// notificar, sucesso (suprime sem disparar).
-static bool uno_invoke(const Il2Cpp &il, void *dlg, void **args, int nargs) {
-    if (!dlg) return true;
-    bool ok = false;
-    il.call(dlg, "Invoke", args, nargs, &ok);
-    return ok;
-}
-
-static void *uno_event_args(const Il2Cpp &il) {
-    void *k = il.find_class("System", "EventArgs");
-    return k ? il.object_new(k) : nullptr;
-}
-
-// Enum boxed via membro estático (sem chutar valor numérico).
-static void *uno_boxed_enum(const Il2Cpp &il, const char *ns, const char *klass,
-                            const char *member) {
-    void *k = il.find_class(ns, klass);
-    if (!k) return nullptr;
-    void *boxed = nullptr;
-    return uno_read_sfield(il, k, member, boxed) ? boxed : nullptr;
-}
-
-// Classe aninhada C# ("Fora/Dentro"): acha a externa e percorre nested.
-static void *uno_find_nested(const Il2Cpp &il, const char *outer_fqn, const char *nested) {
-    if (!il.class_get_nested_types || !il.class_get_name) return nullptr;
-    char ns[128], nm[128];
-    uno_split(outer_fqn, ns, sizeof(ns), nm, sizeof(nm));
-    void *outer = il.find_class(ns, nm);
-    if (!outer) return nullptr;
-    void *iter = nullptr, *k = nullptr;
-    while ((k = il.class_get_nested_types(outer, &iter)) != nullptr) {
-        const char *n = il.class_get_name(k);
-        if (n && std::strcmp(n, nested) == 0) return k;
-    }
-    return nullptr;
-}
-
-// --- closers (um por SDK; fontes e assinaturas em ADAPTERS.md) ---
-
-bool uno_close_google(UNoAdsFireCtx &c) {
-    const char *fields[] = {"OnAdClosed", "OnAdDidDismissFullScreenContent"};
-    void *dlg = nullptr;
-    for (int i = 0; i < 2 && !dlg; i++) uno_read_ifield(*c.il, c.klass, c.self, fields[i], dlg);
-    if (!dlg) return true;
-    void *args[2] = {c.self, uno_event_args(*c.il)};
-    return uno_invoke(*c.il, dlg, args, 2);
-}
-
-bool uno_close_unity(UNoAdsFireCtx &c) {
-    // listener = último arg do Show; adUnit = arg0 (string do jogo).
-    void *listener = c.args[c.show_argc - 1];
-    void *ad_unit = c.args[0];
-    if (!listener || !ad_unit) return false;
-    void *completed =
-        uno_boxed_enum(*c.il, "UnityEngine.Advertisements", "UnityAdsShowCompletionState",
-                       "COMPLETED");
-    if (!completed) return false;
-    void *args[2] = {ad_unit, completed};
-    bool ok = false;
-    c.il->call(listener, "OnUnityAdsShowComplete", args, 2, &ok);
-    return ok;
-}
-
-bool uno_close_levelplay(UNoAdsFireCtx &c) {
-    void *dlg = nullptr;
-    uno_read_ifield(*c.il, c.klass, c.self, "OnAdClosed", dlg);
-    if (!dlg) return true;
-    void *args[1] = {nullptr};
-    return uno_invoke(*c.il, dlg, args, 1);
-}
-
-static bool uno_close_max_in(UNoAdsFireCtx &c, const char *nested) {
-    void *cb = uno_find_nested(*c.il, "MaxSdkCallbacks", nested);
-    if (!cb) return false;
-    void *action = nullptr;
-    const char *fields[] = {"onAdHiddenEvent", "OnAdHiddenEvent"};
-    for (int i = 0; i < 2 && !action; i++) uno_read_sfield(*c.il, cb, fields[i], action);
-    if (!action) return true;
-    void *args[2] = {c.args[0], nullptr};
-    return uno_invoke(*c.il, action, args, 2);
-}
-
-bool uno_close_max_interstitial(UNoAdsFireCtx &c) { return uno_close_max_in(c, "Interstitial"); }
-bool uno_close_max_appopen(UNoAdsFireCtx &c) { return uno_close_max_in(c, "AppOpen"); }
-
-bool uno_close_metica(UNoAdsFireCtx &c) {
-    void *cb = uno_find_nested(*c.il, "Metica.Ads.MeticaAdsCallbacks", "Interstitial");
-    if (!cb) return false;
-    void *action = nullptr;
-    uno_read_sfield(*c.il, cb, "OnAdHidden", action);
-    if (!action) return true;
-    void *ad = nullptr;
-    void *ad_klass = c.il->find_class("Metica.Ads", "MeticaAd");
-    if (ad_klass) ad = c.il->object_new(ad_klass);
-    void *args[1] = {ad};
-    return uno_invoke(*c.il, action, args, 1);
-}
-
+// Os closers vivem em u_noads_closers.h (fora de namespace{} anônimo: a tabela
+// em u_noads_targets.h guarda o endereço deles, então declaração e definição têm
+// que ser o mesmo símbolo) e num header separado para o teste host exercitá-los
+// com stubs de il2cpp.
 namespace {
 
 constexpr const char *TAG = "u_noads";
@@ -157,13 +44,14 @@ struct Hook {
     // original com 5 slots: cobre Show 0..3 args + MethodInfo (fake recebe
     // (self,a,b,c,d); o que o método real não lê é lixo inofensivo).
     bool (*original)(void *, void *, void *, void *, void *);
-    // Plain bool de propósito: escritor único (worker, após instalar tudo),
-    // leitores toleram valor velho (false = repassa = direção segura).
-    bool active;
+    // atomic: o worker escreve ao terminar de instalar E o auto-cura no
+    // dispatch escreve da thread do jogo (revisão: "escritor único" era falso).
+    // relaxed basta: é um flag de direção segura (false = repassa).
+    std::atomic<bool> active;
 };
 
 Il2Cpp g_il;
-std::vector<Hook> g_hooks;
+std::vector<Hook *> g_hooks;  // atomic no Hook => não copia
 
 const char *pkg() {
     const char *value = std::getenv("BEPINEX_PKG");
@@ -229,16 +117,20 @@ void attach() { g_il.thread_attach(g_il.domain); }
 
 bool dispatch(std::size_t i, void *self, void *a, void *b, void *c, void *d) {
     if (i >= g_hooks.size()) return false;
-    Hook &h = g_hooks[i];
-    if (!h.active) return h.original(self, a, b, c, d);
+    Hook *h = g_hooks[i];
+    if (!h->active.load(std::memory_order_relaxed)) return h->original(self, a, b, c, d);
     attach();
-    UNoAdsFireCtx ctx{&g_il, h.klass, self, {a, b, c, d}, h.show_argc};
+    UNoAdsFireCtx ctx{&g_il, h->klass, self, {a, b, c, d}, h->show_argc};
     // closer null (Meta): Show retorna bool — false = caminho "sem fill".
-    bool closed = h.closer ? h.closer(ctx) : true;
+    bool closed = h->closer ? h->closer(ctx) : true;
     if (!closed) {
-        h.active = false;  // auto-cura: cumpre o que o log promete
-        log_line("%s: fechamento falhou; hook recusado, anúncio volta a aparecer", h.label);
-        return h.original(self, a, b, c, d);
+        h->active.store(false);  // auto-cura: cumpre o que o log promete
+        // A nota do closer entra no fim. Montada em buffer: std::string em
+        // varargs é UB (e o -Werror do gate acusa).
+        char why[256] = {0};
+        if (ctx.note) snprintf(why, sizeof(why), " (%s)", ctx.note);
+        log_line("%s: fechamento falhou%s; hook recusado, anúncio volta a aparecer", h->label, why);
+        return h->original(self, a, b, c, d);
     }
     static bool logged = false;
     if (!logged) {
@@ -296,10 +188,11 @@ void try_show(const char *label, const UNoAdsShow &s, std::size_t index) {
         log_line("%s: %s.%s curto demais pro hook, pulando", label, s.klass, s.method);
         return;
     }
-    Hook hook{klass, method, label, s.method, s.argc, s.closer, nullptr, false};
+    Hook *hook = new Hook{klass, method, label, s.method, s.argc, s.closer, nullptr, false};
     if (DobbyHook(code, reinterpret_cast<void *>(TRAMPOLINES[index]),
-                  reinterpret_cast<void **>(&hook.original)) != 0) {
+                  reinterpret_cast<void **>(&hook->original)) != 0) {
         log_line("%s: DobbyHook falhou em %s.%s", label, s.klass, s.method);
+        delete hook;
         return;
     }
     g_hooks.push_back(hook);
@@ -327,13 +220,20 @@ void *worker(void *) {
             if (g_hooks.size() > index) index++;
         }
     }
-    for (std::size_t i = 0; i < g_hooks.size(); i++) g_hooks[i].active = true;
+    for (std::size_t i = 0; i < g_hooks.size(); i++) g_hooks[i]->active.store(true);
     return nullptr;
 }
 
 } // namespace
 
 __attribute__((constructor)) static void u_noads_init() {
+    // Sem pacote resolvido não há pasta de mods nem log C1: não hooka nada
+    // (mesma decisão do u_patch/u_frida). logcat sempre.
+    const char *env = std::getenv("BEPINEX_PKG");
+    if (!env || !*env) {
+        __android_log_print(ANDROID_LOG_INFO, TAG, "sem BEPINEX_PKG — inerte");
+        return;
+    }
     pthread_t thread;
     if (pthread_create(&thread, nullptr, worker, nullptr) == 0) {
         pthread_detach(thread);

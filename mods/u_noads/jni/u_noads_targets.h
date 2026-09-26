@@ -21,6 +21,9 @@ struct UNoAdsFireCtx {
     void *self;       // this do Show (null se estático)
     void *args[4];    // a, b, c, d do fake (arg0..arg2 + MethodInfo perdidos)
     int show_argc;    // nº de args do Show hookado (sem this/MethodInfo)
+    // O closer escreve o motivo quando devolve false; o dispatch joga isso no
+    // log, senão "fechamento falhou" não diz nada acionável.
+    const char *note = nullptr;
 };
 
 // Dispara o fechamento; true = fluxo do jogo continua (suprime o anúncio).
@@ -45,7 +48,7 @@ enum class UNoAdsSdk {
 struct UNoAdsTarget {
     UNoAdsSdk sdk;
     const char *label;
-    UNoAdsShow shows[4];
+    UNoAdsShow shows[6];  // o AppLovin registra 3 sobrecargas de cada Show
     int show_count;
 };
 
@@ -73,8 +76,16 @@ inline const UNoAdsShow LEVELPLAY_SHOWS[] = {
     {"LevelPlayInterstitialAd", "ShowAd", 1, uno_close_levelplay},
 };
 
+// MaxSdkAndroid.cs:621/698: ShowInterstitial(adUnitIdentifier, placement =
+// null, customData = null) — parâmetros opcionais viram 3 sobrecargas no IL
+// (1, 2 e 3 args), e o jogo pode chamar qualquer uma. Registrar só a de 3
+// deixaria o overload mais comum (o de 1) desarmado.
 inline const UNoAdsShow MAX_SHOWS[] = {
+    {"MaxSdk", "ShowInterstitial", 1, uno_close_max_interstitial},
+    {"MaxSdk", "ShowInterstitial", 2, uno_close_max_interstitial},
     {"MaxSdk", "ShowInterstitial", 3, uno_close_max_interstitial},
+    {"MaxSdk", "ShowAppOpenAd", 1, uno_close_max_appopen},
+    {"MaxSdk", "ShowAppOpenAd", 2, uno_close_max_appopen},
     {"MaxSdk", "ShowAppOpenAd", 3, uno_close_max_appopen},
 };
 
@@ -92,7 +103,8 @@ inline const UNoAdsTarget U_NOADS_TARGETS[] = {
     {UNoAdsSdk::GoogleMobileAds, "GoogleMobileAds", {GOOGLE_SHOWS[0], GOOGLE_SHOWS[1]}, 2},
     {UNoAdsSdk::UnityAds, "UnityAds", {UNITY_SHOWS[0], UNITY_SHOWS[1]}, 2},
     {UNoAdsSdk::LevelPlay, "LevelPlay", {LEVELPLAY_SHOWS[0], LEVELPLAY_SHOWS[1]}, 2},
-    {UNoAdsSdk::AppLovinMax, "AppLovinMAX", {MAX_SHOWS[0], MAX_SHOWS[1]}, 2},
+    {UNoAdsSdk::AppLovinMax, "AppLovinMAX",
+     {MAX_SHOWS[0], MAX_SHOWS[1], MAX_SHOWS[2], MAX_SHOWS[3], MAX_SHOWS[4], MAX_SHOWS[5]}, 6},
     {UNoAdsSdk::MetaAudience, "MetaAudience", {META_SHOWS[0]}, 1},
     {UNoAdsSdk::Metica, "Metica", {METICA_SHOWS[0], METICA_SHOWS[1]}, 2},
 };

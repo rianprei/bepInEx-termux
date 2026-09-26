@@ -21,12 +21,12 @@ bool uno_close_metica(UNoAdsFireCtx &) { return false; }
 int main() {
     // Tabela: 6 alvos (Google, Unity, LevelPlay, MAX, Meta, Metica).
     assert(U_NOADS_TARGET_COUNT == 6);
-    assert(uno_hook_total() == 11);
+    assert(uno_hook_total() == 15);
     // Pool cobre a tabela (capacidade também guardada em runtime no mod).
     assert(uno_hook_total() <= (std::size_t)U_NOADS_TRAMP_N);
     for (std::size_t i = 0; i < U_NOADS_TARGET_COUNT; ++i) {
         const UNoAdsTarget &t = U_NOADS_TARGETS[i];
-        assert(t.show_count > 0 && t.show_count <= 4);
+        assert(t.show_count > 0 && t.show_count <= 6);
         assert(t.label && t.label[0]);
         for (int j = 0; j < t.show_count; j++) {
             assert(t.shows[j].klass && t.shows[j].klass[0]);
@@ -68,6 +68,6 @@ int main() {
     assert(uno_is_terminator(0xD65F03C0u) && uno_is_terminator(0xD61F03C0u) &&
            uno_is_terminator(0x14000005u));
     assert(!uno_is_terminator(0x34000020u) && !uno_is_terminator(0x94000005u));  // cbz/bl seguem
-    std::printf("u_noads host: tabela + split + guarda OK (11 hooks, pool cobre)\n");
+    std::printf("u_noads host: tabela + split + guarda OK (15 hooks, pool cobre)\n");
     return 0;
 }
