@@ -22,6 +22,7 @@ import io.github.rianprei.bepinex.manager.core.BmodInstaller;
 import io.github.rianprei.bepinex.manager.core.DumpParser;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
+import io.github.rianprei.bepinex.manager.core.ScanFlow;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.DumpEntry;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
@@ -166,36 +167,27 @@ public class ModMakerActivity extends Activity {
         mTvScannerStatus.setText("Injetando u_dump.so e reiniciando o jogo...");
 
         new Thread(() -> {
+            File tmpSo = new File(getCacheDir(), "u_dump.so");
             try {
-                // 1. Extrai u_dump.so dos assets
-                File tmpSo = new File(getCacheDir(), "u_dump.so");
-                try (InputStream is = getAssets().open("u_dump.so");
-                     FileOutputStream fos = new FileOutputStream(tmpSo)) {
-                    byte[] buf = new byte[4096];
-                    int n;
-                    while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-                }
-
-                // 2. Copia para /data/local/tmp/mods/<pkg>/u_dump.so
-                SuHelper.ensureModDir(mPkg);
-                SuHelper.installFile(tmpSo.getAbsolutePath(), "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
-                tmpSo.delete();
-
-                // 3. Remove dump.tsv antigo
-                SuHelper.deleteDump(mPkg);
-
-                // 4. Reinicia o jogo
-                SuHelper.restartGame(mPkg);
-
+                ScanFlow.run(name -> getAssets().open(name), new ScanFlow.Device() {
+                    public boolean ensureModDir() { return SuHelper.ensureModDir(mPkg); }
+                    public boolean install(String local, String ignored) {
+                        return SuHelper.installFile(local, "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
+                    }
+                    public boolean deleteDump() { return SuHelper.deleteDump(mPkg); }
+                    public boolean restartGame() { return SuHelper.restartGame(mPkg); }
+                    public boolean dumpReady() {
+                        return SuHelper.readDump(mPkg) != null;
+                    }
+                    public boolean removeScanner() {
+                        return SuHelper.deleteFile("/data/local/tmp/mods/" + mPkg + "/u_dump.so");
+                    }
+                    public void sleep(long millis) throws InterruptedException { Thread.sleep(millis); }
+                }, tmpSo);
                 mMainHandler.post(() -> {
-                    mTvScannerStatus.setText("Scanner ativo! O jogo foi reiniciado. Aguarde alguns segundos para gerar o dump.");
-                    Toast.makeText(this, "Scanner injetado. Aguarde a inicializacao do jogo.", Toast.LENGTH_LONG).show();
+                    mTvScannerStatus.setText("Scanner concluído: dump.tsv gerado.");
+                    Toast.makeText(this, "Scanner concluído.", Toast.LENGTH_LONG).show();
                 });
-
-                // 5. Aguarda 10 segundos e remove u_dump.so para nao ficar escaneando em todo boot
-                Thread.sleep(10000);
-                SuHelper.deleteFile("/data/local/tmp/mods/" + mPkg + "/u_dump.so");
-
                 mMainHandler.post(() -> checkAndSyncDump(false));
             } catch (Exception e) {
                 mMainHandler.post(() -> {

@@ -13,6 +13,7 @@ public class TestRunner {
             CrashGuardStateTest.run();
             BuildVersionTest.run();
             SuHelperTest.run();
+            ScanFlowTest.run();
             BmodInstallerTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);

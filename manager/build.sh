@@ -23,6 +23,8 @@ GEN_DIR="${MANAGER_GEN_DIR:-${ROOT_DIR}/gen}"
 OUTPUT_APK="${MANAGER_OUTPUT_APK:-${ROOT_DIR}/bepinex-manager.apk}"
 KEYSTORE="${MANAGER_KEYSTORE:-${ROOT_DIR}/.debug.keystore}"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}/.." log -1 --format=%ct)}"
+NDK_BUILD="${NDK_BUILD:-${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/23.2.8568313}/ndk-build}"
+U_DUMP_DIR="${ROOT_DIR}/../mods/u_dump"
 
 # Versao: vem do VERSION da RAIZ do repo, nunca de numero solto aqui. O
 # manifest tambem nao fixa nada — quem passa para o aapt2 e este script.
@@ -33,6 +35,29 @@ echo "[*] Versao (VERSION da raiz): ${VERSION_NAME} (versionCode ${VERSION_CODE}
 echo "[*] Limpando diretorios de build..."
 rm -rf "${BUILD_DIR}" "${GEN_DIR}"
 mkdir -p "${BUILD_DIR}/compiled_res" "${BUILD_DIR}/classes" "${BUILD_DIR}/dex" "${GEN_DIR}"
+
+echo "[*] Compilando u_dump.so para os assets do APK..."
+if [[ ! -x "${NDK_BUILD}" ]]; then
+    echo "[-] ndk-build nao encontrado em: ${NDK_BUILD}"
+    exit 1
+fi
+(
+    cd "${U_DUMP_DIR}"
+    "${NDK_BUILD}" APP_CFLAGS+="-Wall -Wextra" APP_CPPFLAGS+="-Wall -Wextra" -B -j4
+) > "${BUILD_DIR}/u_dump-build.log" 2>&1
+if grep -E 'warning:|error:' "${BUILD_DIR}/u_dump-build.log" >/dev/null; then
+    cat "${BUILD_DIR}/u_dump-build.log" >&2
+    echo "[-] warning/error ao compilar u_dump.so"
+    exit 1
+fi
+U_DUMP_SO="${U_DUMP_DIR}/libs/arm64-v8a/libu_dump.so"
+if [[ ! -f "${U_DUMP_SO}" ]]; then
+    echo "[-] u_dump.so nao foi gerado em: ${U_DUMP_SO}"
+    exit 1
+fi
+ASSET_DIR="${BUILD_DIR}/assets"
+mkdir -p "${ASSET_DIR}"
+cp "${U_DUMP_SO}" "${ASSET_DIR}/u_dump.so"
 
 # Garante keystore debug se nao existir
 if [[ "${MANAGER_UNSIGNED:-0}" != 1 && ! -f "${KEYSTORE}" ]]; then
@@ -47,10 +72,7 @@ echo "[*] 1/6. Compilando recursos com aapt2 compile..."
 "${BUILD_TOOLS}/aapt2" compile --dir "${ROOT_DIR}/res" -o "${BUILD_DIR}/compiled_res.zip"
 
 echo "[*] 2/6. Vinculando pacote com aapt2 link..."
-ASSET_ARGS=()
-if [[ -d "${ROOT_DIR}/assets" ]]; then
-    ASSET_ARGS=(-A "${ROOT_DIR}/assets")
-fi
+ASSET_ARGS=(-A "${ASSET_DIR}")
 "${BUILD_TOOLS}/aapt2" link \
     -I "${PLATFORM_JAR}" \
     --manifest "${ROOT_DIR}/AndroidManifest.xml" \
