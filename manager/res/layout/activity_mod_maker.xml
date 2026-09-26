@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Mod Maker (F6)"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/mm_tv_game"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Jogo: com.exemplo.jogo"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Secao 1: Scanner -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1. Scanner em Tempo Real (u_dump)"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/mm_tv_scanner_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Verificando dump..."
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/mm_btn_scan"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Escanear Jogo"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_primary"
+                    android:layout_marginRight="4dp"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/mm_btn_check_dump"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Checar dump.tsv"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_secondary"
+                    android:layout_marginLeft="4dp"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Secao 2: Busca Paginada no Dump -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="2. Explorar Classes e Métodos"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:layout_marginBottom="6dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="6dp">
+
+                <EditText
+                    android:id="@+id/mm_et_search"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="Buscar classe ou método..."
+                    android:textColorHint="@color/text_muted"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/card_background"
+                    android:padding="8dp"
+                    android:textSize="13sp"
+                    android:singleLine="true" />
+
+                <Button
+                    android:id="@+id/mm_btn_do_search"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Buscar"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_primary"
+                    android:layout_marginLeft="6dp"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="6dp">
+
+                <Button
+                    android:id="@+id/mm_btn_prev_page"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:text="◀ Ant"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_secondary" />
+
+                <TextView
+                    android:id="@+id/mm_tv_page_info"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="Página 1"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
+
+                <Button
+                    android:id="@+id/mm_btn_next_page"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:text="Próx ▶"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_secondary" />
+            </LinearLayout>
+
+            <!-- Lista com tamanho maximo para paginacao -->
+            <LinearLayout
+                android:id="@+id/mm_container_dump_results"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/mm_tv_dump_empty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text="Nenhum resultado exibido."
+                android:textColor="@color/text_muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Secao 3: Regras Adicionadas -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/mm_tv_rules_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3. Regras Criadas (0)"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:layout_marginBottom="6dp" />
+
+            <LinearLayout
+                android:id="@+id/mm_container_rules"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+
+        <!-- Secao 4: Metadados e Salvar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="12dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4. Salvar Mod (.patch + manifest)"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:layout_marginBottom="8dp" />
+
+            <EditText
+                android:id="@+id/mm_et_mod_id"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="ID do mod (ex: meu-mod-infinito)"
+                android:textColorHint="@color/text_muted"
+                android:textColor="@color/text_primary"
+                android:background="@drawable/card_background"
+                android:padding="8dp"
+                android:textSize="13sp"
+                android:layout_marginBottom="6dp"
+                android:singleLine="true" />
+
+            <EditText
+                android:id="@+id/mm_et_mod_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Nome do mod (ex: Munição Infinita)"
+                android:textColorHint="@color/text_muted"
+                android:textColor="@color/text_primary"
+                android:background="@drawable/card_background"
+                android:padding="8dp"
+                android:textSize="13sp"
+                android:layout_marginBottom="6dp"
+                android:singleLine="true" />
+
+            <EditText
+                android:id="@+id/mm_et_mod_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Descrição breve do mod..."
+                android:textColorHint="@color/text_muted"
+                android:textColor="@color/text_primary"
+                android:background="@drawable/card_background"
+                android:padding="8dp"
+                android:textSize="13sp"
+                android:layout_marginBottom="10dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/mm_btn_save_install"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Salvar e Ativar"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_primary"
+                    android:layout_marginRight="4dp"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/mm_btn_export_bmod"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Exportar .bmod"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/btn_secondary"
+                    android:layout_marginLeft="4dp"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
