@@ -59,3 +59,24 @@ allow appdomain bepinex_mod_file dir { getattr search read open }
 # getattr/open/read/map/execute no .so: dlopen() abre e le o arquivo, mmap com
 # PROT_EXEC (map) e o SO precisa ser executavel (execute).
 allow appdomain bepinex_mod_file file { getattr open read map execute }
+
+# --- W+X: o que Dobby e o u_patch exigem para hookar/patchar ---------------------
+# Duas verificacoes SELinux diferentes, e o AOSP ja cobre a primeira:
+#  - mmap() anonimo PROT_EXEC (pagina de trampoline do Dobby, pagina de thunks
+#    do u_patch) => self:process execmem. O AOSP JA da isso pro appdomain
+#    (private/app.te:189, "WebView and other application-specific JIT
+#    compilers"). Repetido aqui porque ROM OEM (HyperOS deste device) pode
+#    tirar a permissao, e mmap falhando nao deixa log nenhum no jogo.
+allow appdomain self:process execmem
+#  - mprotect() com +PROT_EXEC na pagina de codigo do jogo => execmod no tipo do
+#    arquivo mapeado. As libs do jogo sao apk_data_file
+#    (private/file_contexts:611, "/data/app(/.*)?"), e o AOSP da map+execute
+#    nelas (private/app.te:443, x_file_perms) mas NAO execmod. Sem esta linha o
+#    DobbyHook e o patch in-place do u_patch morrem com EACCES em Enforcing.
+allow appdomain apk_data_file:file execmod
+# Travessia de /data e /data/local (system_data_file:dir) ate /data/local/tmp:
+# o zygote ja tem r_dir_perms nisso (private/zygote.te:36). Para o appdomain o
+# AOSP nao tem neverallow cobrindo (o de private/app.te:608 so proibe o grupo
+# {create write setattr ...}, o que implica que o resto ja existe), mas nao achei
+# a linha que concede — e search e o minimo, custo zero.
+allow appdomain system_data_file:dir search
