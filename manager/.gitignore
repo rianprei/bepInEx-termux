@@ -1,0 +1,13 @@
+# Artefatos de build do Manager. O .gitignore da RAIZ e do projeto e nao pode
+# ser mexido por este branch (versao unica compartilhada), entao as regras do
+# Manager moram aqui: manager/gen/ (R.java e BuildVersion.java gerados),
+# o APK, o .idsig do apksigner e o keystore (que o build cria com a senha
+# publica "android"). build/ e libs/ ja sao cobertos pelo padrao da raiz.
+gen/
+*.apk
+*.idsig
+*.keystore
+.*.keystore
+*.jks
+*.p12
+*.pfx

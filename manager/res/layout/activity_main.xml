@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background"
+    android:padding="16dp">
+
+    <!-- Card de Status do Sistema -->
+    <LinearLayout
+        android:id="@+id/card_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_background"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="bepInEx Manager"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:id="@+id/tv_status_root"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Root: Verificando..."
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                android:id="@+id/tv_status_module"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Módulo: Verificando..."
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                android:id="@+id/tv_status_zygisk"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Zygisk: Verificando..."
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_status_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Manager: ..."
+            android:textSize="11sp"
+            android:textColor="@color/text_muted" />
+    </LinearLayout>
+
+    <!-- Barra de busca e filtro -->
+    <EditText
+        android:id="@+id/et_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/search_hint"
+        android:textColorHint="@color/text_muted"
+        android:textColor="@color/text_primary"
+        android:background="@drawable/card_background"
+        android:padding="10dp"
+        android:layout_marginBottom="8dp"
+        android:singleLine="true" />
+
+    <CheckBox
+        android:id="@+id/cb_filter_games"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/filter_games_only"
+        android:textColor="@color/text_secondary"
+        android:checked="true"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Barra de progresso para carregamento -->
+    <ProgressBar
+        android:id="@+id/progress_loading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone" />
+
+    <!-- Lista de Jogos -->
+    <ListView
+        android:id="@+id/list_games"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@color/card_border"
+        android:dividerHeight="1dp" />
+
+    <TextView
+        android:id="@+id/tv_empty"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/no_games_found"
+        android:textColor="@color/text_muted"
+        android:visibility="gone" />
+
+    <!-- Botao inferior para instalar .bmod avulso -->
+    <Button
+        android:id="@+id/btn_pick_bmod"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="+ Instalar arquivo .bmod"
+        android:textColor="@color/text_primary"
+        android:background="@drawable/btn_primary"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>

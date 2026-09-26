@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/dump_tv_kind"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:gravity="center"
+        android:text="M"
+        android:textStyle="bold"
+        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        android:background="@drawable/badge_engine"
+        android:layout_marginRight="8dp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/dump_tv_class"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Namespace.Classe"
+            android:textSize="11sp"
+            android:textColor="@color/text_muted" />
+
+        <TextView
+            android:id="@+id/dump_tv_member"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Metodo(args): tipo"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/dump_btn_add_rule"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:text="+ Regra"
+        android:textSize="11sp"
+        android:textColor="@color/text_primary"
+        android:background="@drawable/btn_primary"
+        android:paddingLeft="8dp"
+        android:paddingRight="8dp" />
+
+</LinearLayout>

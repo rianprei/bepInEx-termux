@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background"
+    android:padding="16dp">
+
+    <!-- Header do Jogo -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/card_background"
+        android:padding="12dp"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp">
+
+        <ImageView
+            android:id="@+id/detail_img_icon"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_marginRight="12dp"
+            android:contentDescription="Ícone do app" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/detail_tv_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Nome do Jogo"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/detail_tv_pkg"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="com.exemplo.jogo"
+                android:textSize="12sp"
+                android:textColor="@color/text_muted" />
+
+            <TextView
+                android:id="@+id/detail_tv_engine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Unity (IL2CPP)"
+                android:textSize="10sp"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/badge_engine"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Botoes de Acao Rapida -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btn_action_restart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_restart_game"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_primary"
+            android:layout_marginRight="4dp"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btn_action_log"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_view_log"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_secondary"
+            android:layout_marginLeft="4dp"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btn_action_install_bmod"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_install_mod"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_secondary"
+            android:layout_marginRight="4dp"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btn_action_mod_maker"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Mod Maker (F6)"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_secondary"
+            android:layout_marginLeft="4dp"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/install_any_file_hint"
+        android:textColor="@color/text_muted"
+        android:textSize="10sp"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Aviso do crashguard (F1d): aparece quando o loader gravou
+         disabled_by_crashguard, ou seja, o jogo fechou 2x seguidas depois
+         de carregar mods. some depois de Reativar. -->
+    <LinearLayout
+        android:id="@+id/detail_crashguard_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/card_background"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/detail_tv_crashguard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/detail_btn_reactivate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_reactivate_mods"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/btn_primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Titulo da Secao de Mods -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/mods_title"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_secondary"
+        android:layout_marginBottom="6dp" />
+
+    <!-- Lista de Mods Instalados -->
+    <ListView
+        android:id="@+id/detail_list_mods"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@color/card_border"
+        android:dividerHeight="1dp" />
+
+    <TextView
+        android:id="@+id/detail_tv_empty_mods"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/no_mods_installed"
+        android:textColor="@color/text_muted"
+        android:visibility="gone" />
+
+</LinearLayout>
