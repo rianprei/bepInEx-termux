@@ -26,11 +26,11 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | F1 zero-config + log C1 | merged, validado | 2026-09-26: SA2 sem allowlist carrega mods; `log.txt` escrito; BC 4/4 |
 | F1b `BEPINEX_PKG` | merged, validado | u_patch/u_dump leem o pacote certo |
 | F1c SELinux | merged, validado em Enforcing | v0.4.0 `setenforce 1`: SA2 (Dobby, u_dump) + BC 4/4, sem `avc` do nosso caminho |
-| sinais Termux→BC por seq | merged, **teste de device pendente** | `feeaab0` |
-| F1d crashguard | merged, **teste de device pendente** | `dd6746b`/`faf0afd` |
+| sinais Termux→BC por seq | merged, validado; bug de baseline em correção | 2026-09-26 v0.4.1: `reload_config` via Termux → prop seq 3 → jogo reagiu; props `persist.*` antigas disparam na abertura (kilo) |
+| F1d crashguard | merged, validado | 2026-09-26: t_crash matou 2x, 3ª abertura sem mods e viva, aviso no log; reativar = mods voltam; contador zera após 20s vivo |
 | F2 SDK | merged | `new_mod`/`pack_bmod` testados no host |
 | F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
-| F4 u_patch | branch, em correção | `return` bool aplicou e foi chamado 12x (Frida); revisão achou encoding errado em mul/float |
+| F4 u_patch | branch, em correção (2ª rodada) | re-review: `add x17,x18` (x18 reservado) e loop infinito em linha em branco introduzidos pelo fix |
 | F5/F6 Manager | branch, em correção | APK compila; faltam chcon, field, C7, frida, crashguard |
 | F7 zip | merged | v0.4.1 determinístico (`d34b709`); instalação do formato novo pendente |
 | F8 docs | branch, em correção | 8 achados de revisão |
