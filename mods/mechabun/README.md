@@ -97,7 +97,7 @@ JP 15.6.0, build-id `b94cc0dafd8521f1f7cfcf3841a29f13d7cd1ef3`):
   bruto que o mesmo doc citava — achado ao cross-referenciar). Corrigido
   usando fonte autoritativa: **tbcml** (lib de modding Battle Cats ativa,
   mantida, instalada em `~/.venvs/battlecats-mod/`),
-  `core/game_data/cat_base/cats.py:329-395` (`Stats.assign`), que é
+  `core/game_data/cat_base/cats.py` (linhas 329-395, fonte externo) (`Stats.assign`), que é
   código executável testado por terceiros, não transcrição manual.
 - Hook via `bc_mod_api.h` v3 (`install_hook`, capacidade nova adicionada
   no loader por este mod — DobbyHook cru pra alvo achado por
@@ -184,13 +184,13 @@ formato CSV. Hook "D2-fix" (0x8789e8) removido: era getter de freeze time.
 Pesquisa cruzada com 4 fontes independentes confirma que "Shrug Off"
 não é um recurso hipotético isolado — é o **mesmo proc interno**
 `IMUATK` que já implementa o Dodge:
-- `tbcml/game_data/bcu.py:176-177,547-548` — `dodge_prob`/
+- `tbcml/game_data/bcu.py` (linhas 176-177 e 547-548, fonte externo) — `dodge_prob`/
   `dodge_duration` lidos exclusivamente do proc `IMUATK`, sem proc
   "DODGE" separado.
-- `BCU-java-PC/resources/util.properties:364` — `ot13=Dodge Attack`.
-- `BCU-java-PC/Interpret.java:127,136` — `Data.P_IMUATK` como proc
+- `BCU-java-PC/resources/util.properties` (linha 364, fonte externo) — `ot13=Dodge Attack`.
+- `BCU-java-PC/Interpret.java` (linhas 127 e 136, fonte externo) — `Data.P_IMUATK` como proc
   único, não agrupado.
-- `cats.py:867-920` — `DODGE` no enum de habilidades não é proc
+- `cats.py` (linhas 867-920, fonte externo) — `DODGE` no enum de habilidades não é proc
   próprio, é a habilidade id=51 que ativa o proc `IMUATK`.
 
 O próprio design da comunidade (`battlecats-mecha-bun-ideal-
@@ -237,10 +237,10 @@ Segunda passada de verificação (sessão Freebuff, independente da de 2
 agentes acima) confirmou a conclusão e achou **um slot a mais** que ela
 não citou: `udi{cat_id}_{form}.png` (**upgrade icon**, tela de upgrade
 da unidade), carregado junto do deploy em `read_icons()` (tbcml
-`cats.py:1349-1350`). São esses — e só esses — os 2 slots de imagem
+`cats.py` (linhas 1349-1350, fonte externo)). São esses — e só esses — os 2 slots de imagem
 estática por unidade no jogo: loading screen é textura global única
-(`download.png`, `loading_screen.py:22`), banner de gacha é imagem de
-item de shop (`gatyaitemD_{id}_f/z.png`, `gatyaitem.py:217`), nenhum
+(`download.png`, `loading_screen.py` linha 22, fonte externo), banner de gacha é imagem de
+item de shop (`gatyaitemD_{id}_f/z.png`, `gatyaitem.py` linha 217, fonte externo), nenhum
 é por unidade.
 
 **Arquivos gerados** (na pasta `tools/`, zero arquivo do jogo
@@ -249,16 +249,16 @@ tocado), a partir da arte fan-made do usuário:
 | Arquivo | Slot | Dimensão | Conteúdo |
 |---|---|---|---|
 | `uni426_s00.png` | deploy icon (battle) | 128×128 | sujeito recortado composto dentro da janela oficial (14,26)-(113,101) do frame `uni_s.png` do tbcml, bottom-aligned |
-| `udi426_s.png` | upgrade icon (menu) | 294×111 | sujeito sobre plate `udi_s.png` ×3.5 colada em (13,1), crop (13,1,307,112) — pipeline exato `format_bcu_upgrade_icon_s`+`crop_upgrade_icon` (`cats.py:1420/1433`) |
+| `udi426_s.png` | upgrade icon (menu) | 294×111 | sujeito sobre plate `udi_s.png` ×3.5 colada em (13,1), crop (13,1,307,112) — pipeline exato `format_bcu_upgrade_icon_s`+`crop_upgrade_icon` (`cats.py` linhas 1420/1433, fonte externo) |
 
-**Convenção de nome** (tbcml `cats.py:1240/1243`, `get_cat_id_str` =
+**Convenção de nome** (tbcml `cats.py` linhas 1240/1243, fonte externo, `get_cat_id_str` =
 `PaddedInt(cat_id, 3)`):
 - deploy: `uni{cat_id:03d}_{form}00.png` → cat_id 426 True Form =
   `uni426_s00.png`
 - upgrade: `udi{cat_id:03d}_{form}.png` → cat_id 426 True Form =
   `udi426_s.png`
 - formas: `f`=Normal, `c`=Evolved, `s`=True, `u`=Ultra (`CatFormType`,
-  `cats.py:31-37`); Mecha-Bun só tem as 3 primeiras (ver D16)
+  `cats.py` linhas 31-37, fonte externo); Mecha-Bun só tem as 3 primeiras (ver D16)
 - nota: nos stats o arquivo é `unit{cat_id+1}.csv` (unit427.csv), mas
   nos icons NÃO tem +1 — `uni426`/`udi426` direto (padding 3 dígitos,
   ex.: cat_id 9 → `uni009_f00.png`)
@@ -517,12 +517,12 @@ suposição rotulada**:
   "ATK sem leitor" de `context/battlecats-mechabun-atk-dead-struct.md`
   foi superado).
 - Recharge — **fórmula confirmada exata** via tbcml
-  (`unit.py:126-136`, `Frames.from_pair_frames`): frames reais = raw × 2
+  (`unit.py` linhas 126-136, fonte externo, `Frames.from_pair_frames`): frames reais = raw × 2
   ("pair frames"). Não é suposição — é o código de conversão real da
   lib de modding, transform linear provado.
   **⚠️ SEM LEITOR CONFIRMADO** — D5 (recharge) escrito no struct mas sem
   efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
-- Range — **confirmado sem transform** via tbcml (`cats.py:332`,
+- Range — **confirmado sem transform** via tbcml (`cats.py` linha 332, fonte externo,
   `self.range = raw_data[5]`, sem wrapper nenhum): valor final = raw
   direto. Escalar raw por 250/190 dá final=250 exato, não aproximado.
   ✅ Leitor confirmado: getter 0x872cc0 lê col5 do struct (`add #0x32c`).
@@ -540,7 +540,7 @@ suposição rotulada**:
   efeito em batalha real (ver `context/battlecats-mechabun-atk-dead-struct.md`).
 - Mini-wave (D6), Strengthen (D7), Dodge (D8) — `tbcml` (`unit.py`
   classes `Wave`/`Strengthen`/`Dodge`) confirma os índices e que `Prob`
-  é percentual direto (`unit.py:164-181`, sem wrapper) — valores do
+  é percentual direto (`unit.py` linhas 164-181, fonte externo, sem wrapper) — valores do
   design ideal atribuídos sem nenhuma conversão precisar.
 
 Resta uma incerteza real, mas de escopo bem menor: o valor "atual" de
@@ -561,7 +561,7 @@ valor de referência estiver desatualizado.
 - Warp Immunity (D14, índice 75, `warp_blocker`) e Toxic Immunity
   (índice 90, `toxic_immunity`) — **correção desta revisão**: versão
   anterior deste README dizia "Warp Immunity não existe campo real",
-  ERRADO — campo confirmado direto no tbcml (`cats.py:227-228`), mesmo
+  ERRADO — campo confirmado direto no tbcml (`cats.py` linhas 227-228, fonte externo), mesmo
   padrão bool das outras imunidades. Implementado.
 
 **Resolvido nesta revisão (não é aproximação, é achado por identidade

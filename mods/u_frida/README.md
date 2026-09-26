@@ -15,7 +15,7 @@ binário (depois de esperar o il2cpp se houver — `libil2cpp.so` à vista em
   `listen`, `connect`, JSON inválido, chave duplicada ou >4KB = gadget NÃO
   carregado, com o `type` achado no log. Motivo: o default do gadget é
   `listen` com `on_load: wait` — o jogo congelaria esperando cliente e
-  abriria socket (127.0.0.1:27042).
+  abriria socket (127.0.0.1, porta 27042).
 - Tudo mora na pasta de mods de propósito: ela é `bepinex_mod_file`, e o
   `module/sepolicy.rule` tem
   `allow appdomain bepinex_mod_file file { getattr open read map execute }`.

@@ -60,7 +60,7 @@ benchmark C standalone (mesma metodologia `clock_gettime` do bc-poc) e
 enviado pro mesmo device físico via `adb push`. Resultado: `shadowhook_init`
 retornou `SHADOWHOOK_ERRNO_INIT_LINKER` (12) — a lib depende de resolver
 símbolos internos/privados do `linker64` do sistema (`sh_linker_get_symbol_info`,
-via `sh_linker.c:678`) que não bateram nesse device (Android 16, HyperOS,
+via `sh_linker.c` (linha 678, fonte externo)) que não bateram nesse device (Android 16, HyperOS,
 build de linker recente/específico da OEM). Não investiguei mais fundo
 (precisaria decompilar o linker64 específico desse device) — reportado como
 achado honesto, ironicamente valida a mesma tese de fragilidade

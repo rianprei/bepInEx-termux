@@ -161,6 +161,70 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     fi
 ' bash "$ROOT"
 
+DOC_REF_COUNT="$TMP/docs-reference-count"
+run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
+    python3 - "$1" "$2" <<"PY"
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+count_file = Path(sys.argv[2])
+ref_re = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z_][A-Za-z0-9_]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
+files = subprocess.check_output(
+    ["git", "ls-files", "docs/*.md", "mods/*/README.md"], cwd=root, text=True
+).splitlines()
+tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
+by_name = {}
+for item in tracked:
+    by_name.setdefault(Path(item).name, []).append(item)
+errors = []
+checked = 0
+for doc_name in files:
+    doc = root / doc_name
+    for line_no, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        refs = list(ref_re.finditer(line))
+        if not refs:
+            continue
+        targets = []
+        for match in refs:
+            name = match.group("path")
+            start = int(match.group("start"))
+            end = int(match.group("end") or start)
+            candidate = root / name
+            if candidate.is_file():
+                target = name
+            elif "/" not in name and len(by_name.get(name, [])) == 1:
+                target = by_name[name][0]
+            else:
+                errors.append(f"{doc_name}:{line_no}: alvo inexistente/ambiguo: {name}")
+                continue
+            target_lines = (root / target).read_text(encoding="utf-8", errors="replace").splitlines()
+            if start < 1 or end < start or end > len(target_lines):
+                errors.append(f"{doc_name}:{line_no}: linha fora do arquivo: {name}:{start}-{end}")
+                continue
+            targets.append((target, target_lines))
+            checked += 1
+        literals = [
+            span for span in re.findall(r"`([^`\n]+)`", line)
+            if not ref_re.fullmatch(span) and not ref_re.search(span)
+        ]
+        for literal in literals:
+            if len(literal) < 4 or "/" in literal and Path(literal).suffix:
+                continue
+            if targets and not any(literal in "\n".join(lines) for _, lines in targets):
+                errors.append(f"{doc_name}:{line_no}: literal nao encontrado: {literal!r}")
+if errors:
+    print("\n".join(errors), file=sys.stderr)
+    raise SystemExit(1)
+count_file.write_text(f"docs: referencias arquivo:linha verificadas: {checked}\n", encoding="utf-8")
+PY
+' bash "$ROOT" "$DOC_REF_COUNT"
+if [ -f "$DOC_REF_COUNT" ]; then
+    cat "$DOC_REF_COUNT"
+fi
+
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
