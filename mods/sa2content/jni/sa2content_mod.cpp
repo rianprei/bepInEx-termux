@@ -19,13 +19,19 @@
 //
 // patches.h é gerado por tools/gen_patches.py a partir do snapshot lido em
 // runtime.
-#include <android/log.h>
+//
+// Log: mod_common (C1). Antes ia só pro logcat; agora a mesma linha vai pro
+// logcat E para /data/data/<pkg>/files/bepinex/log.txt, no formato do loader
+// ("HH:MM:SS [sa2content] msg"). O texto das mensagens não mudou — inclusive
+// o "Apply LANÇOU EXCEÇÃO" continua sendo o mesmo aviso.
 #include <pthread.h>
 #include "dobby.h"
 #include "../../common/il2cpp_min.h"
+#include "../../common/mod_common.h"
 #include "patches.h"
 
-#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "sa2content", __VA_ARGS__)
+#define TAG "sa2content"
+#define LOG(...) mod_log(TAG, __VA_ARGS__)
 
 // Unknown jogável (validado no device 2026-09-25). -DSA2_ENABLE_UNKNOWN=0 desliga.
 #ifndef SA2_ENABLE_UNKNOWN
