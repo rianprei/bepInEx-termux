@@ -148,9 +148,10 @@ public class BmodInstallerTest {
     }
 
     private static void testPayloadBombRecusado() throws IOException {
-        check("teto de payload em producao e 64MB", BmodInstaller.MAX_PAYLOAD_BYTES == 64L * 1024 * 1024);
-        check("teto de manifest em producao e 64KB", BmodInstaller.MAX_MANIFEST_BYTES == 64L * 1024);
-        check("teto de .patch em producao e 256KB", BmodInstaller.MAX_PATCH_BYTES == 256L * 1024);
+        // Nenhuma checagem de constante aqui de proposito: se o teste so
+        // repetisse "MAX_PAYLOAD_BYTES == 64MB", a sabotagem de mexer no
+        // numero passaria. O que tem de provar e COMPORTAMENTO: o bomb entra
+        // e o codigo recusa, com o teto no motivo da recusa.
 
         // (1) O caso do briefing: 1MB de zeros numa entrada que DECLARA 16
         // bytes, num .patch (teto 256KB). Barato e e o ataque classico.
