@@ -16,6 +16,7 @@
 // Opcodes fixos (codificação conferida contra llvm-objdump do NDK — Caso 57).
 #define UP_RET 0xD65F03C0           // ret
 #define UP_BLR_X16 0xD63F0200       // blr x16
+#define UP_BR_X16 0xD61F0200        // br x16 (tail call — NÃO toca x30)
 #define UP_LDR_X16_ORIG 0xF9400210  // ldr x16, [x16]
 #define UP_MUL_X0 0x9B017C00        // mul x0, x0, x1
 #define UP_FMUL_S0 0x1E210800       // fmul s0, s0, s1
@@ -52,14 +53,21 @@ static inline uint32_t up_enc_add_x16(uint32_t lo12) {
     return 0x91000210u | ((lo12 & 0xFFFu) << 10);
 }
 // LDXR/STXR NÃO têm imediato de offset (exclusivas só endereço base).
-// Lock: x17 = x16 + 24 no thunk (adrp+add), então endereça [x17] direto.
-// ldxr w9, [x17]
+// Lock: x17 = x16 + 24 no thunk ('add x17, x16, #24'), então [x17] direto.
+// ldxr com semântica ACQUIRE (não deixa o unlock passar pra trás):
+// ldaxr w9, [x17]
 static inline uint32_t up_enc_ldxr_lock() {
-    return 0x885F7E29u;
+    return 0x885FFE29u;
 }
-// stxr w10, w9, [x17] (Rs=w10 grava status, Rt=w9 é o dado)
+// stxr w10, w9, [x17] (Rs=w10 grava status, Rt=w9 é o dado) — set do lock.
 static inline uint32_t up_enc_stxr_lock() {
     return 0x880A7E29u;
+}
+// Unlock com semântica RELEASE (o jogo só segue depois do lock solto):
+// stlr wzr, [x17] (xzr = 0 = livre; Rn=17 = slot+24 — Rn=16 zeraria o
+// ponteiro orig do slot, achado no disassembly do fix anterior)
+static inline uint32_t up_enc_stlr_unlock() {
+    return 0x889FFE3Fu;
 }
 // add x17, x16, #imm — endereço do lock vem de x16 (que já aponta pro
 // slot): UMA instrução, register-relative, sem risco de lo12 embrulhar
@@ -133,11 +141,14 @@ static inline bool up_method_fits(const uint32_t *orig, int nwords) {
 // R0-R7/stack preservados (só x16/x17/x1 mexidos pós-chamada, todos
 // caller-saved; x18 é reservado da plataforma, nunca usado). Trava curta:
 // reentrância cai no caminho direto (sem mul, sem hang).
-// Layout (21 palavras): 0-1 adrp/add x16=slot, 2 add x17,x16,#24 (lock;
-// LDXR/STXR não têm imediato), 3 ldxr w9,[x17], 4 cbnz ocupado->direto,
-// 5 mov w9,#1, 6 stxr w10,w9,[x17], 7 cbnz perdeu->ldxr, 8 str lr,
-// 9 ldr orig, 10 blr, 11-12 adrp/add x16=slot, 13 ldr fator, 14 mul,
-// 15 str xzr unlock, 16 restore lr, 17 ret, 18-20 caminho direto.
+// Layout (20 palavras): 0-1 adrp/add x16=slot, 2 add x17,x16,#24 (lock;
+// LDXR/STXR não têm imediato), 3 ldaxr w9,[x17] (acquire), 4 cbnz ocupado
+// -> direto, 5 mov w9,#1, 6 stxr w10,w9,[x17], 7 cbnz perdeu->ldxr,
+// 8 str lr, 9 ldr orig, 10 blr, 11-12 adrp/add x16=slot, 13 ldr fator,
+// 14 mul, 15 stlr wzr unlock (release), 16 restore lr, 17 ret,
+// 18-19 caminho direto: ldr x16 + br x16 = TAIL CALL (blr gravaria
+// x30=return-do-thunk e o ret seguinte saltaria pra ele mesmo: loop
+// infinito em recursão/concorrência — achado no disassembly do device).
 static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const void *slot_va, bool is_float) {
     uintptr_t slot = (uintptr_t)slot_va;
     uint32_t lo = (uint32_t)(slot & 0xFFFu);
@@ -146,11 +157,11 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = up_enc_adrp_x16(at(0), slot_va);
     out[i++] = up_enc_add_x16(lo);        // x16 = slot
     out[i++] = up_enc_add_x17_imm(UP_SLOT_LOCK);  // x17 = slot + 24
-    out[i++] = up_enc_ldxr_lock();
+    out[i++] = up_enc_ldxr_lock();        // ldaxr (acquire)
     out[i++] = up_enc_cbnz_w(9, 4, 18);   // ocupado -> direto
     out[i++] = UP_MOVZ_W9_1;
     out[i++] = up_enc_stxr_lock();
-    out[i++] = up_enc_cbnz_w(10, 7, 3);   // perdeu corrida -> refaz ldxr
+    out[i++] = up_enc_cbnz_w(10, 7, 3);   // perdeu corrida -> refaz ldaxr
     out[i++] = up_enc_str_x(30, UP_SLOT_LR);
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
@@ -163,17 +174,15 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
         out[i++] = up_enc_ldr_x(1, UP_SLOT_VALUE);
         out[i++] = UP_MUL_X0;
     }
-    out[i++] = up_enc_str_x(31, UP_SLOT_LOCK);  // xzr destrava
+    out[i++] = up_enc_stlr_unlock();      // release, xzr destrava
     out[i++] = up_enc_ldr_x(30, UP_SLOT_LR);
     out[i++] = UP_RET;
-    // caminho direto (18): sem lock, sem save — lr intacto, só repassa.
-    // x16 ainda = slot (só adrp/add dele até aqui; cbnz não mexe).
+    // caminho direto (18): sem lock, sem save, sem tocar x30 — tail call.
     out[i++] = UP_LDR_X16_ORIG;
-    out[i++] = UP_BLR_X16;
-    out[i++] = UP_RET;
-    return i;  // 21
+    out[i++] = UP_BR_X16;
+    return i;  // 20
 }
-#define UP_MUL_THUNK_WORDS 21
-// ponytail: teto de 24 thunks mul (24*84 = 2016 bytes numa página RX de 4096).
+#define UP_MUL_THUNK_WORDS 20
+// ponytail: teto de 24 thunks mul (24*80 = 1920 bytes numa página RX de 4096).
 // Passou disso, a regra vira log e o jogo segue sem ela.
 #define UP_MUL_MAX 24
