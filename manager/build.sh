@@ -139,12 +139,37 @@ else
         echo "ERRO: keystore ausente: ${KEYSTORE}; forneça MANAGER_KEYSTORE." >&2
         exit 1
     }
-    "${BUILD_TOOLS}/apksigner" sign \
-        --ks "${KEYSTORE}" \
-        --ks-pass pass:android \
-        --key-pass pass:android \
-        --out "${OUTPUT_APK}" \
-        "${BUILD_DIR}/aligned.apk"
+    # Chave debug (.debug.keystore) mantém pass:android (pública, debug).
+    # Outra chave: alias configurável e senha via env (nunca literal).
+    if [[ "${KEYSTORE}" == "${ROOT_DIR}/.debug.keystore" ]]; then
+        "${BUILD_TOOLS}/apksigner" sign \
+            --ks "${KEYSTORE}" \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "${OUTPUT_APK}" \
+            "${BUILD_DIR}/aligned.apk"
+    else
+        # Senha via env MANAGER_KS_PASS; sem ela, apksigner pede no terminal.
+        KSDIR="$(dirname "${KEYSTORE}")"
+        KSNAME="$(basename "${KEYSTORE}")"
+        if [[ -n "${MANAGER_KS_PASS:-}" ]]; then
+            export MANAGER_KS_PASS
+            "${BUILD_TOOLS}/apksigner" sign \
+                --ks "${KEYSTORE}" \
+                --ks-key-alias "${MANAGER_KEY_ALIAS:-manager}" \
+                --ks-pass env:MANAGER_KS_PASS \
+                --out "${OUTPUT_APK}" \
+                "${BUILD_DIR}/aligned.apk"
+            unset MANAGER_KS_PASS
+        else
+            echo "[*] Senha não fornecida; apksigner pedirá no terminal..." >&2
+            "${BUILD_TOOLS}/apksigner" sign \
+                --ks "${KEYSTORE}" \
+                --ks-key-alias "${MANAGER_KEY_ALIAS:-manager}" \
+                --out "${OUTPUT_APK}" \
+                "${BUILD_DIR}/aligned.apk"
+        fi
+    fi
 fi
 
 echo "[+] Build concluido com sucesso: ${OUTPUT_APK}"
