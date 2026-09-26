@@ -34,7 +34,6 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <elf.h>
 
 #include "zygisk.hpp"
 #include "dobby.h"
@@ -46,6 +45,7 @@
 #include "bc_signal.h"    // sinais companion<->poll SEM __system_property_set (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes na janela => não carrega mods (lógica pura)
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
+#include "bc_elf_file.h"     // preflight bounded de .dynsym/.dynstr no arquivo
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
 #include "bc_generic_hook.h" // hook de log genérico (DobbyInstrument) em símbolo Java_* descoberto
@@ -1127,6 +1127,7 @@ static void mod_api_log(bc_log_level level, const char *msg) {
 // run_entry real: sym já foi resolvido via dlsym(handle, "bc_mod_register")
 // pelo bc_loader_load_one — só faz o cast e chama.
 static bool mod_entry_runner(void *api, void *sym) {
+    if (sym == nullptr) return false;
     auto fn = (bc_mod_register_fn)sym;
     return fn((const bc_mod_api *)api);
 }
@@ -1179,101 +1180,6 @@ static bool discover_mod_manifest(void *handle, bc_manifest_snapshot *out) {
 // funciona pros mods usarem. Isolamento de falha por arquivo: um mod que
 // falha em dlopen/dlsym é pulado (logado), não derruba os outros nem o jogo
 // (mesmo padrão DORMANT já usado nos hooks estáticos).
-static bool bc_file_read_exact(int fd, void *buf, size_t size, off_t offset) {
-    char *cursor = (char *)buf;
-    while (size > 0) {
-        ssize_t n = pread(fd, cursor, size, offset);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-        if (n == 0) return false;
-        cursor += n;
-        size -= (size_t)n;
-        offset += n;
-    }
-    return true;
-}
-
-static bool bc_file_range_ok(off_t file_size, uint64_t offset, uint64_t size) {
-    return offset <= (uint64_t)file_size && size <= (uint64_t)file_size - offset;
-}
-
-static bool bc_filter_exact_symbol(const char *name, size_t name_len) {
-    static const char wanted[] = "bc_mod_register";
-    return name_len == sizeof(wanted) - 1 && memcmp(name, wanted, name_len) == 0;
-}
-
-struct bc_symbol_probe {
-    bool found;
-};
-
-static void bc_symbol_probe_cb(const char *, uint64_t, void *user) {
-    ((bc_symbol_probe *)user)->found = true;
-}
-
-static bool bc_file_has_bc_mod_register(const char *path) {
-    static constexpr uint64_t kMaxSectionBytes = 64 * 1024 * 1024;
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return false;
-    struct stat st;
-    Elf64_Ehdr ehdr;
-    bool ok = fstat(fd, &st) == 0 &&
-              st.st_size >= (off_t)sizeof(ehdr) &&
-              bc_file_read_exact(fd, &ehdr, sizeof(ehdr), 0);
-    if (!ok || memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0 ||
-        ehdr.e_ident[EI_CLASS] != ELFCLASS64 ||
-        ehdr.e_ident[EI_DATA] != ELFDATA2LSB ||
-        ehdr.e_shentsize != sizeof(Elf64_Shdr) || ehdr.e_shnum == 0 ||
-        ehdr.e_shoff > (uint64_t)st.st_size ||
-        (uint64_t)ehdr.e_shnum > ((uint64_t)st.st_size - ehdr.e_shoff) / ehdr.e_shentsize ||
-        (uint64_t)ehdr.e_shnum > SIZE_MAX / sizeof(Elf64_Shdr)) {
-        close(fd);
-        return false;
-    }
-    size_t shdr_bytes = (size_t)ehdr.e_shnum * sizeof(Elf64_Shdr);
-    Elf64_Shdr *shdrs = (Elf64_Shdr *)malloc(shdr_bytes);
-    if (shdrs == nullptr || !bc_file_read_exact(fd, shdrs, shdr_bytes, (off_t)ehdr.e_shoff)) {
-        free(shdrs);
-        close(fd);
-        return false;
-    }
-    bool found = false;
-    for (size_t i = 0; i < ehdr.e_shnum && !found; i++) {
-        const Elf64_Shdr *symsec = &shdrs[i];
-        if (symsec->sh_type != SHT_DYNSYM || symsec->sh_entsize != sizeof(bc_elf64_sym) ||
-            symsec->sh_size == 0 || symsec->sh_size > kMaxSectionBytes ||
-            symsec->sh_size % symsec->sh_entsize != 0 || symsec->sh_link >= ehdr.e_shnum) {
-            continue;
-        }
-        const Elf64_Shdr *strsec = &shdrs[symsec->sh_link];
-        if (strsec->sh_type != SHT_STRTAB || strsec->sh_size == 0 ||
-            strsec->sh_size > kMaxSectionBytes ||
-            !bc_file_range_ok(st.st_size, symsec->sh_offset, symsec->sh_size) ||
-            !bc_file_range_ok(st.st_size, strsec->sh_offset, strsec->sh_size)) {
-            continue;
-        }
-        size_t sym_bytes = (size_t)symsec->sh_size;
-        size_t str_bytes = (size_t)strsec->sh_size;
-        bc_elf64_sym *symbols = (bc_elf64_sym *)malloc(sym_bytes);
-        char *strings = (char *)malloc(str_bytes);
-        if (symbols != nullptr && strings != nullptr &&
-            bc_file_read_exact(fd, symbols, sym_bytes, (off_t)symsec->sh_offset) &&
-            bc_file_read_exact(fd, strings, str_bytes, (off_t)strsec->sh_offset)) {
-            bc_symbol_probe probe = {};
-            bc_elf_symtab_scan_filtered(symbols, sym_bytes / sizeof(*symbols), strings,
-                                        str_bytes, bc_filter_exact_symbol,
-                                        bc_symbol_probe_cb, &probe);
-            found = probe.found;
-        }
-        free(strings);
-        free(symbols);
-    }
-    free(shdrs);
-    close(fd);
-    return found;
-}
-
 static void load_dynamic_mods() {
     // achado real (revisão kilo): esta função é re-executada inteira a cada
     // sinal de reload_mods (mesmo processo, mesmo dlopen path/handle já
@@ -1351,7 +1257,14 @@ static void load_dynamic_mods() {
     for (int i = 0; i < n_names; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
-        if (!bc_file_has_bc_mod_register(path)) {
+        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(path);
+        if (probe.result == BC_ELF_FILE_ERROR) {
+            LOGW("mod loader: %s — erro lendo ELF (%s), descartado sem abrir",
+                 names[i], strerror(probe.error_number));
+            failed++;
+            continue;
+        }
+        if (probe.result == BC_ELF_FILE_NO_SYMBOL) {
             LOGW("mod loader: %s — sem bc_mod_register: nao e mod do Battle Cats, "
                  "descartado sem abrir; mods autonomos vao em /data/local/tmp/mods/<pacote>/",
                  names[i]);
@@ -1423,6 +1336,14 @@ static void load_dynamic_mods() {
             int gi = res.order[k];
             int i = idx_map[gi];
             void *sym = ops.dlsym(handles[i], "bc_mod_register");
+            if (sym == nullptr) {
+                LOGW("mod loader: %s — bc_mod_register sumiu apos dlopen, descartado",
+                     names[i]);
+                ops.dlclose(handles[i]);
+                opened[i] = false;
+                failed++;
+                continue;
+            }
             bool active = mod_entry_runner(const_cast<bc_mod_api *>(&api), sym);
             if (active) {
                 LOGI("mod loader: %s carregado e ativo", names[i]);

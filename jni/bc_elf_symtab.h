@@ -82,10 +82,11 @@ static inline bool bc_elf_filter_jni_prefix(const char *name, size_t name_len) {
 // existir, não é erro). Bounds-safe: nunca lê symtab[i] se i >= sym_count,
 // nunca lê strtab além de strtab_size a partir de st_name (nome inválido é
 // pulado, não crasha).
-static inline int bc_elf_symtab_scan_filtered(const bc_elf64_sym *symtab, size_t sym_count,
+static inline int bc_elf_symtab_scan_filtered_ex(const bc_elf64_sym *symtab, size_t sym_count,
                                                const char *strtab, size_t strtab_size,
                                                bc_elf_symtab_name_filter filter,
-                                               bc_elf_symtab_cb cb, void *user) {
+                                               bc_elf_symtab_cb cb, void *user,
+                                               bool require_defined) {
     if (symtab == nullptr || strtab == nullptr || cb == nullptr || filter == nullptr) return 0;
     int found = 0;
     // índice 0 é sempre o símbolo nulo reservado (ELF spec) — pula.
@@ -95,6 +96,7 @@ static inline int bc_elf_symtab_scan_filtered(const bc_elf64_sym *symtab, size_t
         int type = BC_ELF_STT(s->st_info);
         if (type != BC_ELF_STT_FUNC) continue;
         if (bind != BC_ELF_STB_GLOBAL && bind != BC_ELF_STB_WEAK) continue;
+        if (require_defined && (s->st_shndx == 0 || s->st_value == 0)) continue;
         if (s->st_name == 0 || s->st_name >= strtab_size) continue;  // nunca lê fora do strtab
         const char *name = strtab + s->st_name;
         // strnlen defensivo: nome sem terminador dentro de strtab_size
@@ -107,6 +109,14 @@ static inline int bc_elf_symtab_scan_filtered(const bc_elf64_sym *symtab, size_t
         found++;
     }
     return found;
+}
+
+static inline int bc_elf_symtab_scan_filtered(const bc_elf64_sym *symtab, size_t sym_count,
+                                               const char *strtab, size_t strtab_size,
+                                               bc_elf_symtab_name_filter filter,
+                                               bc_elf_symtab_cb cb, void *user) {
+    return bc_elf_symtab_scan_filtered_ex(symtab, sym_count, strtab, strtab_size,
+                                           filter, cb, user, false);
 }
 
 // Atalho: mesmo núcleo, filtro fixo em prefixo "Java_" (convenção JNI).

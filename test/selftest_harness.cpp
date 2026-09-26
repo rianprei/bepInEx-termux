@@ -24,6 +24,9 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <vector>
+#include <string>
+#include <elf.h>
 #include <cstdarg>
 #include <ctime>
 #include <cerrno>
@@ -48,6 +51,7 @@
 #include "bc_pattern_scan.h"  // AOB scan — bc_pattern_scan_buffer (lógica pura, testável no host)
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
+#include "bc_elf_file.h"    // preflight do .so no disco — parser puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
 #include "../mods/u_frida/jni/u_frida_config.h"  // F11: config do gadget (puro)
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
@@ -1475,7 +1479,103 @@ int main() {
         check("sym_count=0 (sem DT_GNU_HASH) → 0 símbolos, sem crash", n4 == 0);
     }
 
-    printf("\n[Caso 53] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
+    printf("\n[Caso 53] bc_elf_file: preflight bounded de .dynsym/.dynstr\n");
+    {
+        const char *bc_so = "../mods/kungfux/libs/arm64-v8a/libkungfux.so";
+        const char *autonomous_so = "../mods/sa2ammo/libs/arm64-v8a/libsa2ammo.so";
+        std::FILE *src = std::fopen(bc_so, "rb");
+        check("arquivo BC real existe", src != nullptr);
+        std::vector<unsigned char> original;
+        if (src != nullptr) {
+            std::fseek(src, 0, SEEK_END);
+            long size = std::ftell(src);
+            std::rewind(src);
+            original.resize((size_t)size);
+            check("arquivo BC real foi lido", size > 0 &&
+                  std::fread(original.data(), 1, original.size(), src) == original.size());
+            std::fclose(src);
+        }
+        auto write_temp = [](const std::vector<unsigned char> &data, const char *tag) {
+            char path[128];
+            std::snprintf(path, sizeof(path), "/tmp/bc-elf-%s-XXXXXX", tag);
+            int fd = mkstemp(path);
+            if (fd < 0) return std::string();
+            ssize_t written = write(fd, data.data(), data.size());
+            close(fd);
+            return written == (ssize_t)data.size() ? std::string(path) : std::string();
+        };
+        auto probe_copy = [&](const char *tag, auto mutate) {
+            std::vector<unsigned char> data = original;
+            mutate(data);
+            std::string path = write_temp(data, tag);
+            bc_elf_file_probe result = bc_elf_file_has_bc_mod_register(path.c_str());
+            unlink(path.c_str());
+            return result;
+        };
+        auto section_info = [](std::vector<unsigned char> &data, Elf64_Shdr **dynsym,
+                               Elf64_Shdr **strtab) {
+            Elf64_Ehdr *eh = (Elf64_Ehdr *)data.data();
+            Elf64_Shdr *sh = (Elf64_Shdr *)(data.data() + eh->e_shoff);
+            *dynsym = nullptr; *strtab = nullptr;
+            for (size_t i = 0; i < eh->e_shnum; i++) {
+                if (sh[i].sh_type == SHT_DYNSYM) {
+                    *dynsym = &sh[i];
+                    if (sh[i].sh_link < eh->e_shnum) *strtab = &sh[sh[i].sh_link];
+                    return;
+                }
+            }
+        };
+        check("BC real tem bc_mod_register",
+              bc_elf_file_has_bc_mod_register(bc_so).result == BC_ELF_FILE_HAS_SYMBOL);
+        check("mod autonomo nao tem bc_mod_register",
+              bc_elf_file_has_bc_mod_register(autonomous_so).result == BC_ELF_FILE_NO_SYMBOL);
+        check("arquivo vazio", probe_copy("empty", [](auto &d) { d.clear(); }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("arquivo nao ELF", probe_copy("notelf", [](auto &d) { d[0] = 'X'; }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("ELF32", probe_copy("elf32", [](auto &d) { d[EI_CLASS] = ELFCLASS32; }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("big-endian", probe_copy("be", [](auto &d) { d[EI_DATA] = ELFDATA2MSB; }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("e_shoff fora do arquivo",
+              probe_copy("shoff", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shoff = d.size() + 1; }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("e_shnum gigante",
+              probe_copy("shnum", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shnum = 0xffff; }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("dynsym fora do arquivo", probe_copy("symoff", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (sym) sym->sh_offset = d.size() + 1;
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("dynsym sh_size fora do arquivo", probe_copy("symsize", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (sym) sym->sh_size = d.size() + 1;
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("sh_link invalido", probe_copy("link", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (sym) sym->sh_link = 0xffff;
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("st_name fora do strtab", probe_copy("name", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (!sym) return;
+            Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
+            for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) symbols[i].st_name = str->sh_size + 1;
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("strtab sem NUL", probe_copy("nonul", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (str && str->sh_size > 0) memset(d.data() + str->sh_offset, 'X', str->sh_size);
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+        check("arquivo inexistente",
+              bc_elf_file_has_bc_mod_register("/tmp/bc-elf-does-not-exist.so").result == BC_ELF_FILE_ERROR);
+        check("simbolo importado nao conta", probe_copy("undef", [&](auto &d) {
+            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+            if (!sym || !str) return;
+            Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
+            const char *strings = (const char *)(d.data() + str->sh_offset);
+            for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) {
+                if (symbols[i].st_name < str->sh_size &&
+                    strcmp(strings + symbols[i].st_name, "bc_mod_register") == 0) {
+                    symbols[i].st_shndx = SHN_UNDEF; symbols[i].st_value = 0; break;
+                }
+            }
+        }).result == BC_ELF_FILE_NO_SYMBOL);
+    }
+
+    printf("\n[Caso 54] bc_generic_allowlist_contains_buf: allowlist de pacote (generalização Cocos2d-x)\n");
     {
         const char *buf = "com.foo.bar\n# comentario\n\ncom.baz.qux \n  com.indentado\n";
         check("pacote exato na lista é achado", bc_generic_allowlist_contains_buf(buf, "com.foo.bar"));
