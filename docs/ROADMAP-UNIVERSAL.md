@@ -257,9 +257,13 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager.
 
 ### F11 — Scripts Frida como mod (runtime, sem PC)
-- [ ] Loader/Manager: mod `.js` ⇒ copia `frida-gadget` arm64 (licença wxWindows, vai nos assets do Manager) + config `interaction: script` apontando pro `.js`. [NAO VERIFICADO: confirmar a doc do gadget modo script + tamanho + detecção por anti-tamper]
+- [x] Mod `mods/u_frida` (existe, branch): com `*.js` na pasta do jogo, confere `frida-gadget.bin` + `frida-gadget.config` ao lado e dá `dlopen` no gadget. Só no modo script: `uf_config_is_script_mode()` exige JSON válido (≤4KB) com `interaction.type` `script`/`script-directory` — `{}`, `listen`, `connect` ou inválido recusa (o default do gadget é `listen` + `on_load: wait`, que congela o jogo). Selftest Caso 61.
+- [x] Instalador `tools/deploy_frida.sh` (PC + adb + su): valida o pacote, copia `.js` + `.bin` e escreve config `script-directory` apontando pra `mods/<pkg>/`, chmod 644 + chcon `bepinex_mod_file`, cada passo conferido. Gadget pinado por sha256 em `tools/fetch_frida_gadget.sh` (17.19.0, licença wxWindows).
+- [ ] Manager (F5): instalar `.js` + gadget (nos assets) + config pelo celular, sem PC. Hoje não tem código.
+- [ ] Rodada de device Enforcing: coletar `avc: denied` do u_frida e adicionar SÓ a permissão negada à regra (`module/sepolicy.rule`). [NAO VERIFICADO EM ENFORCING: `bepinex_mod_file` não tem `execmod`; o gum pode precisar de `mprotect(+PROT_EXEC)` em página do binário. Não adicionar por teoria.]
+- [ ] [NAO VERIFICADO: tamanho do gadget em RAM + detecção por anti-tamper.]
 - [ ] Suporte a `frida-il2cpp-bridge` (scripts da comunidade que usam `Il2Cpp.perform`).
-- **Verifica:** script `.js` simples que loga um método do SA2, instalado pelo Manager.
+- **Verifica:** script `.js` simples que hooka um método do SA2 com efeito observável (escreve arquivo em `files/bepinex/` — `console.log` vai pra `/dev/null`), instalado por `tools/deploy_frida.sh`, em Permissive e Enforcing; depois o mesmo instalado pelo Manager.
 
 ### F12 — Mods `.dll` IL2CPP (BepInEx 6 IL2CPP / MelonLoader IL2CPP) — spike primeiro
 - [ ] Spike: carregar o runtime .NET (CoreCLR) **dentro do processo pelo nosso Zygisk** (sem container), reaproveitando o que o NextBep/FusionCore já portou (CoreCLR android-arm64 + Il2CppInterop + HarmonyX). Medir tamanho, RAM, tempo da 1ª execução (geração dos assemblies proxy).
