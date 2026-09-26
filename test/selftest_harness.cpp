@@ -49,6 +49,7 @@
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
+#include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
 static const char *const T_SRC_DOMAIN[] = {"game", "companion", nullptr};
@@ -1483,6 +1484,24 @@ int main() {
         check("buffer vazio nunca acha nada", !bc_generic_allowlist_contains_buf("", "com.foo.bar"));
         check("buf nulo não crasha", !bc_generic_allowlist_contains_buf(nullptr, "com.foo.bar"));
         check("pkg nulo não crasha", !bc_generic_allowlist_contains_buf(buf, nullptr));
+    }
+
+    printf("\n[Caso 54] bc_decide_path: caminho por app (BC > mods/<pkg>/ > allowlist > nada)\n");
+    {
+        check("BC vence tudo (pasta de mods e allowlist presentes)",
+              bc_decide_path("jp.co.ponos.battlecatsen", true, true) == BC_PATH_BC);
+        check("BC casa por substring (suffixo de processo auxiliar)",
+              bc_decide_path("jp.co.ponos.battlecatsen:aux", false, false) == BC_PATH_BC);
+        check("F1: pasta de mods basta, sem allowlist",
+              bc_decide_path("com.xd.tabs.google", true, false) == BC_PATH_PKG_MODS);
+        check("F1: pasta de mods ganha da allowlist (zero-config)",
+              bc_decide_path("com.xd.tabs.google", true, true) == BC_PATH_PKG_MODS);
+        check("allowlist sem pasta = experimento Cocos legado",
+              bc_decide_path("com.foo.cocos", false, true) == BC_PATH_COCOS);
+        check("sem pasta e fora da allowlist = nada (DLCLOSE)",
+              bc_decide_path("com.foo.cocos", false, false) == BC_PATH_NONE);
+        check("pkg nulo não crasha (vira o caminho da pasta)",
+              bc_decide_path(nullptr, true, true) == BC_PATH_PKG_MODS);
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
