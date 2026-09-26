@@ -1811,6 +1811,18 @@ static int load_generic_pkg_mods(const char *pkg) {
             snprintf(tag, sizeof(tag), "%.*s", (int)(strlen(name) - 3), name);
             char path[640];
             snprintf(path, sizeof(path), "%s/%s", dir, name);
+            char soname[128];
+            bc_elf_file_probe soname_probe =
+                bc_elf_file_read_soname(path, soname, sizeof(soname));
+            if (soname_probe.result == BC_ELF_FILE_HAS_SYMBOL &&
+                bc_elf_file_soname_is_frida(soname)) {
+                LOGW("%s: %s parece o frida-gadget (soname %s): recusado; "
+                     "o gadget so entra pelo u_frida como frida-gadget.bin",
+                     pkg, name, soname);
+                pkg_log_line(pkg, tag, "parece o frida-gadget (soname %s): recusado", soname);
+                free(ents[i]);
+                continue;
+            }
             void *h = dlopen(path, RTLD_NOW);
             if (h == nullptr) {
                 // dlerror() consome o erro do thread-local: guarda uma vez só,

@@ -52,6 +52,12 @@ static inline bool bc_elf_file_symbol_filter(const char *name, size_t name_len) 
     return name_len == sizeof(wanted) - 1 && memcmp(name, wanted, name_len) == 0;
 }
 
+static inline bool bc_elf_file_soname_is_frida(const char *soname) {
+    return soname != nullptr &&
+           (strstr(soname, "frida-gadget") != nullptr ||
+            strstr(soname, "frida-agent") != nullptr);
+}
+
 typedef struct {
     bool found;
 } bc_elf_file_probe_callback_state;
@@ -136,6 +142,102 @@ static inline bc_elf_file_probe bc_elf_file_has_bc_mod_register(const char *path
         free(strings);
         free(symbols);
         if (state.found) break;
+    }
+    free(shdrs);
+    close(fd);
+    return result;
+}
+
+static inline bc_elf_file_probe bc_elf_file_read_soname(const char *path,
+                                                        char *soname,
+                                                        size_t soname_size) {
+    static const uint64_t max_section_bytes = 64 * 1024 * 1024;
+    bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
+    if (soname != nullptr && soname_size > 0) soname[0] = '\0';
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        result.error_number = errno;
+        return result;
+    }
+    struct stat st;
+    Elf64_Ehdr ehdr;
+    if (fstat(fd, &st) != 0) {
+        result.error_number = errno;
+        close(fd);
+        return result;
+    }
+    if (st.st_size < (off_t)sizeof(ehdr) ||
+        !bc_elf_file_read_exact(fd, &ehdr, sizeof(ehdr), 0)) {
+        result.error_number = errno;
+        close(fd);
+        return result;
+    }
+    if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0 ||
+        ehdr.e_ident[EI_CLASS] != ELFCLASS64 ||
+        ehdr.e_ident[EI_DATA] != ELFDATA2LSB ||
+        ehdr.e_shentsize != sizeof(Elf64_Shdr) || ehdr.e_shnum == 0 ||
+        ehdr.e_shoff > (uint64_t)st.st_size ||
+        (uint64_t)ehdr.e_shnum > ((uint64_t)st.st_size - ehdr.e_shoff) / ehdr.e_shentsize ||
+        (uint64_t)ehdr.e_shnum > SIZE_MAX / sizeof(Elf64_Shdr)) {
+        result.result = BC_ELF_FILE_NO_SYMBOL;
+        close(fd);
+        return result;
+    }
+    size_t shdr_bytes = (size_t)ehdr.e_shnum * sizeof(Elf64_Shdr);
+    Elf64_Shdr *shdrs = (Elf64_Shdr *)malloc(shdr_bytes);
+    if (shdrs == nullptr || !bc_elf_file_read_exact(fd, shdrs, shdr_bytes,
+                                                     (off_t)ehdr.e_shoff)) {
+        result.error_number = errno;
+        free(shdrs);
+        close(fd);
+        return result;
+    }
+    result.result = BC_ELF_FILE_NO_SYMBOL;
+    for (size_t i = 0; i < ehdr.e_shnum; i++) {
+        const Elf64_Shdr *dynamic = &shdrs[i];
+        if (dynamic->sh_type != SHT_DYNAMIC ||
+            dynamic->sh_entsize != sizeof(Elf64_Dyn) ||
+            dynamic->sh_size == 0 || dynamic->sh_size > max_section_bytes ||
+            dynamic->sh_size % dynamic->sh_entsize != 0 ||
+            dynamic->sh_link >= ehdr.e_shnum) continue;
+        const Elf64_Shdr *strsec = &shdrs[dynamic->sh_link];
+        if (strsec->sh_type != SHT_STRTAB || strsec->sh_size == 0 ||
+            strsec->sh_size > max_section_bytes ||
+            !bc_elf_file_range_ok(st.st_size, dynamic->sh_offset, dynamic->sh_size) ||
+            !bc_elf_file_range_ok(st.st_size, strsec->sh_offset, strsec->sh_size)) continue;
+        size_t dynamic_bytes = (size_t)dynamic->sh_size;
+        size_t str_bytes = (size_t)strsec->sh_size;
+        Elf64_Dyn *entries = (Elf64_Dyn *)malloc(dynamic_bytes);
+        char *strings = (char *)malloc(str_bytes);
+        if (entries == nullptr || strings == nullptr ||
+            !bc_elf_file_read_exact(fd, entries, dynamic_bytes, (off_t)dynamic->sh_offset) ||
+            !bc_elf_file_read_exact(fd, strings, str_bytes, (off_t)strsec->sh_offset)) {
+            result.error_number = errno;
+            free(strings);
+            free(entries);
+            continue;
+        }
+        for (size_t j = 0; j < dynamic_bytes / sizeof(*entries); j++) {
+            if (entries[j].d_tag != DT_SONAME ||
+                entries[j].d_un.d_val >= str_bytes) continue;
+            const char *name = strings + entries[j].d_un.d_val;
+            size_t max_len = str_bytes - entries[j].d_un.d_val;
+            size_t name_len = strnlen(name, max_len);
+            if (name_len >= max_len) continue;
+            if (soname != nullptr && soname_size > 0) {
+                size_t copy_len = name_len < soname_size - 1 ? name_len : soname_size - 1;
+                memcpy(soname, name, copy_len);
+                soname[copy_len] = '\0';
+            }
+            result.result = BC_ELF_FILE_HAS_SYMBOL;
+            free(strings);
+            free(entries);
+            free(shdrs);
+            close(fd);
+            return result;
+        }
+        free(strings);
+        free(entries);
     }
     free(shdrs);
     close(fd);
