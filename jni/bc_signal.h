@@ -1,29 +1,49 @@
-// bc_signal.h — sinais entre o companion e o poll do loader.
+// bc_signal.h — contrato dos sinais entre o companion (processo separado, root)
+// e o jogo (app domain).
 //
-// ACHADO REAL (device, Enforcing, v0.4.0): __system_property_set é NEGADO
-// para o domínio do app (avc: denied { write } property_socket, permissive=0).
-// O loader usava a property como mailbox: o companion sinalizava, o poll
-// consumia e ZERAVA. Em Enforcing o reset nunca acontecia, o reload_config
-// repetia a cada poll de 1s e o audit floodava. E o "reset" não podia existir:
-// app nenhum escreve property.
+// ACHADO REAL (device, Enforcing, v0.4.0): o jogo fazia
+// __system_property_set para limpar o sinal que tinha acabado de ler, e
+// app domain é NEGADO (avc: denied { write } property_socket). O clear nunca
+// acontecia: reload_config repetia a cada poll de 1s e o audit floodava.
 //
-// Novo desenho, sem nenhum set_property no processo do jogo:
-//   - companion -> poll: memória do próprio processo. O companion roda NO
-//     MESMO processo (connectCompanion), então property seria round-trip
-//     Depois da curva e ainda assim negado nos dois lados.
-//   - root externo (Termux su, Manager) -> poll: property, SÓ LEITURA. Root
-//     escreve; o app lê e age quando o VALOR MUDA (seq), nunca quando o
-//     valor é um flag que ele não pode limpar.
+// Os dois lados NÃO dividem memória: companion_handler() é chamado pelo daemon
+// zygiskd (ver o comentário em companion.cpp), e o "companion process" é um
+// daemon separado (double-fork, root). Então:
+//
+//   root -> app: property, o root ESCREVE (pode), o app SÓ LÊ. O app age
+//     quando o VALOR muda, nunca quando um flag está ligado — não existe mais
+//     como o app limpar flag. Por isso os valores são CONTADORES de seq: o
+//     mesmo comando pode ser repetido e o app reage uma vez por mudança.
+//   app -> root: o app não escreve property nem /data/local/tmp (negado em
+//     Enforcing). Resposta vai para arquivo no diretório C1 do jogo
+//     (/data/data/<pkg>/files/bepinex/), que o companion lê como root.
+//
+// Payload nomeado (unpatch/repatch): "`<seq> <nome>`" — o nome não tem espaço
+// (é nome de arquivo, validado com strlen < PROP_VALUE_MAX), então o primeiro
+// espaço separa as duas metades.
 #ifndef BC_SIGNAL_H
 #define BC_SIGNAL_H
 
-#include <atomic>
-#include <cstring>
-#include <mutex>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+
+// Properties (uma definição só, usada pelos dois lados).
+#define BC_PROP_RELOAD_CONFIG "persist.bc_poc.reload_config"
+#define BC_PROP_RELOAD_MODS "persist.bc_poc.reload_mods"
+#define BC_PROP_UNPATCH "persist.bc_poc.unpatch_target"
+#define BC_PROP_REPATCH "persist.bc_poc.repatch_target"
+#define BC_PROP_PATCHES_REQ "persist.bc_poc.patches_req"
+
+// Respostas do jogo para o companion (contrato C1). O caminho BC tem pkg fixo
+// (o caminho BC só roda no Battle Cats); o companion e o jogo concordam porque
+// a constante é esta.
+#define BC_STATE_DIR "/data/data/jp.co.ponos.battlecatsen/files/bepinex"
+#define BC_OVERHEAD_FILE BC_STATE_DIR "/bc_hook_overhead_us"
+#define BC_PATCHES_FILE BC_STATE_DIR "/bc_patches.txt"
 
 // true = valor novo (não vazio e diferente do já visto) e memoriza em
-// last_seen. Vazio não é pedido. last_seen é do chamador (n >= 1).
-// Host-testável (test/selftest_harness.cpp).
+// last_seen. Vazio não é pedido. Host-testável (selftest_harness caso 59).
 static inline bool bc_seq_take(const char *cur, char *last_seen, size_t n) {
     if (cur == nullptr || cur[0] == '\0' || last_seen == nullptr || n == 0) return false;
     if (strcmp(cur, last_seen) == 0) return false;
@@ -32,38 +52,19 @@ static inline bool bc_seq_take(const char *cur, char *last_seen, size_t n) {
     return true;
 }
 
-// Pedido com nome (unpatch_mod/repatch_mod), in-process: o companion publica,
-// o poll consome uma vez. O mutex cobre nome+seq juntos (senão o poll pode ver
-// o nome de um pedido com a seq do anterior).
-struct bc_named_req {
-    std::mutex mu;
-    char name[64] = {};
-    unsigned seq = 0;
-
-    void put(const char *n) {
-        if (n == nullptr) return;
-        std::lock_guard<std::mutex> l(mu);
-        strncpy(name, n, sizeof(name) - 1);
-        name[sizeof(name) - 1] = '\0';
-        seq++;
-    }
-    // true = chegou pedido novo; copia o nome e consome a seq.
-    bool take(char *out, size_t outsz, unsigned *last_seq) {
-        std::lock_guard<std::mutex> l(mu);
-        if (seq == *last_seq) return false;
-        strncpy(out, name, outsz - 1);
-        out[outsz - 1] = '\0';
-        *last_seq = seq;
-        return true;
-    }
-};
-
-// Sinais sem nome. 0 = nenhum pedido; o companion incrementa, o poll consome
-// com exchange(0) (uma vez só, sem window perdido).
-extern std::atomic<unsigned> g_sig_reload_config;  // reload_config
-extern std::atomic<unsigned> g_sig_reload_mods;    // reload_mods
-extern std::atomic<unsigned> g_sig_patches_req;    // list_patches (valor = seq do pedido)
-extern bc_named_req g_sig_unpatch;                 // unpatch_mod <mod>
-extern bc_named_req g_sig_repatch;                 // repatch_mod <mod>
+// Quebra "<seq> <payload>": true quando tem as duas metades. Sem espaço,
+// devolve false (o chamador loga e ignora) — nunca adivinha.
+static inline bool bc_seq_split(const char *v, char *key, size_t ksz, char *payload,
+                                size_t psz) {
+    if (v == nullptr || key == nullptr || payload == nullptr || ksz == 0 || psz == 0) return false;
+    const char *sp = strchr(v, ' ');
+    if (sp == nullptr || sp == v) return false;
+    size_t klen = (size_t)(sp - v);
+    if (klen >= ksz) return false;
+    memcpy(key, v, klen);
+    key[klen] = '\0';
+    snprintf(payload, psz, "%s", sp + 1);
+    return payload[0] != '\0';
+}
 
 #endif // BC_SIGNAL_H

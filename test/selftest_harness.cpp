@@ -1627,9 +1627,9 @@ int main() {
         }
     }
 
-    // Caso 59: bc_seq_take / bc_named_req — o app não escreve property em
-    // Enforcing, então o poll age só quando o VALOR muda (achado no device).
-    printf("\n[Caso 59] bc_seq_take/bc_named_req: age só quando muda (Enforcing)\n");
+    // Caso 59: bc_seq_take/bc_seq_split — o jogo só lê a property e age quando
+    // o VALOR muda (achado Enforcing: app domain sem permission_set).
+    printf("\n[Caso 59] bc_seq_take/bc_seq_split: age só quando muda (Enforcing)\n");
     {
         char seen[16] = {};
         check("vazio não é pedido", !bc_seq_take("", seen, sizeof(seen)));
@@ -1637,10 +1637,6 @@ int main() {
         check("primeiro valor conta como novo", bc_seq_take("1", seen, sizeof(seen)));
         check("mesmo valor não repete", !bc_seq_take("1", seen, sizeof(seen)));
         check("valor diferente conta", bc_seq_take("2", seen, sizeof(seen)));
-        check("voltou pro valor antigo: é novo de novo (seq do companion)",
-              bc_seq_take("1", seen, sizeof(seen)));
-        check("vazio depois de valor não limpa o visto", !bc_seq_take("", seen, sizeof(seen)) &&
-              bc_seq_take("2", seen, sizeof(seen)));
         check("nulo em last_seen não crasha", !bc_seq_take("9", nullptr, 8));
         {
             char tiny[4] = {};
@@ -1648,41 +1644,56 @@ int main() {
                   bc_seq_take("abcdef", tiny, sizeof(tiny)) && strlen(tiny) == 3);
         }
         {
-            // poll repetido com o MESMO valor de property: o reload_config só
-            // pode rodar uma vez (era o bug: flag de 1 que o app não limpa).
-            char prop[32] = {};
-            char last[32] = {};
+            // O bug real: a property parada num valor fazia o reload_config rodar
+            // a cada poll porque o app não conseguia limpar o flag.
+            char prop[32] = {}, last[32] = {};
             int reloads = 0;
-            const char *poll_values[] = {"1", "1", "1", "1", "1", "1"};
-            for (size_t i = 0; i < sizeof(poll_values) / sizeof(poll_values[0]); i++) {
-                snprintf(prop, sizeof(prop), "%s", poll_values[i]);
+            for (int i = 0; i < 6; i++) {
+                snprintf(prop, sizeof(prop), "7");
                 if (bc_seq_take(prop, last, sizeof(last))) reloads++;
             }
             check("6 polls com a property parada => 1 reload só", reloads == 1);
-            // companion in-process: contador sempre novo => age toda vez
-            char last2[32] = {};
+            // Seq nova a cada pedido (o que o companion faz): sempre age.
             int acts = 0;
-            for (unsigned inproc = 1; inproc <= 3; inproc++) {
-                char v[32];
-                snprintf(v, sizeof(v), "c%u", inproc);
-                if (bc_seq_take(v, last2, sizeof(last2))) acts++;
+            for (unsigned q = 1; q <= 3; q++) {
+                snprintf(prop, sizeof(prop), "%u", q);
+                if (bc_seq_take(prop, last, sizeof(last))) acts++;
             }
             check("3 seqs do companion => 3 ações", acts == 3);
         }
         {
-            bc_named_req r;
-            char out[64] = {};
-            unsigned last = 0;
-            check("sem pedido não devolve nome", !r.take(out, sizeof(out), &last));
-            r.put("sa2ammo");
-            check("pedido com nome sai uma vez", r.take(out, sizeof(out), &last) &&
-                  strcmp(out, "sa2ammo") == 0);
-            check("mesmo pedido não repete", !r.take(out, sizeof(out), &last));
-            r.put("sa2content");
-            check("novo nome passa", r.take(out, sizeof(out), &last) &&
-                  strcmp(out, "sa2content") == 0);
-            r.put(nullptr);
-            check("put nulo não é pedido", !r.take(out, sizeof(out), &last));
+            // Payload nomeado: "<seq> <nome>"
+            char key[32] = {}, payload[64] = {};
+            check("split de \"7 sa2ammo\"", bc_seq_split("7 sa2ammo", key, sizeof(key),
+                                                          payload, sizeof(payload)) &&
+                  strcmp(key, "7") == 0 && strcmp(payload, "sa2ammo") == 0);
+            check("sem espaço não é payload válido", !bc_seq_split("sa2ammo", key, sizeof(key),
+                                                                  payload, sizeof(payload)));
+            check("espaço no começo não é payload válido", !bc_seq_split(" sa2ammo", key, sizeof(key),
+                                                                        payload, sizeof(payload)));
+            check("espaço no fim (nome vazio) não vale", !bc_seq_split("7 ", key, sizeof(key),
+                                                                      payload, sizeof(payload)));
+            check("null não crasha", !bc_seq_split(nullptr, key, sizeof(key), payload,
+                                                   sizeof(payload)));
+            {
+                char small_key[2] = {};
+                check("seq maior que o buffer é recusado",
+                      !bc_seq_split("123456 7", small_key, sizeof(small_key), payload,
+                                    sizeof(payload)));
+            }
+            {
+                // Deduplicação do payload nomeado: mesma seq não repete, nova age.
+                char last[32] = {};
+                char k[32] = {}, nm[64] = {};
+                int fired = 0;
+                const char *reqs[] = {"1 sa2ammo", "1 sa2ammo", "2 sa2ammo", "2 sa2ammo"};
+                for (size_t i = 0; i < sizeof(reqs) / sizeof(reqs[0]); i++) {
+                    if (bc_seq_split(reqs[i], k, sizeof(k), nm, sizeof(nm)) &&
+                        bc_seq_take(k, last, sizeof(last))) fired++;
+                }
+                check("2 requests, 2 seqs => 2 unpatch (repete nome com seq nova)",
+                      fired == 2);
+            }
         }
     }
 

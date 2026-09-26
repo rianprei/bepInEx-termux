@@ -27,8 +27,15 @@
 #include "zygisk.hpp"
 #include "bc_mods_conf.h"
 #include "bc_loader.h"  // BC_MODS_DIR + bc_loader_is_mod_filename() — validação de nome pro push_mod
-#include "bc_signal.h"  // sinais pro poll do loader: in-process, sem __system_property_set (Enforcing)
-#include "bc_hook_overhead.h"  // média de overhead do dispatcher (contadores do jogo, mesmo processo)
+#include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
+
+// Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
+// o valor na property É o gatilho — precisa mudar a cada pedido, senão o mesmo
+// comando reenviado não faria nada (ver bc_signal.h).
+static unsigned bc_signal_seq() {
+    static unsigned seq = 0;
+    return ++seq;
+}
 
 #define LOG_TAG "BC_COMPANION"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -390,7 +397,7 @@ static void handle_list_mods(int fd) {
 // list_patches — estado REAL dos hooks no game process (Harmony
 // GetPatchedMethods equivalent). O companion não tem acesso à memória do
 // jogo; o game process é quem sabe (PLANS[] backup + hits). Canal invertido
-// do unpatch_mod: companion pede, o jogo escreve o snapshot e o
+// do unpatch_mod: companion pede por property, o jogo escreve o snapshot e o
 // companion correlaciona pela seq antes de responder (resposta velha de boot
 // anterior é descartada).
 // ============================================================================
@@ -401,10 +408,9 @@ static void handle_list_mods(int fd) {
 // assinatura não resolveram). O arquivo persiste entre boots — por isso a
 // resposta NUNCA é servida de snapshot órfão: só conteúdo com a seq do
 // pedido atual (snapshot velho de boot anterior seria mentira).
-#define BC_PATCHES_PATH "/data/local/tmp/bc_patches.txt"
 
 // ACHADO REAL (device, 2026-09-15): 2 clientes list_patches concorrentes
-// (thread-per-client) competem pelo MESMO canal de pedido (g_sig_patches_req)
+// (thread-per-client) competem pelo MESMO canal de pedido (a property)
 // — o game process só suporta 1 pedido em voo por vez (1 slot, não fila).
 // Segundo cliente sobrescreve a seq do primeiro antes
 // dele ler a resposta; primeiro cliente nunca recebe o snapshot dele e
@@ -444,13 +450,11 @@ static void handle_list_patches(int fd) {
     // só 1 em voo (ver comentário em g_patches_req_lock).
     pthread_mutex_lock(&g_patches_req_lock);
 
-    // 1. sinaliza o poll do jogo in-process (mesmo padrão do unpatch_mod)
+    // 1. sinaliza o poll do jogo via property (mesmo padrão do unpatch_mod)
     unsigned seq = ++g_patches_req_seq;
     char seqbuf[16];
     snprintf(seqbuf, sizeof(seqbuf), "%u", seq);
-    // Pedido in-process: o valor é a seq, o poll do jogo consome uma vez e
-    // escreve o snapshot com a MESMA seq. Sem property (app sem permissão_set).
-    g_sig_patches_req.store(seq, std::memory_order_release);
+    __system_property_set(BC_PROP_PATCHES_REQ, seqbuf);
 
     // 2. espera o snapshot com essa seq (deadline ~2.5s; o game process
     //    pode estar em load pesado — o poll dele roda a cada 1s)
@@ -458,7 +462,7 @@ static void handle_list_patches(int fd) {
     bool got = false;
     for (int attempt = 0; attempt < 25 && !got; attempt++) {
         usleep(100 * 1000);
-        int sfd = open(BC_PATCHES_PATH, O_RDONLY | O_CLOEXEC);
+        int sfd = open(BC_PATCHES_FILE, O_RDONLY | O_CLOEXEC);
         if (sfd < 0) continue;
         ssize_t n = read(sfd, content, sizeof(content) - 1);
         close(sfd);
@@ -471,8 +475,8 @@ static void handle_list_patches(int fd) {
 
     // 3. sem resposta: limpa o pedido e erro explícito
     if (!got) {
-        // Sem property para limpar: o pedido já foi consumido por seq, um
-        // snapshot com seq velha nunca é servido (a checagem é pela seq).
+        // Nada a limpar: o pedido é isolado por seq (o jogo só reage a valor
+        // novo), então um snapshot atrasado com seq velha nunca é servido.
         const char *e = "error: game process did not answer (game not running? hook thread dead?)\n";
         write_all(fd, e, strlen(e));
         pthread_mutex_unlock(&g_patches_req_lock);
@@ -722,11 +726,13 @@ static void handle_push_mod(int fd, const char *name, long size) {
     LOGI("push_mod: wrote %s (%ld bytes)", path, size);
     // Sinaliza o game process (main.cpp, event_thread) pra RE-EXECUTAR o
     // loader canônico load_dynamic_mods() (bc_loader.h + bc_mod_graph.h).
-    // Sinal in-process pro poll do event_thread (main.cpp): re-executa
-    // load_dynamic_mods(), que enxerga o arquivo novo em BC_MODS_DIR. Property
-    // não serve mais aqui: o companion roda no mesmo processo e o app não tem
-    // permissão_set (achado Enforcing, ver bc_signal.h).
-    g_sig_reload_mods.fetch_add(1, std::memory_order_acq_rel);
+    // Sinaliza o poll do event_thread (main.cpp) pra RE-EXECUTAR o loader
+    // canônico load_dynamic_mods(), que enxerga o arquivo novo em BC_MODS_DIR.
+    // Property com seq nova a cada pedido: o jogo não pode limpar o sinal
+    // (sem permission_set em Enforcing), quem deduplica é o valor.
+    char seq[16];
+    snprintf(seq, sizeof(seq), "%u", bc_signal_seq());
+    __system_property_set(BC_PROP_RELOAD_MODS, seq);
 }
 
 // Retorna true se o fd foi "adotado" por outro dono (ex.: stream) e o
@@ -757,15 +763,26 @@ bool handle_termux_request(int client_fd) {
             const char *response = "pong";
             write_all(client_fd, response, strlen(response));
         } else if (strcmp(buf, "reload_config") == 0) {
-            g_sig_reload_config.fetch_add(1, std::memory_order_acq_rel);
+            char seq[16];
+            snprintf(seq, sizeof(seq), "%u", bc_signal_seq());
+            __system_property_set(BC_PROP_RELOAD_CONFIG, seq);
             const char *response = "ok: reload signal sent";
             write_all(client_fd, response, strlen(response));
         } else if (strcmp(buf, "hook_overhead") == 0) {
-            // Mesmo processo: lê os contadores direto. Antes o jogo publicava
-            // numa property a cada poll, o que é negado em Enforcing.
+            // Resposta do jogo, no diretório C1 (o app não escreve property nem
+            // /data/local/tmp em Enforcing; root lê o arquivo dele).
+            char ov[64] = {0};
+            int ofd = open(BC_OVERHEAD_FILE, O_RDONLY | O_CLOEXEC);
+            if (ofd >= 0) {
+                ssize_t on = read(ofd, ov, sizeof(ov) - 1);
+                close(ofd);
+                if (on > 0) ov[on] = '\0';
+                char *nl = strchr(ov, '\n');
+                if (nl) *nl = '\0';
+            }
+            if (ov[0] == '\0') snprintf(ov, sizeof(ov), "0");
             char response[128];
-            snprintf(response, sizeof(response), "avg_dispatcher_overhead_us=%.2f",
-                     bc_hook_overhead_avg_us());
+            snprintf(response, sizeof(response), "avg_dispatcher_overhead_us=%s", ov);
             write_all(client_fd, response, strlen(response));
         } else if (strcmp(buf, "status") == 0) {
             const char *response = "companion_active";
@@ -815,13 +832,15 @@ bool handle_termux_request(int client_fd) {
         } else if (strncmp(buf, "unpatch_mod ", 12) == 0) {
             // Sinal cross-process pro game process rodar unpatch_hook() real
             // (DobbyDestroy) — companion não tem acesso à memória do alvo,
-            // sinaliza in-process, mesmo caminho do reload_config.
+            // sinaliza por property (o companion tem permissão_set; o jogo não).
             const char *name = buf + 12;
             if (strlen(name) == 0 || strlen(name) >= PROP_VALUE_MAX) {
                 const char *e = "error: usage: unpatch_mod <nome>\n";
                 write_all(client_fd, e, strlen(e));
             } else {
-                g_sig_unpatch.put(name);
+                char val[PROP_VALUE_MAX];
+                snprintf(val, sizeof(val), "%u %s", bc_signal_seq(), name);
+                __system_property_set(BC_PROP_UNPATCH, val);
                 const char *response = "ok: unpatch signal sent";
                 write_all(client_fd, response, strlen(response));
             }
@@ -839,14 +858,16 @@ bool handle_termux_request(int client_fd) {
                 handle_push_mod(client_fd, name, size);
             }
         } else if (strncmp(buf, "repatch_mod ", 12) == 0) {
-            // Sinal in-process pro poll do event_thread re-instalar um hook que
-            // foi removido via unpatch_mod: repatch_hook() → try_install().
+            // Sinal pro poll do event_thread re-instalar um hook removido via
+            // unpatch_mod: repatch_hook() → try_install(). Property com seq.
             const char *name = buf + 12;
             if (strlen(name) == 0 || strlen(name) >= PROP_VALUE_MAX) {
                 const char *e = "error: usage: repatch_mod <nome>\n";
                 write_all(client_fd, e, strlen(e));
             } else {
-                g_sig_repatch.put(name);
+                char val[PROP_VALUE_MAX];
+                snprintf(val, sizeof(val), "%u %s", bc_signal_seq(), name);
+                __system_property_set(BC_PROP_REPATCH, val);
                 const char *response = "ok: repatch signal sent";
                 write_all(client_fd, response, strlen(response));
             }
