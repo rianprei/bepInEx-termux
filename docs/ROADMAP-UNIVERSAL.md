@@ -98,7 +98,9 @@ Uma regra por linha, campos separados por espaço, `#` é comentário:
 return  <Classe>  <Método>  <nargs>  <bool|int|float>  <valor>
 mul     <Classe>  <Método>  <nargs>  <int|float>       <fator>
 static  <Classe>  <campo>   <bool|int|float>           <valor>
+field   <Classe>  <campo>   <bool|int|float>           <valor>  [<Método> <nargs>]
 ```
+- `field` = campo de **instância**: a cada chamada de `<Método>` (instância, da mesma `<Classe>`), escreve `this.<campo> = <valor>` antes de rodar o original (hook com thunk, `this` = x0, offset via `field_get_offset`). Sem `<Método>`, o u_patch escolhe sozinho até 8 métodos de instância da classe que passam na guarda de tamanho. Motivo (teste no device 2026-09-26): `return ComplexCreature HasAmmo 0 bool true` aplicou e foi chamado 12x (Frida), mas a munição acabou mesmo assim, porque o jogo decrementa e checa o campo direto; o que dá munição infinita é o campo `WeaponInfo.unlimitedAmmo` (o sa2ammo usa ele). Método patchado não cobre lógica que lê campo direto.
 - `<Classe>` = `Namespace.Nome`, ou só `Nome` sem namespace (o último `.` separa). Classe aninhada fica fora do v1.
 - `<valor>`/`<fator>` pode ser `$key`, e aí vem do `<id>.conf`.
 - Busca em todos os assemblies (`domain_get_assemblies` + `class_from_name`).
