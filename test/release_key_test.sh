@@ -158,24 +158,37 @@ check "build_release.sh nunca abre o .jks com keytool" \
 # 5) o .gitignore não pode deixar chave nem APK assinado entrarem
 echo "== chave e APK fora do git =="
 # Onde a chave de verdade vive: ~/.config/bepinex-termux/ (FORA do repo) e,
-# no repo, só o keystore debug que o build cria (manager/.debug.keystore),
-# coberto por manager/.gitignore. O .gitignore da RAIZ é do projeto e não tem
-# *.jks/*.keystore — registrar isso como INFO, não como check que "passa":
-# quem largar um .jks na raiz do repo NÃO está protegido, e isso é decisão de
-# quem mantém o arquivo compartilhado, não deste branch.
+# no repo, so o keystore debug que o build cria (manager/.debug.keystore).
+# O .gitignore da RAIZ tambem tem de cobrir chave e binario assinado: um
+# `git add .` com a chave largada na raiz e o acidente que nao se desfaz
+# (commit de chave privada fica no historico para sempre).
 check "manager/.gitignore cobre *.keystore (o debug que o build cria)" \
     "$(grep -qE '^\*\.keystore$' "$ROOT/manager/.gitignore" && echo 1 || echo 0)"
 check "manager/.gitignore cobre .*.keystore (.debug.keystore)" \
     "$(grep -qE '^\.\*\.keystore$' "$ROOT/manager/.gitignore" && echo 1 || echo 0)"
 check "manager/.gitignore cobre *.jks" \
     "$(grep -qE '^\*\.jks$' "$ROOT/manager/.gitignore" && echo 1 || echo 0)"
-# shellcheck disable=SC2016  # idem: o $HOME precisa aparecer literal no grep
+# shellcheck disable=SC2016  # o $HOME precisa aparecer literal no grep
 check "a chave de release fica FORA do repo (~/.config/bepinex-termux)" \
     "$(grep -q 'RELEASE_KEY_DEFAULT="$HOME/.config/bepinex-termux/manager-release.jks"' "$ROOT/tools/build_release.sh" && echo 1 || echo 0)"
-if ! grep -qE '^\*\.jks$' "$ROOT/.gitignore"; then
-    echo "  [INFO] .gitignore da RAIZ não cobre *.jks/*.keystore (não mexi: arquivo"
-    echo "         compartilhado do projeto). Se você quiser cobrir a raiz, é uma linha lá."
+for pat in '*.jks' '*.keystore' '*.p12' '*.pfx' '*.idsig' '*.apk'; do
+    check ".gitignore da raiz cobre $pat" \
+        "$(grep -qxF "$pat" "$ROOT/.gitignore" && echo 1 || echo 0)"
+done
+# Funcional, nao grep: cria os arquivos de verdade na raiz e pergunta ao git.
+probe="chave-probe"
+(cd "$ROOT" && : > "$probe.jks" && : > "$probe.keystore" && : > "$probe.apk" \
+    && : > "$probe.p12" && : > "$probe.pfx" && : > "$probe.idsig")
+leaked="$(cd "$ROOT" && git status --porcelain --untracked-files=all | grep -F "$probe" || true)"
+rm -f "$ROOT/$probe.jks" "$ROOT/$probe.keystore" "$ROOT/$probe.apk" \
+      "$ROOT/$probe.p12" "$ROOT/$probe.pfx" "$ROOT/$probe.idsig"
+check "chave/APK na raiz NAO aparece no git status (teste funcional)" \
+    "$([ -z "$leaked" ] && echo 1 || echo 0)"
+if [ -n "$leaked" ]; then
+    printf '        vazou no status: %s\n' "$leaked" >&2
 fi
+check "a prova limpou os arquivos depois" \
+    "$([ ! -e "$ROOT/$probe.jks" ] && [ ! -e "$ROOT/$probe.apk" ] && echo 1 || echo 0)"
 
 echo "== Resultado: $([ "$fails" -eq 0 ] && echo 'TODOS PASSARAM' || echo "HOUVE $fails FALHAS") ($fails falhas) =="
 exit "$([ "$fails" -eq 0 ] && echo 0 || echo 1)"
