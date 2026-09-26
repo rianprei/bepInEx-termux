@@ -74,26 +74,27 @@ static void up_log(const char *fmt, ...) {
     close(fd);
 }
 
-// Pacote (C1): getenv("BEPINEX_PKG"), que o loader seta antes do dlopen.
-// Fallback: cmdline, mas só depois de sair de zygote* (no constructor ela
-// ainda vale zygote64 no device — achado real no SA2). Roda 1x (pthread_once):
-// escreve up_pkg/up_dir antes do pthread_create — depois só leitura (fix 15).
-static pthread_once_t up_pkg_once = PTHREAD_ONCE_INIT;
-
-static void up_read_pkg() {
+// Pacote (C1): env do loader primeiro; fallback cmdline com RETRY real —
+// no constructor ainda é zygote64 (achado device), então o worker re-tenta
+// a cada 1s até o cmdline virar o do app. Sem pthread_once (o fallback
+// precisa re-rodar); sem corrida: o constructor roda ANTES do
+// pthread_create (happens-before), depois só o worker chama.
+static bool up_read_pkg() {
     const char *env = getenv("BEPINEX_PKG");
     if (env && env[0] && !up_is_zygote(env)) {
         snprintf(up_pkg, sizeof(up_pkg), "%s", env);
-    } else {
-        FILE *f = fopen("/proc/self/cmdline", "r");
-        if (!f) return;  // ainda no zygote: fica pra próxima chamada (worker re-tenta)
-        char cmd[128] = {};
-        size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
-        fclose(f);
-        if (n == 0 || up_is_zygote(cmd)) return;  // ainda no zygote
-        snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
+        snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
+        return true;
     }
+    FILE *f = fopen("/proc/self/cmdline", "r");
+    if (!f) return false;
+    char cmd[128] = {};
+    size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+    fclose(f);
+    if (n == 0 || up_is_zygote(cmd)) return false;
+    snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
     snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
+    return true;
 }
 
 static bool up_ends_with(const char *name, const char *suf) {
@@ -180,6 +181,7 @@ static int up_applied_n;
 
 struct up_static_t {
     void *klass;
+    void *field;
     char cls[128];
     char member[128];
     uint8_t bytes[8];
@@ -226,6 +228,20 @@ static void up_mark(const char *sig, uint8_t state) {
     up_applied_n++;
 }
 
+// Log de falha só na 1ª vez por regra (parcial 11): a mesma regra é
+// reavaliada a cada 2s; sem isso ela enchia o log a cada passada.
+static void up_log_first(const char *sig, const char *fmt, ...) {
+    int i = up_find_applied(sig);
+    if (i >= 0 && up_applied[i].state != 0) return;  // já logou essa regra
+    va_list ap;
+    char msg[448];
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    up_log("%s", msg);
+    up_mark(sig, 1);  // marca como "falhou/logou" — sucesso sobrescreve com 2
+}
+
 static void up_sig(char *out, size_t n, const char *id, const up_rule_t *r) {
     snprintf(out, n, "%s|%d|%s|%s|%d|%d|%s", id, (int)r->kind, r->cls,
              r->member, r->nargs, (int)r->type, r->value);
@@ -233,10 +249,10 @@ static void up_sig(char *out, size_t n, const char *id, const up_rule_t *r) {
 
 static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
     void *m = il.class_get_method_from_name(klass, r->member, r->nargs);
-    if (!m) { up_log("%s: método %s::%s(%d) não achado", sig, r->cls, r->member, r->nargs); return false; }
+    if (!m) { up_log_first(sig, "método %s::%s(%d) não achado", r->cls, r->member, r->nargs); return false; }
     void *code = *(void **)m;  // methodPointer = 1º campo (il2cpp >= 2019.3, il2cpp-class.h; antes tinha um struct MethodInfo prefixado).
-    if (!code) { up_log("%s: método sem código (genérico/abstrato?)", sig); return false; }
-    if (*(uint32_t *)code == UP_RET) { up_log("%s: método já é só ret, pulando", sig); return false; }
+    if (!code) { up_log_first(sig, "método sem código (genérico/abstrato?)"); return false; }
+    if (*(uint32_t *)code == UP_RET) { up_log_first(sig, "método já é só ret, pulando"); return false; }
     // Genérico compartilhado (methodPointer = código de um método genérico
     // outro qualquer): patchar corromperia chamadas do método doador.
     // Heurística barata (sem reflexão de método): movz x0,#imm16 seguido de
@@ -250,18 +266,18 @@ static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, c
     if (r->type == UP_BOOL) {
         tname = "bool";
         int b = 0;
-        if (!up_parse_bool(valstr, &b)) { up_log("%s: bool inválido '%s'", sig, valstr); return false; }
+        if (!up_parse_bool(valstr, &b)) { up_log_first(sig, "bool inválido '%s'", valstr); return false; }
         n = up_emit_return_bool(words, b);
     } else if (r->type == UP_INT) {
         tname = "int";
         uint32_t v = 0;
-        if (!up_parse_int32(valstr, &v)) { up_log("%s: int inválido '%s'", sig, valstr); return false; }
+        if (!up_parse_int32(valstr, &v)) { up_log_first(sig, "int inválido '%s'", valstr); return false; }
         n = up_emit_return_int(words, v);
     } else {
         tname = "float";
         char *end = nullptr;
         float f = strtof(valstr, &end);
-        if (!end || *end || f != f) { up_log("%s: float inválido '%s'", sig, valstr); return false; }
+        if (!end || *end || f != f) { up_log_first(sig, "float inválido '%s'", valstr); return false; }
         uint32_t bits = 0;
         memcpy(&bits, &f, 4);
         n = up_emit_return_float(words, bits);
@@ -269,24 +285,24 @@ static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, c
     // Guard de método curto: escrever além do ret/B vazaria pro método
     // seguinte. Recusa com log em vez de corromper código alheio.
     if (!up_method_fits((const uint32_t *)code, n)) {
-        up_log("%s: metodo curto demais pra return %s (%d bytes), pulando", sig, tname, n * 4);
+        up_log_first(sig, "metodo curto demais pra return %s (%d bytes), pulando", tname, n * 4);
         return false;
     }
-    if (!up_patch_code(code, words, n)) { up_log("%s: mprotect falhou em %p", sig, code); return false; }
+    if (!up_patch_code(code, words, n)) { up_log_first(sig, "mprotect falhou em %p", code); return false; }
     up_log("%s: return aplicado @%p (%d bytes)", sig, code, n * 4);
     return true;
 }
 
 static bool up_apply_mul(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
-    if (!up_thunk_page) { up_log("%s: sem página de thunk (mmap falhou)", sig); return false; }
-    if (up_thunk_used >= UP_MUL_MAX) { up_log("%s: teto de %d thunks mul, ignorada", sig, UP_MUL_MAX); return false; }
+    if (!up_thunk_page) { up_log_first(sig, "sem página de thunk (mmap falhou)"); return false; }
+    if (up_thunk_used >= UP_MUL_MAX) { up_log_first(sig, "teto de %d thunks mul, ignorada", UP_MUL_MAX); return false; }
     void *m = il.class_get_method_from_name(klass, r->member, r->nargs);
-    if (!m) { up_log("%s: método %s::%s(%d) não achado", sig, r->cls, r->member, r->nargs); return false; }
+    if (!m) { up_log_first(sig, "método %s::%s(%d) não achado", r->cls, r->member, r->nargs); return false; }
     void *code = *(void **)m;
-    if (!code) { up_log("%s: método sem código", sig); return false; }
+    if (!code) { up_log_first(sig, "método sem código"); return false; }
     // Dobby troca o prólogo por salto (~16 bytes): método menor não tem onde.
     if (!up_method_fits((const uint32_t *)code, 4)) {
-        up_log("%s: metodo curto demais pra hook Dobby @%p, pulando", sig, code);
+        up_log_first(sig, "metodo curto demais pra hook Dobby @%p, pulando", code);
         return false;
     }
     bool is_float = (r->type == UP_FLOAT);
@@ -295,20 +311,20 @@ static bool up_apply_mul(const Il2Cpp &il, void *klass, const up_rule_t *r, cons
     if (is_float) {
         char *end = nullptr;
         double d = strtod(valstr, &end);
-        if (!end || *end) { up_log("%s: fator float inválido '%s'", sig, valstr); return false; }
+        if (!end || *end) { up_log_first(sig, "fator float inválido '%s'", valstr); return false; }
         slot->fvalue = (float)d;
     } else {
         char *end = nullptr;
         long long v = strtoll(valstr, &end, 0);
-        if (!end || *end) { up_log("%s: fator int inválido '%s'", sig, valstr); return false; }
+        if (!end || *end) { up_log_first(sig, "fator int inválido '%s'", valstr); return false; }
         slot->ivalue = (int64_t)v;
     }
     uint32_t *thunk = up_thunk_page + (size_t)up_thunk_used * UP_MUL_THUNK_WORDS;
     int n = up_emit_mul_thunk(thunk, thunk, slot, is_float);
-    if (n != UP_MUL_THUNK_WORDS) { up_log("%s: erro interno no thunk", sig); return false; }
+    if (n != UP_MUL_THUNK_WORDS) { up_log_first(sig, "erro interno no thunk"); return false; }
     __builtin___clear_cache((char *)thunk, (char *)(thunk + n));
     if (DobbyHook(code, (void *)thunk, &slot->orig) != 0) {
-        up_log("%s: DobbyHook falhou @%p", sig, code);
+        up_log_first(sig, "DobbyHook falhou @%p", code);
         return false;
     }
     up_log("%s: mul aplicado @%p (thunk %d)", sig, code, up_thunk_used);
@@ -318,11 +334,11 @@ static bool up_apply_mul(const Il2Cpp &il, void *klass, const up_rule_t *r, cons
 
 static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
     void *f = il.class_get_field_from_name(klass, r->member);
-    if (!f) { up_log("%s: campo %s::%s não achado", sig, r->cls, r->member); return false; }
+    if (!f) { up_log_first(sig, "campo %s::%s não achado", r->cls, r->member); return false; }
     // field_static_set_value num campo de instância é UB: escreveria no
     // endereço do FieldInfo tratado como dados. Recusa com log.
     if (!il.field_get_flags || (il.field_get_flags(f) & 0x10) == 0) {
-        up_log("%s: campo %s::%s não é static — regra recusada", sig, r->cls, r->member);
+        up_log_first(sig, "campo %s::%s não é static — regra recusada", r->cls, r->member);
         return false;
     }
     uint8_t bytes[8] = {};
@@ -340,7 +356,7 @@ static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r, c
     } else {
         char *end = nullptr;
         float fl = strtof(valstr, &end);
-        if (!end || *end || fl != fl) { up_log("%s: float inválido '%s'", sig, valstr); return false; }
+        if (!end || *end || fl != fl) { up_log_first(sig, "float inválido '%s'", valstr); return false; }
         memcpy(bytes, &fl, 4);
         size = 4;
     }
@@ -355,7 +371,7 @@ static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r, c
         snprintf(st->sig, sizeof(st->sig), "%s", sig);
         up_log("%s: static fixado (%zu bytes, reaplica a cada 2s)", sig, size);
     } else {
-        up_log("%s: static aplicado 1x (teto de %d, sem reaplicação)", sig, UP_STATIC_MAX);
+        up_log_first(sig, "static aplicado 1x (teto de %d, sem reaplicação)", UP_STATIC_MAX);
     }
     return true;
 }
@@ -398,7 +414,7 @@ static int up_scan_apply(const Il2Cpp &il) {
                     char valstr[64];
                     if (!up_resolve_value(r.value, cbuf, valstr, sizeof(valstr))) {
                         if (seen < 0) up_log("%s:%d: $%s sem valor no %s.conf", id, lineno, r.value + 1, id);
-                        up_mark(sig, 1);
+                        else up_mark(sig, 1);  // já logou na 1ª passada
                     } else {
                         char nspace[128], cname[128];
                         void *klass = nullptr;
@@ -407,6 +423,7 @@ static int up_scan_apply(const Il2Cpp &il) {
                         bool ok = false;
                         if (!klass) {
                             if (seen < 0) up_log("%s:%d: classe %s não encontrada", id, lineno, r.cls);
+                            else up_mark(sig, 1);  // silêncio nas passadas seguintes
                         } else if (r.kind == UP_RETURN) {
                             ok = up_apply_return(il, klass, &r, valstr, sig);
                         } else if (r.kind == UP_MUL) {
@@ -420,9 +437,9 @@ static int up_scan_apply(const Il2Cpp &il) {
                 }
             } else if (pr < 0) {
                 up_log("%s:%d: linha inválida, ignorando", id, lineno);
-            } else if (pr == 1) {
-                continue;  // vazia/comentário: nem entra no dedupe/sig
             }
+            // pr == 1 (vazia/comentário) só pula o bloco acima — line AVANÇA
+            // sempre, senão loop infinito (revisão do kilo).
             line = nl ? nl + 1 : nullptr;
             if (line && !*line) line = nullptr;
         }
@@ -434,26 +451,31 @@ static int up_scan_apply(const Il2Cpp &il) {
     return applied;
 }
 
-// Reaplicação de statics (18): o FieldInfo memorizado pode ficar obsoleto
-// (recarga de assembly, atualização do jogo) e o campo pode ter sido resetado.
-// A cada passada: revalida class/field pela API; invalidado → sai da lista.
+// Reaplicação de statics (18): re-resolve CLASSE+CAMPO a cada passada
+// (recompilar só quando o namespace difere deixa obsoleto por outros
+// motivos — recarga de assembly, domínio novo). Ponteiro mudou = atualiza
+// e loga uma vez; não achou mais = sai da lista.
 static void up_reapply_statics(Il2Cpp &il) {
     int w = 0;
     for (int i = 0; i < up_statics_n; i++) {
         up_static_t *st = &up_statics[i];
         char nspace[128], cname[128];
-        void *k = st->klass;
-        if (k && up_split_class(st->cls, nspace, sizeof(nspace), cname, sizeof(cname)) &&
-            il.class_get_namespace(k) && strcmp(il.class_get_namespace(k), nspace) != 0)
-            k = nullptr;  // nome do class não bate mais → re-resolve
-        if (!k && up_split_class(st->cls, nspace, sizeof(nspace), cname, sizeof(cname)))
+        void *k = nullptr, *f = nullptr;
+        if (up_split_class(st->cls, nspace, sizeof(nspace), cname, sizeof(cname))) {
             k = il.find_class(nspace, cname);
-        void *f = k ? il.class_get_field_from_name(k, st->member) : nullptr;
+            f = k ? il.class_get_field_from_name(k, st->member) : nullptr;
+        }
         if (f && il.field_get_flags && (il.field_get_flags(f) & 0x10) == 0) f = nullptr;
         if (!f) {
             up_log("%s: static %s.%s não revalidou — reaplicação cancelada", st->sig, st->cls, st->member);
             continue;  // cai fora da lista compactada
         }
+        if (f != st->field) {
+            up_log("%s: static %s.%s mudou de endereço (%p -> %p), atualizando",
+                   st->sig, st->cls, st->member, st->field, f);
+        }
+        st->klass = k;
+        st->field = f;
         il.field_static_set_value(f, st->bytes);
         up_statics[w++] = *st;
     }
@@ -462,11 +484,9 @@ static void up_reapply_statics(Il2Cpp &il) {
 
 static void *up_worker(void *) {
     // O constructor pode ter rodado ainda no zygote (sem env e com cmdline
-    // inútil): espera o pacote resolver antes de qualquer outra coisa.
+    // inútil): RETRY REAL — re-tenta cmdline a cada 1s até sair de zygote*.
     int waits = 0;
-    while (!up_pkg[0]) {
-        pthread_once(&up_pkg_once, up_read_pkg);
-        if (up_pkg[0]) break;
+    while (!up_pkg[0] && !up_read_pkg()) {
         if (++waits % 60 == 1) up_log("sem pacote resolvido ainda, aguardando");
         sleep(1);
     }
@@ -488,10 +508,9 @@ static void *up_worker(void *) {
 }
 
 __attribute__((constructor)) static void u_patch_init() {
-    // pkg é lido pelo worker (up_log) e resolvido UMA vez aqui, antes do
-    // pthread_create (15): depois ninguém mais escreve — o worker só re-chama
-    // via pthread_once se o constructor ainda estava no zygote.
-    pthread_once(&up_pkg_once, up_read_pkg);
+    // Best-effort no constructor: com env do loader resolve aqui (antes do
+    // pthread_create); sem env, o worker re-tenta cmdline até sair de zygote*.
+    up_read_pkg();
     pthread_t t;
     if (pthread_create(&t, nullptr, up_worker, nullptr) == 0) pthread_detach(t);
 }

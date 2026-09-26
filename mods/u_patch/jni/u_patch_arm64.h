@@ -61,15 +61,12 @@ static inline uint32_t up_enc_ldxr_lock() {
 static inline uint32_t up_enc_stxr_lock() {
     return 0x880A7E29u;
 }
-// adrp x17, <página de target> (pc = endereço da instrução)
-static inline uint32_t up_enc_adrp_x17(const void *pc, const void *target) {
-    int64_t off = ((int64_t)(uintptr_t)target >> 12) - ((int64_t)(uintptr_t)pc >> 12);
-    uint32_t o = (uint32_t)(off & 0x1FFFFF);
-    return 0x90000011u | ((o & 3u) << 29) | (((o >> 2) & 0x7FFFFu) << 5);
-}
-// add x17, x17, #lo12 (lo12 < 4096)
-static inline uint32_t up_enc_add_x17(uint32_t lo12) {
-    return 0x91000251u | ((lo12 & 0xFFFu) << 10);
+// add x17, x16, #imm — endereço do lock vem de x16 (que já aponta pro
+// slot): UMA instrução, register-relative, sem risco de lo12 embrulhar
+// página. Rn=16 (x18 é reservado da plataforma — Rn=18 leria endereço
+// selvagem; decodificação de campo no harness pega isso).
+static inline uint32_t up_enc_add_x17_imm(uint32_t imm) {
+    return 0x91000000u | ((imm & 0xFFFu) << 10) | (16u << 5) | 17u;
 }
 // cbnz wR, para a palavra (this_idx -> target_idx)
 static inline uint32_t up_enc_cbnz_w(uint32_t r, int this_idx, int target_idx) {
@@ -136,31 +133,28 @@ static inline bool up_method_fits(const uint32_t *orig, int nwords) {
 // R0-R7/stack preservados (só x16/x17/x1 mexidos pós-chamada, todos
 // caller-saved; x18 é reservado da plataforma, nunca usado). Trava curta:
 // reentrância cai no caminho direto (sem mul, sem hang).
-// Layout (22 palavras): 0-1 adrp/add slot(x16), 2-3 adrp/add x17=x16+24
-// (LDXR/STXR não têm imediato: endereço do lock vai em x17), 4 ldxr w9,[x17],
-// 5 cbnz ocupado->direto, 6 mov w9,#1, 7 stxr w10,w9,[x17],
-// 8 cbnz perdeu->ldxr, 9 str lr, 10 ldr orig, 11 blr, 12-13 adrp/add slot,
-// 14 ldr fator, 15 mul, 16 str xzr unlock, 17 restore lr, 18 ret,
-// 19-21 caminho direto (ldr orig, blr, ret).
+// Layout (21 palavras): 0-1 adrp/add x16=slot, 2 add x17,x16,#24 (lock;
+// LDXR/STXR não têm imediato), 3 ldxr w9,[x17], 4 cbnz ocupado->direto,
+// 5 mov w9,#1, 6 stxr w10,w9,[x17], 7 cbnz perdeu->ldxr, 8 str lr,
+// 9 ldr orig, 10 blr, 11-12 adrp/add x16=slot, 13 ldr fator, 14 mul,
+// 15 str xzr unlock, 16 restore lr, 17 ret, 18-20 caminho direto.
 static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const void *slot_va, bool is_float) {
     uintptr_t slot = (uintptr_t)slot_va;
     uint32_t lo = (uint32_t)(slot & 0xFFFu);
-    uint32_t lock_lo = (uint32_t)(((slot + UP_SLOT_LOCK) & 0xFFFu));
     auto at = [&](int i) -> const void * { return (const uint8_t *)thunk_va + (size_t)i * 4; };
     int i = 0;
     out[i++] = up_enc_adrp_x16(at(0), slot_va);
-    out[i++] = up_enc_add_x16(lo);
-    out[i++] = up_enc_adrp_x17(at(2), slot_va);
-    out[i++] = up_enc_add_x17(lock_lo);   // x17 = slot + UP_SLOT_LOCK
+    out[i++] = up_enc_add_x16(lo);        // x16 = slot
+    out[i++] = up_enc_add_x17_imm(UP_SLOT_LOCK);  // x17 = slot + 24
     out[i++] = up_enc_ldxr_lock();
-    out[i++] = up_enc_cbnz_w(9, 5, 19);   // ocupado -> direto
+    out[i++] = up_enc_cbnz_w(9, 4, 18);   // ocupado -> direto
     out[i++] = UP_MOVZ_W9_1;
     out[i++] = up_enc_stxr_lock();
-    out[i++] = up_enc_cbnz_w(10, 8, 4);   // perdeu corrida -> refaz ldxr (x17 já aponta pro lock; NÃO refaz o add)
+    out[i++] = up_enc_cbnz_w(10, 7, 3);   // perdeu corrida -> refaz ldxr
     out[i++] = up_enc_str_x(30, UP_SLOT_LR);
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
-    out[i++] = up_enc_adrp_x16(at(12), slot_va);
+    out[i++] = up_enc_adrp_x16(at(11), slot_va);
     out[i++] = up_enc_add_x16(lo);
     if (is_float) {
         out[i++] = up_enc_ldr_s1();
@@ -172,14 +166,14 @@ static inline int up_emit_mul_thunk(uint32_t *out, const void *thunk_va, const v
     out[i++] = up_enc_str_x(31, UP_SLOT_LOCK);  // xzr destrava
     out[i++] = up_enc_ldr_x(30, UP_SLOT_LR);
     out[i++] = UP_RET;
-    // caminho direto (19): sem lock, sem save — lr intacto, só repassa.
+    // caminho direto (18): sem lock, sem save — lr intacto, só repassa.
     // x16 ainda = slot (só adrp/add dele até aqui; cbnz não mexe).
     out[i++] = UP_LDR_X16_ORIG;
     out[i++] = UP_BLR_X16;
     out[i++] = UP_RET;
-    return i;  // 22
+    return i;  // 21
 }
-#define UP_MUL_THUNK_WORDS 22
-// ponytail: teto de 24 thunks mul (24*88 = 2112 bytes numa página RX de 4096).
+#define UP_MUL_THUNK_WORDS 21
+// ponytail: teto de 24 thunks mul (24*84 = 2016 bytes numa página RX de 4096).
 // Passou disso, a regra vira log e o jogo segue sem ela.
 #define UP_MUL_MAX 24
