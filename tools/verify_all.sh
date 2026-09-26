@@ -162,6 +162,23 @@ run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     tools/check_sepolicy_rule.sh module/sepolicy.rule
 ' bash "$ROOT"
 
+if [ "${VERIFY_RELEASE:-0}" = 1 ]; then
+    if [ -x "$ROOT/tools/build_release.sh" ] && [ -x "$NDK_BUILD" ]; then
+        run_step "release reproduzivel" 600 bash -c '
+            set -e
+            tmp=$(mktemp -d)
+            trap "rm -rf \"$tmp\"" EXIT
+            "$1/tools/build_release.sh" --output "$tmp/one"
+            "$1/tools/build_release.sh" --output "$tmp/two"
+            cmp "$tmp/one/$(cat "$1/VERSION" | awk "{print \$1}")/SHA256SUMS" \
+                "$tmp/two/$(cat "$1/VERSION" | awk "{print \$1}")/SHA256SUMS"
+        ' bash "$ROOT"
+    else
+        record "release reproduzivel" SKIP 0 0
+        echo "release reproduzivel: build-tools/ndk ausente; use VERIFY_RELEASE=1 em ambiente completo" >&2
+    fi
+fi
+
 while IFS= read -r script; do
     rel=${script#"$ROOT"/}
     if head -n 1 "$script" | grep -q bash; then

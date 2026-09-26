@@ -18,10 +18,11 @@ if [[ ! -f "${PLATFORM_JAR}" ]]; then
     exit 1
 fi
 
-BUILD_DIR="${ROOT_DIR}/build"
-GEN_DIR="${ROOT_DIR}/gen"
-OUTPUT_APK="${ROOT_DIR}/bepinex-manager.apk"
-KEYSTORE="${ROOT_DIR}/.debug.keystore"
+BUILD_DIR="${MANAGER_BUILD_DIR:-${ROOT_DIR}/build}"
+GEN_DIR="${MANAGER_GEN_DIR:-${ROOT_DIR}/gen}"
+OUTPUT_APK="${MANAGER_OUTPUT_APK:-${ROOT_DIR}/bepinex-manager.apk}"
+KEYSTORE="${MANAGER_KEYSTORE:-${ROOT_DIR}/.debug.keystore}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}/.." log -1 --format=%ct)}"
 
 # Versao: vem do VERSION da RAIZ do repo, nunca de numero solto aqui. O
 # manifest tambem nao fixa nada — quem passa para o aapt2 e este script.
@@ -34,7 +35,7 @@ rm -rf "${BUILD_DIR}" "${GEN_DIR}"
 mkdir -p "${BUILD_DIR}/compiled_res" "${BUILD_DIR}/classes" "${BUILD_DIR}/dex" "${GEN_DIR}"
 
 # Garante keystore debug se nao existir
-if [[ ! -f "${KEYSTORE}" ]]; then
+if [[ "${MANAGER_UNSIGNED:-0}" != 1 && ! -f "${KEYSTORE}" ]]; then
     echo "[*] Gerando keystore debug..."
     keytool -genkeypair -v -keystore "${KEYSTORE}" \
         -storepass android -alias androiddebugkey -keypass android \
@@ -46,12 +47,16 @@ echo "[*] 1/6. Compilando recursos com aapt2 compile..."
 "${BUILD_TOOLS}/aapt2" compile --dir "${ROOT_DIR}/res" -o "${BUILD_DIR}/compiled_res.zip"
 
 echo "[*] 2/6. Vinculando pacote com aapt2 link..."
+ASSET_ARGS=()
+if [[ -d "${ROOT_DIR}/assets" ]]; then
+    ASSET_ARGS=(-A "${ROOT_DIR}/assets")
+fi
 "${BUILD_TOOLS}/aapt2" link \
     -I "${PLATFORM_JAR}" \
     --manifest "${ROOT_DIR}/AndroidManifest.xml" \
     --version-code "${VERSION_CODE}" \
     --version-name "${VERSION_NAME}" \
-    -A "${ROOT_DIR}/assets" \
+    "${ASSET_ARGS[@]}" \
     --java "${GEN_DIR}" \
     -o "${BUILD_DIR}/unaligned.apk" \
     "${BUILD_DIR}/compiled_res.zip" \
@@ -80,14 +85,45 @@ find "${BUILD_DIR}/classes" -name "*.class" > "${BUILD_DIR}/class_files.txt"
 echo "[*] 5/6. Empacotando classes.dex no APK..."
 jar -uf "${BUILD_DIR}/unaligned.apk" -C "${BUILD_DIR}/dex" classes.dex
 
+echo "[*] Normalizando timestamps do APK..."
+python3 - "${BUILD_DIR}/unaligned.apk" "${BUILD_DIR}/normalized.apk" "${SOURCE_DATE_EPOCH}" <<'PY'
+import sys
+import time
+import zipfile
+
+source, target, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+date_time = time.gmtime(epoch)[0:6]
+date_time = (max(1980, date_time[0]),) + date_time[1:]
+with zipfile.ZipFile(source, "r") as zin, zipfile.ZipFile(
+    target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+) as zout:
+    for old in zin.infolist():
+        info = zipfile.ZipInfo(old.filename, date_time=date_time)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.create_system = old.create_system
+        info.external_attr = old.external_attr
+        info.flag_bits = old.flag_bits & 0x800
+        zout.writestr(info, zin.read(old.filename))
+PY
+mv "${BUILD_DIR}/normalized.apk" "${BUILD_DIR}/unaligned.apk"
+
 echo "[*] 6/6. Alinhando e assinando APK final..."
 "${BUILD_TOOLS}/zipalign" -p -f 4 "${BUILD_DIR}/unaligned.apk" "${BUILD_DIR}/aligned.apk"
-"${BUILD_TOOLS}/apksigner" sign \
-    --ks "${KEYSTORE}" \
-    --ks-pass pass:android \
-    --key-pass pass:android \
-    --out "${OUTPUT_APK}" \
-    "${BUILD_DIR}/aligned.apk"
+if [[ "${MANAGER_UNSIGNED:-0}" == 1 ]]; then
+    cp "${BUILD_DIR}/aligned.apk" "${OUTPUT_APK}"
+    echo "[!] APK UNSIGNED-DEBUG: MANAGER_KEYSTORE não foi fornecida"
+else
+    [[ -f "${KEYSTORE}" ]] || {
+        echo "ERRO: keystore ausente: ${KEYSTORE}; forneça MANAGER_KEYSTORE." >&2
+        exit 1
+    }
+    "${BUILD_TOOLS}/apksigner" sign \
+        --ks "${KEYSTORE}" \
+        --ks-pass pass:android \
+        --key-pass pass:android \
+        --out "${OUTPUT_APK}" \
+        "${BUILD_DIR}/aligned.apk"
+fi
 
 echo "[+] Build concluido com sucesso: ${OUTPUT_APK}"
 echo "--- Informacoes do APK gerado ---"

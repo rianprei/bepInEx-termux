@@ -14,14 +14,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-OUT="$ROOT/out"
+OUT="${OUT_DIR:-$ROOT/out}"
 STAGE="$OUT/stage"
 ZIP_IN="$OUT/module_installer.sh"
 # Instalador pinado em commit, não em master: master muda sozinho e o
 # module_installer.sh é quem instala o módulo. SHA256 conferido no build.
-MAGISK_COMMIT="5b06d817d4ae5a916df88fd9efebf12537f40cdb"
-UPDATE_BINARY_SHA256="bcf4b1d9913f3af17755569c853e0b5a75b8005f6a18eb3f86dadcc0e968c29d"
-UPDATE_BINARY_URL="https://raw.githubusercontent.com/topjohnwu/Magisk/${MAGISK_COMMIT}/scripts/module_installer.sh"
+DEPS_LOCK="$ROOT/tools/deps.lock"
+IFS='|' read -r _ MAGISK_COMMIT UPDATE_BINARY_SHA256 UPDATE_BINARY_URL _ < <(grep '^magisk-module-installer|' "$DEPS_LOCK")
 NDK=${NDK:-$HOME/Android/Sdk/ndk/23.2.8568313}
 
 # --- versão: UM lugar só --------------------------------------------------------
@@ -68,18 +67,17 @@ echo "${UPDATE_BINARY_SHA256}  ${ZIP_IN}" | sha256sum -c - >/dev/null || {
 # política do módulo fica pela metade, sem ninguém avisar.
 tools/check_sepolicy_rule.sh
 BUILD_LOG="$OUT/build.log"
-# Nada de >/dev/null: warning de compilação é sinal, e o único tolerado é o
-# '-static-libstdc++' do NDK 23 (argumento sem uso na linkagem do clang).
+# Nada de >/dev/null: qualquer warning de compilação é sinal de falha.
 if ! "$NDK/ndk-build" -B -j4 >"$BUILD_LOG" 2>&1; then
     cat "$BUILD_LOG" >&2
     echo "ERRO: ndk-build falhou (log em $BUILD_LOG)" >&2
     exit 1
 fi
 tail -n 3 "$BUILD_LOG"
-unexpected=$(grep -E 'warning:|error:' "$BUILD_LOG" | grep -v -- '-static-libstdc++' || true)
+unexpected=$(grep -E 'warning:|error:' "$BUILD_LOG" || true)
 if [ -n "$unexpected" ]; then
     printf '%s\n' "$unexpected" >&2
-    echo "ERRO: warning/error inesperado no build (acima). Só o -static-libstdc++ é tolerado." >&2
+    echo "ERRO: warning/error no build (acima)." >&2
     exit 1
 fi
 

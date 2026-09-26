@@ -4,10 +4,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-VERSION=v0.11.0
+IFS='|' read -r _ VERSION SHA256 URL _ < <(grep '^shellcheck|' "$ROOT/tools/deps.lock")
 ARCHIVE="shellcheck-${VERSION}.linux.x86_64.tar.xz"
-SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
-URL="https://github.com/koalaman/shellcheck/releases/download/${VERSION}/${ARCHIVE}"
 CACHE="$ROOT/out/shellcheck/$VERSION"
 BIN="$CACHE/shellcheck-${VERSION}/shellcheck"
 
