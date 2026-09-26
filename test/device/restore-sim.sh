@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2015  # asserções usam "cmd && ok || bad" de propósito: ok/bad nunca falham
 # Simulação LOCAL do device_test.sh (sem device, sem adb de verdade) para provar
 # as três garantias que não dá pra ver no dry-run:
 #   (a) run interrompido (marcador no device, ou backup sem a pasta de mods) é
@@ -26,6 +27,7 @@ bad() { echo "  FALHOU: $1"; FAILED=1; }
 
 ROOT=$(mktemp -d)
 # KEEP_SIM_ROOT=1 mantém o device temporário para depurar (imprime o path)
+# shellcheck disable=SC2329  # invocada indiretamente via "trap cleanup EXIT" abaixo
 cleanup() { [ -n "${KEEP_SIM_ROOT:-}" ] || rm -rf "$ROOT"; }
 trap cleanup EXIT
 BINDIR="$ROOT/bin"

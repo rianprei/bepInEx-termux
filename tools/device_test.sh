@@ -63,6 +63,7 @@ LOCK_HELD=0
 HASH_MODS_INITIAL=
 HASH_OUT_INITIAL=
 # PKG como regex: ponto literal (com.foo não casa com comXfoo nem com com.foobar)
+# shellcheck disable=SC2016  # o $ dentro das aspas simples é literal de propósito
 PKG_RE=$(printf '%s' "$PKG" | sed 's/[.[\*^$()+?{|]/\\&/g')
 
 # Todos os toques no device passam daqui (dry-run imprime no stderr pra não
