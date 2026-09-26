@@ -74,6 +74,24 @@ static inline bool mod_dir(char *out, size_t size) {
 // ---- log (C1) ----
 
 #define MOD_LOG_CAP (256 * 1024)
+#define MOD_LOG_BODY_MAX 512
+
+// Monta a linha C1 "HH:MM:SS [tag] msg\n" em out e devolve o tamanho, ou 0
+// se não coube. O time_t entra injetado: quem loga passa time(nullptr) e o
+// teste do host passa um horário fixo, o que deixa o formato verificável sem
+// depender do device nem do fuso. O formato "%H:%M:%S" mora AQUI e no teste
+// (duas cópias independentes de propósito: se alguém trocar o separador num
+// lado, o outro acusa).
+static inline size_t mod_log_format_line(char *out, size_t size, const char *tag,
+                                         const char *body, time_t when) {
+    if (!out || size == 0 || !tag || !body) return 0;
+    char stamp[16];
+    struct tm tm_now;
+    localtime_r(&when, &tm_now);
+    if (strftime(stamp, sizeof(stamp), "%H:%M:%S", &tm_now) == 0) return 0;
+    int n = snprintf(out, size, "%s [%s] %s\n", stamp, tag, body);
+    return (n > 0 && (size_t)n < size) ? (size_t)n : 0;
+}
 
 // Parte em arquivo do mod_log. Recebe va_list e não o consome (quem chama
 // dá va_start/va_end) — o padrão printf(3).
@@ -98,15 +116,12 @@ static inline void mod_log_file(const char *tag, const char *fmt, va_list ap) {
     if (lseek(fd, 0, SEEK_END) >= MOD_LOG_CAP) {
         if (ftruncate(fd, 0) != 0) { /* segue: só não zera */ }
     }
-    time_t now = time(nullptr);
-    struct tm tm_now;
-    localtime_r(&now, &tm_now);
-    char stamp[16], body[512], line[640];
-    strftime(stamp, sizeof(stamp), "%H:%M:%S", &tm_now);
+    char body[MOD_LOG_BODY_MAX];
+    char line[640];
     vsnprintf(body, sizeof(body), fmt, ap);
-    n = snprintf(line, sizeof(line), "%s [%s] %s\n", stamp, tag, body);
-    if (n > 0) {
-        ssize_t w = write(fd, line, (size_t)n);
+    size_t len = mod_log_format_line(line, sizeof(line), tag, body, time(nullptr));
+    if (len > 0) {
+        ssize_t w = write(fd, line, len);
         (void)w;
     }
     close(fd);
