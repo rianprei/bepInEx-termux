@@ -1,5 +1,237 @@
 # bepInEx-termux
 
+[![licença-MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-green)](LICENSE)
+
+Carregador de mods pra jogos Android que funciona **sem mexer no jogo**: você
+instala um módulo no Magisk (uma vez), joga os mods numa pasta e eles são
+carregados na memória quando o jogo abre. Nada de desinstalar/reinstalar APK,
+nada de quebrar assinatura, nada de perder login do Google Play — o arquivo
+do jogo fica intocado do começo ao fim (regra dura do projeto).
+
+Como o mod entra **em tempo de execução** (runtime), ele sobrevive a updates
+do jogo sem reinstalar nada. No caminho genérico (Unity IL2CPP — Swamp
+Attack 2, TABS e amigos), os mods resolvem classe/método/campo por **nome**
+usando a API que o próprio jogo expõe. No caminho Battle Cats (histórico),
+os hooks acham a função por assinatura de bytes (AOB), com RVA e build-id
+conferidos como primeira tentativa — o efeito é o mesmo: update muda
+endereço interno, o mod acha de novo; o que muda o CORPO da função é que
+quebra, em qualquer um dos dois caminhos.
+
+Hoje o projeto é validado em: **Swamp Attack 2** (Unity IL2CPP, mods em
+produção: munição infinita e conteúdo extra) e **Battle Cats** (caminho
+próprio, histórico, intacto). TABS Pocket Edition é o próximo alvo. O app
+**bepInEx Manager** (instalar/ligar/desligar mods com um toque, sem terminal)
+está **em desenvolvimento** — enquanto ele não chega, o botão **Ação** do
+Magisk mostra o diagnóstico (mods instalados, log, SELinux) e os scripts
+`tools/` fazem a instalação.
+
+## Requisitos
+
+- Celular **rooteado** com **Magisk** (Zygisk ligado) ou **KernelSU +
+  ZygiskNext**. Sem root não existe caminho (veja o FAQ).
+- **Android 8+** e processador **arm64** (praticamente todo celular de 2018
+  pra cá). arm32 não é suportado.
+- O jogo tem que ser de um engine suportado e você precisa de um **mod
+  compatível** (ver "Que mods rodam").
+
+## Instalar em 3 passos
+
+1. **Instale o zip no Magisk.** Gere o zip com `tools/build_module.sh` (ou
+   pegue um pronto quando houver release) e abra ele pelo app do Magisk:
+   *Módulos → Instalar do armazenamento*.
+2. **Reinicie o celular.** Módulo Zygisk só carrega depois de um reboot de
+   verdade.
+3. **Toque no botão "Ação"** do módulo (app Magisk/KernelSU). Ele faz
+   exatamente uma dessas duas coisas: abre o **bepInEx Manager**, se ele
+   estiver instalado; senão, mostra o diagnóstico na tela — versão, estado
+   do SELinux, os jogos com mods, o que está ligado/desligado e as últimas
+   linhas do log de cada jogo. O botão não instala nem liga mod.
+
+Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
+**bepInEx-termux** ativo, Zygisk ligado na tela inicial.
+
+## Instalar um mod
+
+> **Pelo Manager (em desenvolvimento — ainda não existe):** quando chegar,
+> você vai abrir o arquivo `.bmod` (baixado, recebido no WhatsApp, de onde
+> for) e ele mostra o que o mod faz, instala com um toque e oferece
+> liga/desliga e opções. Nada disso funciona hoje. O que segue é o caminho
+> que **já funciona**, sem Manager.
+
+Hoje, instalar um mod = colocar os arquivos dele na pasta do jogo e
+reiniciar o jogo. O jeito mais curto é um script que faz tudo (build,
+cópia, permissão, rótulo SELinux e reinício do jogo):
+
+```bash
+# no PC, com o celular conectado (adb) e o jogo instalado:
+tools/deploy_mod.sh <id-do-mod> <pacote-do-jogo>
+# exemplo real (Swamp Attack 2):
+tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
+```
+
+- **`<pacote-do-jogo>`** é o identificador do jogo, tipo
+  `com.hyperdotstudios.swampattack2`. Ele aparece no link da Play Store
+  (`...?id=<pacote>`) e em apps que mostram detalhes de um app instalado.
+- O mod vai pra `/data/local/tmp/mods/<pacote>/` e o log dele aparece em
+  `/data/data/<pacote>/files/bepinex/log.txt` (o botão **Ação** já mostra as
+  últimas linhas — nem precisa de terminal).
+- **Ligar/desligar na mão:** renomeie o arquivo — `abc.so` (ligado) vira
+  `abc.so.off` (desligado) — e reinicie o jogo.
+- **Remover:** apague os arquivos do mod da pasta e reinicie o jogo. Nada
+  fica dentro do jogo.
+
+Pra criar um mod seu do zero (C++), veja [docs/SDK.md](docs/SDK.md). O
+formato dos arquivos (`.bmod`, `.patch`, `.conf`) está em
+[docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
+
+## Criar mod sem código (Mod Maker) — em desenvolvimento
+
+A meta (fase F6 do roadmap): no Manager, você toca em **"Escanear jogo"**,
+o jogo roda uma vez e devolve a lista de classes/métodos/campos (`dump.tsv`);
+você busca (ex.: `HasAmmo`), escolhe uma ação ("sempre verdadeiro", "sempre
+retornar N", "multiplicar por N", "fixar campo em N") e salva — sem escrever
+uma linha. O mod salvo é um `.bmod` que dá pra compartilhar.
+
+Hoje isso já funciona por partes, sem Manager:
+
+- **Descobrir nomes:** o scanner `u_dump` (já mergeado) gera o `dump.tsv`
+  com todas as classes, métodos e campos do jogo (Unity IL2CPP), pela API em
+  runtime — sem depender de ferramenta de dump externa. Caminho de hoje (com
+  terminal, no PC com adb): `tools/deploy_mod.sh u_dump <pacote>` — builda,
+  instala e reinicia o jogo; o dump sai em
+  `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que o jogo
+  abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar o
+  jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar
+  de usar.
+  No Manager isso vira o botão "Escanear jogo".
+- **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
+  `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em
+  integração** (fase F4): o contrato das regras já está fixado no roadmap e
+  a lição que criou o verbo `field` veio de teste real no device, mas nada
+  de `.patch` é instalável até o F4 mergear. De propósito não há instrução
+  operacional aqui — quando mergear, esta seção e o
+  [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md) ganham o passo a passo.
+
+## Que mods rodam
+
+O Manager (em desenvolvimento) vai identificar o arquivo **pelo conteúdo**,
+não pela extensão, e dizer em português se roda. A tabela honesta:
+
+| Arquivo | Roda? | Observação |
+|---|---|---|
+| `.bmod` (nosso pacote) | **sim** | zip com manifest + mod |
+| `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
+| `.patch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
+| `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
+| `.js` script Frida | em desenvolvimento (F11) | via frida-gadget |
+| `.dll` de BepInEx/MelonLoader **IL2CPP** | depois (F12) | exige runtime .NET no processo |
+| `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois (F13) | Harmony roda nativo em Mono |
+| `.dll` Mono de PC em jogo **IL2CPP** (ex.: mods de TABS PC) | **não automático** | os dois binários falam línguas diferentes; use o Mod Maker/SDK pra recriar |
+| `.exe`, `.dylib` iOS, `.CT` Cheat Engine | não | outra plataforma/binário |
+| `.lua` GameGuardian | depois (F10) | fora do caminho crítico |
+
+O tipo de engine é detectado pelas libs do jogo (Unity IL2CPP, Unity Mono,
+Cocos2d-x, outros → "nativo"). Nenhum caminho modifica arquivo do jogo.
+
+## FAQ
+
+### Precisa de root?
+Precisa. Root (Magisk/KernelSU) é o que permite carregar código dentro do
+processo do jogo **sem** modificar o APK. Apps "sem root" que prometem mod
+de jogo fazem isso reempacotando o APK — quebra a assinatura, o login Google
+e os updates. Não é o que fazemos, nem vamos fazer.
+
+### O Play Protect vai reclamar?
+Ele pode reclamar de **APKs instalados fora da Play Store** — quando o
+Manager for distribuído, é o caso dele (é sideload). O módulo Magisk em si
+não é um APK e não passa pelo Play Protect. Nada aqui é instalado "por
+dentro" de outro app.
+
+### Funciona em jogo online?
+O projeto é pra **jogos offline/single-player**. Jogo online com
+sincronização de servidor pode detectar mudanças, reverter o mod ou banir a
+conta — nem tudo que roda localmente o servidor aceita. Nada pra burlar
+anti-cheat, compra, IAP ou verificação de pagamento. Se o jogo tem
+multiplayer online (ex.: TABS tem), use mods só no que é local (campanha,
+sandbox) e por sua conta.
+
+### E mod de PC (`.dll` do BepInEx)?
+Depende do jogo Android ser Mono ou IL2CPP e do mod ser pra qual dos dois —
+tabela acima. O caso comum ("jogo Android é IL2CPP, meu mod de PC é Mono")
+**não tem conversão automática**: o mod de PC referencia tipos que não
+existem no binário IL2CPP. O caminho é recriar o mod aqui (Mod Maker ou SDK).
+
+### Meu celular usa SELinux Enforcing — funciona?
+É o padrão em celular de fábrica, e o módulo já carrega as regras
+(`module/sepolicy.rule`, tipo próprio `bepinex_mod_file`) que liberam só o
+mínimo: o zygote achar a pasta e o jogo ler/executar os mods.
+
+O que foi **medido de verdade** (não promessa): num **POCO C75 (HyperOS)**,
+com o módulo **v0.4.0** e `setenforce 1`, o **Swamp Attack 2** (mods
+nativos `sa2ammo` + `sa2content` via Dobby, e o `u_dump`) e o **Battle
+Cats** (4/4 mods, hooks ativos) funcionaram, sem nenhum `avc: denied` do
+nosso caminho. Isso é o teste que existe — não "qualquer celular": política
+de fábrica varia por fabricante, e se algo não carregar o botão **Ação**
+mostra o estado do SELinux e o rótulo da pasta pra diagnosticar.
+
+Instalar mod depois do boot exige aplicar o rótulo no arquivo — o
+`deploy_mod.sh` e o Manager (em desenvolvimento) fazem isso sozinhos; se
+você copia na mão, aplique
+`chcon u:object_r:bepinex_mod_file:s0 <arquivo>` via root.
+
+### Como desinstalo sem perder meus mods?
+Remover o módulo pelo app Magisk **não apaga nada seu**: os mods
+(`/data/local/tmp/mods/`, `/data/local/tmp/bc_mods/`) e os logs
+(`/data/data/<pacote>/files/bepinex/`) continuam no lugar — o desinstalador
+só lista o que ficou. Reinstalar o módulo depois volta tudo a funcionar. Pra
+apagar de vez: `rm -rf /data/local/tmp/mods` (e as pastas listadas na
+mensagem de desinstalação).
+
+### Instalei o mod e o jogo não carrega nada
+Primeiro o botão **Ação**: ele mostra SELinux, os mods ativos e as últimas
+linhas do log. Os erros comuns estão lá com nome ("dlopen falhou",
+"classe X não encontrada", "il2cpp não subiu"). Se o jogo fechar sozinho
+logo depois de abrir, tire o mod da pasta e reinicie o jogo pra isolar —
+regra ruim não derruba nada por design, mas um mod com bug de memória pode
+derrubar (é código nativo rodando no processo).
+
+## Escopo ético
+
+- **Jogos offline/single-player.** Sem preset, recurso ou ferramenta pra
+  burlar compra (IAP), licença ou verificação de pagamento.
+- **Sem PvP online com anti-cheat.** Nada de vantagem injusta contra outras
+  pessoas.
+- **Nunca modificar APK, OBB ou arquivos do jogo** — tudo em runtime. Sem
+  exceção.
+- Proibido redistribuir binários de jogos (nada de `.so`/`.apk` de jogo
+  dentro deste repo).
+
+---
+
+# Para desenvolvedores
+
+Conteúdo técnico, histórico e decisões de arquitetura. Pra usar o projeto
+como pessoa comum, as seções acima já bastam.
+
+- **Novo (roadmap universal):** o projeto deixou de ser só o POC do Battle
+  Cats e virou um loader genérico — `docs/ROADMAP-UNIVERSAL.md` tem o mapa
+  completo (objetivo, contratos C1–C7, fases F1–F13 e o que já mergeou).
+- **Módulo completo com uma linha:** `tools/build_module.sh` gera
+  `out/bepinex-termux-<versão>.zip` com `module.prop`, `zygisk/arm64-v8a.so`,
+  `sepolicy.rule`, scripts de boot e (quando disponível) o APK do Manager —
+  a seção "Empacotamento" mais abaixo é o caminho manual histórico.
+- **SDK de mod nativo:** [docs/SDK.md](docs/SDK.md) — template, `new_mod.sh`,
+  `deploy_mod.sh`, `pack_bmod.sh` e a API do `mod_common.h`.
+- **Formato dos arquivos de mod:** [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md)
+  (`.bmod`, `.conf`, `.patch`, `dump.tsv`).
+- **Testes:** `test/selftest_harness.cpp` (host, sem device) +
+  `test/mod_common_test.cpp` (SDK).
+
+O texto abaixo é a documentação técnica original do projeto.
+
+## Visão original (POC Battle Cats)
+
+
 Injeção/instrumentação nativa em runtime pra apps Android via **Zygisk**
 (Magisk) + **Dobby** (inline hook ARM64) + ponte de controle pelo **Termux**
 — o mesmo papel que o BepInEx cumpre no ecossistema Unity/Mono, mas pra
@@ -309,7 +541,7 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 55 casos de teste (234
+gameplay real, zero crash/ANR. Bateria de 60 casos de teste (311
 assertions, contagem real reverificada — compilar e rodar
 `test/selftest_harness.cpp` confirma) do hook lifecycle, do loader de mods dinâmico e do AOB
 pattern scan (`test/selftest_harness.cpp`, 0
@@ -341,6 +573,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
   chamadas simultâneas de `list_patches` competiam pela mesma Android
   property (só suporta 1 pedido em voo); resolvido com mutex serializando
   só o ciclo sinaliza→espera→lê, sem travar o resto do accept loop.
+  (Depois disso o protocolo de sinal foi redesenhado — v0.4.1: o
+  companion, que é root, **escreve** properties como **contadores de
+  sequência**; o processo do jogo **só lê** e age quando o valor muda —
+  e nunca escreve property, que em SELinux Enforcing é negado pro app.
+  Ver `jni/bc_signal.h`.)
 
 ## Ver também
 

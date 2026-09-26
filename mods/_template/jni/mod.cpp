@@ -20,7 +20,7 @@ static void *worker(void *) {
     mod_log(TAG, "carregado, esperando libil2cpp.so");
     Il2Cpp il;
     if (!il2cpp_boot(il)) {
-        mod_log(TAG, "il2cpp não subiu em 120s — desistindo");
+        mod_log(TAG, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
         return nullptr;
     }
     // Daqui pra frente: il.find_class("<ns>", "Classe") etc. (il2cpp_min.h).
