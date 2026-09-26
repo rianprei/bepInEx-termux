@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "id": "__MOD_ID__",
+  "name": "__MOD_ID__",
+  "version": "1.0",
+  "author": "",
+  "description": "Mod nativo criado a partir de mods/_template.",
+  "game": "*",
+  "engine": "unity-il2cpp",
+  "type": "native"
+}
