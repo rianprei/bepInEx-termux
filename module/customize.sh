@@ -21,11 +21,16 @@ if [ -f "$MODPATH/manager.apk" ]; then
     if cp -f "$MODPATH/manager.apk" "$TMPDIR/bepinex-manager.apk" &&
         pm install -r "$TMPDIR/bepinex-manager.apk"; then
         ui_print "bepInEx Manager instalado."
+        # Só apaga o apk depois de instalado: no caminho de falha ele é o
+        # caminho de retry do usuário, apagá-lo ali jogaria fora a única
+        # cópia do Manager.
+        rm -f "$MODPATH/manager.apk"
     else
         ui_print "AVISO: nao consegui instalar o Manager automaticamente."
-        ui_print "Instale depois com: pm install -r manager.apk"
+        ui_print "O apk continua em $MODPATH/manager.apk. Instale depois com:"
+        ui_print "  pm install -r $TMPDIR/bepinex-manager.apk"
+        ui_print "(ou pelo app Magisk, segurando o arquivo na pasta do modulo)"
     fi
-    rm -f "$MODPATH/manager.apk"
 else
     ui_print "Zip sem manager.apk — so o loader (Manager ainda nao mergeado)."
 fi

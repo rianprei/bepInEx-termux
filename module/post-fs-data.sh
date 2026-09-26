@@ -37,5 +37,9 @@ chcon -R u:object_r:bepinex_mod_file:s0 "$BC_MODS"
 # (o mesmo que o Manager faz ao instalar mod).
 [ -f "$ALLOWLIST" ] && chcon u:object_r:bepinex_mod_file:s0 "$ALLOWLIST"
 
-chcon -R u:object_r:bepinex_mod_file:s0 "$MODS" ||
-    log -p t -t bepinex "chcon falhou em $MODS: sepolicy.rule não aplicou?"
+chcon -R u:object_r:bepinex_mod_file:s0 "$MODS" || {
+    # Nesse ponto do boot o 'log' do toybox pode não existir ainda, e /cache
+    # ainda não está montado. /data/adb já está, e o usuário vai ver o arquivo.
+    echo "chcon falhou em $MODS: o sepolicy.rule nao aplicou?" >>/data/adb/bc-poc.log
+    log -p t -t bepinex "chcon falhou em $MODS" 2>/dev/null
+}

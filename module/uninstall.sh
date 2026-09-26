@@ -7,7 +7,7 @@
 #
 # MODDIR funciona aqui (ao contrário do customize.sh) porque este script é
 # EXECUTADO, não sourced — $0 é o próprio caminho dele.
-MODDIR=${0%*}
+MODDIR=${0%/*}
 
 echo "bepInEx-termux removido (o Zygisk para de carregar no proximo boot)."
 echo "Seus arquivos continuam no device:"
