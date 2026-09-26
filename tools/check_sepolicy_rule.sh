@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Confere module/sepolicy.rule contra a GRAMÁTICA DO magiskpolicy, para o build
 # não empacotar um arquivo que o Magisk vai recusar (ou, pior, aceitar em parte:
 # statement que não bate vira só um warn e as outras linhas continuam).
@@ -62,14 +62,13 @@ while IFS= read -r raw; do
     done
     # contagem de campos por familia de statement (o verbo ja foi Accounted:
     # $# conta os argumentos DEPOIS dele)
-    set -- $norm
-    v=$1
-    shift
-    n=$#
-    case " $AVVERBS " in
-        *" $v "*)
-            [ "$n" -ge 4 ] || { echo "linha $lineno: allow precisa de >=4 campos (src tgt class perm): $line" >&2; bad=1; }
-            ;;
+    read -r -a fields <<< "$norm"
+    v=${fields[0]}
+    n=$((${#fields[@]} - 1))
+    if case " $AVVERBS " in *" $v "*) true ;; *) false ;; esac; then
+        [ "$n" -ge 4 ] || { echo "linha $lineno: allow precisa de >=4 campos (src tgt class perm): $line" >&2; bad=1; }
+    else
+        case "$v" in
         type)
             [ "$n" -ge 2 ] || { echo "linha $lineno: type precisa de <nome> <atributo>: $line" >&2; bad=1; }
             ;;
@@ -92,6 +91,7 @@ while IFS= read -r raw; do
             [ "$n" -ge 1 ] || { echo "linha $lineno: $v sem argumentos: $line" >&2; bad=1; }
             ;;
     esac
+    fi
 done <"$RULE"
 
 if [ "$bad" = 0 ]; then

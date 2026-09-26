@@ -28,7 +28,10 @@ NDK=${NDK:-$HOME/Android/Sdk/ndk/23.2.8568313}
 # VERSION = "<version> <versionCode>". O módulo mostra essa versão no app
 # Magisk; o loader mostra a dele no logcat. Se divergirem o usuário instala
 # "v0.4.0" e vê "módulo carregado — v0.3.6", então o build reclama.
-read -r VERSION VERSION_CODE < VERSION
+version_line=$(cat VERSION)
+read -r VERSION VERSION_CODE <<EOF
+$version_line
+EOF
 grep -q "BC_LOADER_VERSION \"$VERSION\"" jni/main.cpp || {
     echo "ERRO: VERSION diz $VERSION mas jni/main.cpp nao bate. Atualize o define." >&2
     exit 1
@@ -162,7 +165,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         with open(path, "rb") as fh:
             zf.writestr(info, fh.read())
 PYEOF
-echo "pronto: $ZIP (SOURCE_DATE_EPOCH=$EPOCH, $(ls -l "$ZIP" | awk '{print $5}') bytes)"
+echo "pronto: $ZIP (SOURCE_DATE_EPOCH=$EPOCH, $(stat -c '%s' "$ZIP") bytes)"
 sha256sum "$ZIP"
 echo "  unzip -l \"$ZIP\""
 echo "  instalar: copiar pro device e flashear pelo app Magisk (ou Recovery), depois reiniciar"
