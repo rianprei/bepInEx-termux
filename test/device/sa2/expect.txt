@@ -3,8 +3,8 @@
 \[u_patch\] .*HasAmmo.*return aplicado
 \[u_patch\] .*GetPlayingPriority.*return aplicado
 \[u_patch\] .*GetMovementSpeed.*return aplicado
-\[u_patch\] .*GetPlayingPriority.*mul aplicado
-\[u_patch\] .*GetMovementSpeed.*mul aplicado
+\[u_patch\] .*GetPlayingClipIndex.*mul aplicado
+\[u_patch\] .*GetDistanceToTravel.*mul aplicado
 \[u_patch\] .*MonstersHaveUniqueSpeed.*static fixado
 \[u_patch\] .*WeaponReloadDurationSpeedUpFactor.*static fixado
 \[u_patch\] .*MaxFingers.*static fixado
