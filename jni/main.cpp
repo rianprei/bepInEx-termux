@@ -1424,7 +1424,38 @@ static void watch_throttle(const char *key, const struct bc_mod_entry *old_val,
 // dois casos observados sem custo real -- o poll (dl_iterate_phdr a cada
 // 8ms) e' barato e roda numa thread dedicada, nao bloqueia nada mais.
 #define TARGET_LIB_WAIT_MS 60000
+// Estado inicial dos sinais: as persist.* sobrevivem a reboot e a morte do
+// processo (achado no device: v0.4.1 re-executava reload_mods em TODA
+// abertura, e um unpatch_target antigo refaria o unpatch de sessão passada).
+// Lê tudo e memoriza SEM agir; só valor novo depois do baseline dispara.
+// Trade-off aceito: pedidos que chegarem antes do primeiro poll coalescem
+// (reload_config/reload_mods são idempotentes; o companion reenvia).
+static void bc_signal_baseline() {
+    char buf[PROP_VALUE_MAX] = {0};
+    __system_property_get(BC_PROP_RELOAD_CONFIG, buf);
+    bc_seq_learn(buf, g_seq_reload_config, sizeof(g_seq_reload_config));
+    __system_property_get(BC_PROP_RELOAD_MODS, buf);
+    bc_seq_learn(buf, g_seq_reload_mods, sizeof(g_seq_reload_mods));
+    __system_property_get(BC_PROP_PATCHES_REQ, buf);
+    bc_seq_learn(buf, g_seq_patches_req, sizeof(g_seq_patches_req));
+    // Nomeados: o "visto" é só a seq (o payload é o nome do hook).
+    char key[32] = {}, name[192] = {};
+    __system_property_get(BC_PROP_UNPATCH, buf);
+    if (bc_seq_split(buf, key, sizeof(key), name, sizeof(name)))
+        bc_seq_learn(key, g_seq_unpatch, sizeof(g_seq_unpatch));
+    else
+        bc_seq_learn("", g_seq_unpatch, sizeof(g_seq_unpatch));
+    __system_property_get(BC_PROP_REPATCH, buf);
+    if (bc_seq_split(buf, key, sizeof(key), name, sizeof(name)))
+        bc_seq_learn(key, g_seq_repatch, sizeof(g_seq_repatch));
+    else
+        bc_seq_learn("", g_seq_repatch, sizeof(g_seq_repatch));
+    LOGI("baseline dos sinais: reload_config=%s reload_mods=%s patches_req=%s unpatch=%s repatch=%s",
+         g_seq_reload_config, g_seq_reload_mods, g_seq_patches_req, g_seq_unpatch, g_seq_repatch);
+}
+
 static void *event_thread(void *) {
+    bc_signal_baseline();  // antes de qualquer hook: o valor velho não age
     if (!wait_lib_loaded(TARGET_LIB, TARGET_LIB_WAIT_MS)) {
         LOGE("libnative-lib não apareceu em %ds", TARGET_LIB_WAIT_MS / 1000);
         return nullptr;

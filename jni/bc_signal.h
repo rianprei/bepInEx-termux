@@ -53,6 +53,18 @@ static inline bool bc_seq_take(const char *cur, char *last_seen, size_t n) {
     return true;
 }
 
+// Memoriza o valor atual SEM disparar — baseline do poll. Property persist.*
+// sobrevive a reboot e a morte do processo, então sem baseline o primeiro poll
+// veria o valor da sessão anterior e dispararia tudo (reload_mods a cada
+// abertura; unpatch/repatch de sessão velha). NULL grava string vazia, que o
+// próximo valor não-vazio supera.
+static inline void bc_seq_learn(const char *cur, char *last_seen, size_t n) {
+    if (last_seen == nullptr || n == 0) return;
+    if (cur == nullptr) cur = "";
+    strncpy(last_seen, cur, n - 1);
+    last_seen[n - 1] = '\0';
+}
+
 // Quebra "<seq> <payload>": true quando tem as duas metades. Sem espaço,
 // devolve false (o chamador loga e ignora) — nunca adivinha.
 static inline bool bc_seq_split(const char *v, char *key, size_t ksz, char *payload,

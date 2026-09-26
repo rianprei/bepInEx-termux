@@ -1663,6 +1663,43 @@ int main() {
             check("3 seqs do companion => 3 ações", acts == 3);
         }
         {
+            // Regressão do device (v0.4.1): as persist.* sobrevivem a reboot, e
+            // com o "visto" começando vazio o primeiro poll via o valor velho e
+            // dispara tudo. O baseline memoriza sem agir.
+            char seen[32] = {};
+            bc_seq_learn("7", seen, sizeof(seen));
+            check("valor pré-existente (7) NÃO dispara no 1º poll", !bc_seq_take("7", seen, sizeof(seen)));
+            check("próximo valor (8) dispara", bc_seq_take("8", seen, sizeof(seen)));
+            check("e só uma vez", !bc_seq_take("8", seen, sizeof(seen)));
+            {
+                char empty_seen[32] = {};
+                bc_seq_learn("", empty_seen, sizeof(empty_seen));
+                check("baseline vazio: valor novo dispara",
+                      bc_seq_take("1", empty_seen, sizeof(empty_seen)));
+            }
+            {
+                char null_seen[32] = {};
+                bc_seq_learn(nullptr, null_seen, sizeof(null_seen));
+                check("baseline com NULL não crasha e não dispara",
+                      !bc_seq_take("1", null_seen, sizeof(null_seen)) == false);
+            }
+            {
+                // Coalescência: 1 e 2 enviados antes do 1º poll viram 1 ação.
+                char c[32] = {};
+                int fired = 0;
+                bc_seq_learn("1", c, sizeof(c));
+                if (bc_seq_take("2", c, sizeof(c))) fired++;
+                check("1→2 antes do poll: 1 ação (coalesce, documentado)", fired == 1);
+            }
+            {
+                // Nomeado: o baseline é da seq, o payload vem junto.
+                char last[32] = {};
+                bc_seq_learn("3", last, sizeof(last));
+                check("unpatch antigo (3) não repete", !bc_seq_take("3", last, sizeof(last)));
+                check("unpatch com seq nova age", bc_seq_take("4", last, sizeof(last)));
+            }
+        }
+        {
             // Payload nomeado: "<seq> <nome>"
             char key[32] = {}, payload[64] = {};
             check("split de \"7 sa2ammo\"", bc_seq_split("7 sa2ammo", key, sizeof(key),
