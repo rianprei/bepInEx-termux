@@ -117,6 +117,52 @@ static inline int up_emit_return_float(uint32_t *out, uint32_t bits) {
     return 4;
 }
 
+// strb w9, [x0, #off] (bool, 1 byte; off 0..4095).
+static inline uint32_t up_enc_strb_w9(uint16_t off) {
+    return 0x39000000u | ((uint32_t)off << 10) | 9u;
+}
+// str w9, [x0, #off] (int/float, 4 bytes; off múltiplo de 4, 0..16380).
+static inline uint32_t up_enc_str_w9(uint32_t off) {
+    return 0xB9000000u | (((off >> 2) & 0xFFFu) << 10) | 9u;
+}
+
+// Thunk field: escreve o valor em [x0+off] (this = x0) e segue pro original
+// (tail call — x30 do chamador intacto, sem save). Sem lock: o único estado
+// compartilhado é o ponteiro orig, só lido após instalar.
+// Layout: 0 movz w9,lo [1 movk w9,hi] 2 str[b] 3 adrp 4 add 5 ldr 6 br.
+// Retorna nº de palavras, 0 = offset fora do alcance do str[b].
+// bool = size 1 (strb), int/float = size 4 (str, exige off % 4 == 0).
+// Thunk field: escreve o valor em [x0+off] (this = x0) e segue pro original
+// (tail call — x30 do chamador intacto, sem save). Sem lock: o único estado
+// compartilhado é o ponteiro orig, só lido após instalar.
+// Layout: 0 movz w9,lo [1 movk w9,hi] 2 str[b] 3 adrp 4 add 5 ldr 6 br.
+// Retorna nº de palavras (6 ou 7); 0 = offset fora do alcance do str[b].
+// bool = size 1 (strb, off 0..4095); int/float = size 4 (str, off % 4 == 0).
+static inline int up_emit_field_thunk(uint32_t *out, const void *thunk_va,
+                                      const void *slot_va, int size, uint32_t bits,
+                                      uint32_t off) {
+    if (size != 1 && size != 4) return 0;
+    if (size == 1 && off > 4095) return 0;
+    if (size == 4 && (off % 4 != 0 || off / 4 > 4095)) return 0;
+    uintptr_t slot = (uintptr_t)slot_va;
+    uint32_t lo = (uint32_t)(slot & 0xFFFu);
+    auto at = [&](int i) -> const void * { return (const uint8_t *)thunk_va + (size_t)i * 4; };
+    int i = 0;
+    out[i++] = up_enc_movz_w9((uint16_t)(bits & 0xFFFFu));
+    // bool cabe num movz (0/1); int/float com metade alta zerada também.
+    if (size == 4 && (bits >> 16) != 0) out[i++] = up_enc_movk_w9_16((uint16_t)(bits >> 16));
+    out[i++] = (size == 1) ? up_enc_strb_w9((uint16_t)off) : up_enc_str_w9(off);
+    const void *pc_adrp = at(i);  // (at(i) e i++ na mesma expressão seria UB)
+    out[i++] = up_enc_adrp_x16(pc_adrp, slot_va);
+    out[i++] = up_enc_add_x16(lo);
+    out[i++] = UP_LDR_X16_ORIG;
+    out[i++] = UP_BR_X16;
+    return i;  // 6 ou 7
+}
+#define UP_FIELD_THUNK_WORDS_MAX 7
+// ponytail: teto de 24 thunks field (24*28 = 672 bytes numa página RX de 4096).
+#define UP_FIELD_MAX 24
+
 // Instrução que termina a função: ret/br (família 0xD61F/0xD65F) ou B
 // incondicional. Se uma aparece antes da última palavra que vamos
 // sobrescrever, o método é mais curto que o patch (ex.: getter de 8 bytes

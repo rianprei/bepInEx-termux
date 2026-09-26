@@ -39,8 +39,11 @@
 
 // Header é C++ (headers-only com lambdas); C chama via C++ shim.
 long  up_emit_mul_thunk_c(uint32_t *out, const void *thunk_va,
-                          const void *slot_va, int is_float);
+                           const void *slot_va, int is_float);
 int   up_mul_thunk_words_c(void);
+int   up_emit_field_thunk_c(uint32_t *out, const void *thunk_va,
+                            const void *slot_va, int size, uint32_t bits,
+                            uint32_t off);
 
 // Offsets do slot (igual u_patch_mod.cpp / u_patch_arm64.h).
 #define SLOT_ORIG  0
@@ -113,6 +116,13 @@ static __attribute__((noinline)) long chaos_int(long x) {
 
 typedef long (*fn_long)(long);
 typedef float (*fn_float)(float);
+
+// Originals do teste 4 (field): leem o próprio campo do obj — o thunk escreve,
+// o original lê de volta (prova write+run). No topo: C não aceita função
+// dentro de função.
+static uint8_t o_getb(void *o) { return ((uint8_t *)o)[8]; }
+static int32_t o_geti(void *o) { return *(int32_t *)((uint8_t *)o + 16); }
+static float o_getf(void *o) { return *(float *)((uint8_t *)o + 12); }
 
 static int g_fail = 0;
 static void check(const char *name, int ok) {
@@ -273,6 +283,47 @@ int main(int argc, char **argv) {
         check("lock float == 0 no fim", slot_f[SLOT_LOCK] == 0);
     } else {
         check("concorrência sobreviveu", 0);
+    }
+
+    // ---- teste 4: thunk field (C4 `field`) — escreve this.campo e segue ----
+    // Originals de field: leem o próprio campo do obj e devolvem (prova
+    // write+run: o thunk escreve, o original lê de volta). Definidos no topo
+    // (static → linkage interno): C não aceita função dentro de função.
+    // Objeto fake com canários: offset errado ou str largo demais suja o
+    // vizinho e o canário pega.
+    if (setjmp(g_jb) == 0) {
+        static struct { uint64_t pre; uint8_t fb; uint8_t p1[3]; float ff; int32_t fi;
+                        uint64_t post; } obj;
+        obj.pre = 0xAA55AA55AA55AA55ull;
+        obj.post = 0x55AA55AA55AA55AAull;
+        obj.fb = 0;
+        obj.ff = 0.0f;
+        obj.fi = 0;
+        // fb@8, ff@12, fi@16 (offsets do teste; o mod usa field_get_offset).
+        uint8_t *fslot = (uint8_t *)base + 0x300;
+        uint32_t *fb_th = (uint32_t *)base + 0x200 / 4;
+        uint32_t *fi_th = (uint32_t *)base + 0x220 / 4;
+        uint32_t *ff_th = (uint32_t *)base + 0x240 / 4;
+        int nb = up_emit_field_thunk_c(fb_th, fb_th, fslot, 1, 1, 8);
+        int ni = up_emit_field_thunk_c(fi_th, fi_th, fslot + 8, 4, 0x12345678u, 16);
+        int nf = up_emit_field_thunk_c(ff_th, ff_th, fslot + 16, 4, 0x40200000u, 12);
+        check("field bool emite 6 palavras", nb == 6);
+        check("field int emite 7 palavras", ni == 7);
+        check("field float emite 7 palavras", nf == 7);
+        *(void **)(fslot + 0) = (void *)o_getb;
+        *(void **)(fslot + 8) = (void *)o_geti;
+        *(void **)(fslot + 16) = (void *)o_getf;
+        __builtin___clear_cache((char *)base + 0x200, (char *)base + 0x260);
+        uint8_t (*tb)(void *) = (void *)fb_th;
+        int32_t (*ti)(void *) = (void *)fi_th;
+        float (*tf)(void *) = (void *)ff_th;
+        check("field bool: this.fb=1 e orig lê 1", tb(&obj) == 1 && obj.fb == 1);
+        check("field int: this.fi=0x12345678 e orig lê", ti(&obj) == 0x12345678 && obj.fi == 0x12345678);
+        check("field float: this.ff=2.5f e orig lê", tf(&obj) == 2.5f && obj.ff == 2.5f);
+        check("canários intactos (offset/largura certos)",
+              obj.pre == 0xAA55AA55AA55AA55ull && obj.post == 0x55AA55AA55AA55AAull);
+    } else {
+        check("field thunk executou sem crash", 0);
     }
 
     printf("== thunk_exec: %s (%d falhas) ==\n", g_fail == 0 ? "OK" : "FALHOU", g_fail);

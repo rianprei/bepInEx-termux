@@ -213,6 +213,16 @@ static_assert(offsetof(up_slot_t, lock) == UP_SLOT_LOCK, "slot layout");
 static_assert(sizeof(up_slot_t) == UP_SLOT_SIZE, "slot layout");
 static up_slot_t up_slots[UP_MUL_MAX];
 
+// Pool field: um slot por método hookado (só o orig; valor vai embutido no
+// thunk). Página RX própria, mesmo esquema do mul.
+struct up_fslot_t {
+    void *orig;  // +0 = UP_SLOT_ORIG
+};
+static_assert(offsetof(up_fslot_t, orig) == UP_SLOT_ORIG, "fslot layout");
+static up_fslot_t up_fslots[UP_FIELD_MAX];
+static uint32_t *up_field_page;
+static int up_field_used;
+
 static int up_find_applied(const char *sig) {
     for (int i = 0; i < up_applied_n; i++)
         if (strcmp(up_applied[i].sig, sig) == 0) return i;
@@ -243,8 +253,15 @@ static void up_log_first(const char *sig, const char *fmt, ...) {
 }
 
 static void up_sig(char *out, size_t n, const char *id, const up_rule_t *r) {
-    snprintf(out, n, "%s|%d|%s|%s|%d|%d|%s", id, (int)r->kind, r->cls,
-             r->member, r->nargs, (int)r->type, r->value);
+    // field carrega o método no 8º campo (auto = ""): duas regras no mesmo
+    // campo com métodos diferentes não podem colidir no dedupe. T1 casa
+    // `id|...|cls|campo|...` + "field aplicado" — ordem mantida.
+    if (r->kind == UP_FIELD)
+        snprintf(out, n, "%s|%d|%s|%s|%d|%d|%s|%s", id, (int)r->kind, r->cls,
+                 r->member, r->nargs, (int)r->type, r->value, r->fmethod);
+    else
+        snprintf(out, n, "%s|%d|%s|%s|%d|%d|%s", id, (int)r->kind, r->cls,
+                 r->member, r->nargs, (int)r->type, r->value);
 }
 
 static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr, const char *sig) {
@@ -376,6 +393,124 @@ static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r, c
     return true;
 }
 
+// Hooka UM método pra fixar o campo: thunk escreve bytes em [x0+off] e
+// segue pro original (tail call). Método estático não tem this — recusado.
+static bool up_hook_field_method(void *m, const char *mname,
+                                 size_t off, const uint8_t *bytes, size_t size, const char *sig) {
+    void *code = *(void **)m;
+    if (!code) { up_log_first(sig, "método %s sem código", mname); return false; }
+    // Dobby troca o prólogo por salto (~16 bytes): método menor não tem onde.
+    if (!up_method_fits((const uint32_t *)code, 4)) {
+        up_log_first(sig, "metodo curto demais pra hook Dobby @%p, pulando", code);
+        return false;
+    }
+    if (up_field_used >= UP_FIELD_MAX) {
+        up_log_first(sig, "teto de %d thunks field, ignorada", UP_FIELD_MAX);
+        return false;
+    }
+    if (!up_field_page) { up_log_first(sig, "sem página de thunk (mmap falhou)"); return false; }
+    uint32_t bits = 0;
+    memcpy(&bits, bytes, size);
+    up_fslot_t *slot = &up_fslots[up_field_used];
+    memset(slot, 0, sizeof(*slot));
+    uint32_t *thunk = up_field_page + (size_t)up_field_used * UP_FIELD_THUNK_WORDS_MAX;
+    int n = up_emit_field_thunk(thunk, thunk, slot, (int)size, bits, (uint32_t)off);
+    if (n <= 0) {
+        up_log_first(sig, "offset %zu fora do alcance do str (método %s), pulando", off, mname);
+        return false;
+    }
+    __builtin___clear_cache((char *)thunk, (char *)(thunk + n));
+    if (DobbyHook(code, (void *)thunk, &slot->orig) != 0) {
+        up_log_first(sig, "DobbyHook falhou @%p", code);
+        return false;
+    }
+    up_log("%s: field aplicado @%p (thunk %d, antes de %s)", sig, code, up_field_used, mname);
+    up_field_used++;
+    return true;
+}
+
+// field <Classe> <campo> <tipo> <valor> [<Método> <nargs>]: a cada chamada
+// do método (instância), escreve this.campo = valor ANTES do original.
+// Sem método: até 8 métodos de instância da classe que passam na guarda.
+static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, const char *valstr,
+                           const char *sig) {
+    void *f = il.class_get_field_from_name(klass, r->member);
+    if (!f) { up_log_first(sig, "campo %s::%s não achado", r->cls, r->member); return false; }
+    // field_static_set_value num campo de instância é UB (e vice-versa):
+    // static aqui é recusado — pra static existe o verbo `static`.
+    if (!il.field_get_flags || (il.field_get_flags(f) & 0x10) != 0) {
+        up_log_first(sig, "campo %s::%s não é de instância — regra recusada", r->cls, r->member);
+        return false;
+    }
+    uint8_t bytes[4] = {};
+    size_t size = 0;
+    if (r->type == UP_BOOL) {
+        int b = 0;
+        if (!up_parse_bool(valstr, &b)) { up_log_first(sig, "bool inválido '%s'", valstr); return false; }
+        bytes[0] = (uint8_t)b;
+        size = 1;
+    } else if (r->type == UP_INT) {
+        uint32_t v = 0;
+        if (!up_parse_int32(valstr, &v)) { up_log_first(sig, "int inválido '%s'", valstr); return false; }
+        memcpy(bytes, &v, 4);
+        size = 4;
+    } else {
+        char *end = nullptr;
+        float fl = strtof(valstr, &end);
+        if (!end || *end || fl != fl) { up_log_first(sig, "float inválido '%s'", valstr); return false; }
+        memcpy(bytes, &fl, 4);
+        size = 4;
+    }
+    size_t off = il.field_get_offset(f);
+    // Método explícito: valida e hooka um só.
+    if (r->fmethod[0]) {
+        if (!il.method_get_flags) {
+            up_log_first(sig, "sem method_get_flags neste il2cpp — field explícito recusado");
+            return false;
+        }
+        void *m = il.class_get_method_from_name(klass, r->fmethod, r->nargs);
+        if (!m) {
+            up_log_first(sig, "método %s::%s(%d) não achado", r->cls, r->fmethod, r->nargs);
+            return false;
+        }
+        const char *mn = il.method_get_name ? il.method_get_name(m) : r->fmethod;
+        if (mn && (strcmp(mn, ".ctor") == 0 || strcmp(mn, ".cctor") == 0)) {
+            up_log_first(sig, "construtor não serve pra field (roda antes dos inicializadores)");
+            return false;
+        }
+        uint32_t iflags = 0;
+        if ((il.method_get_flags(m, &iflags) & 0x10) != 0) {
+            up_log_first(sig, "método %s é static (sem this) — regra recusada", r->fmethod);
+            return false;
+        }
+        return up_hook_field_method(m, mn ? mn : r->fmethod, off, bytes, size, sig);
+    }
+    // Auto: até 8 métodos de instância (sem ctor) que passam na guarda.
+    if (!il.class_get_methods || !il.method_get_name || !il.method_get_flags) {
+        up_log_first(sig, "sem API de enumeração neste il2cpp — field auto recusado");
+        return false;
+    }
+    void *iter = nullptr, *m = nullptr;
+    int hooked = 0, seen = 0;
+    while (hooked < 8 && (m = il.class_get_methods(klass, &iter)) != nullptr) {
+        const char *mn = il.method_get_name(m);
+        if (!mn) continue;
+        if (strcmp(mn, ".ctor") == 0 || strcmp(mn, ".cctor") == 0) continue;
+        uint32_t iflags = 0;
+        if ((il.method_get_flags(m, &iflags) & 0x10) != 0) continue;
+        seen++;
+        char msig[256];
+        snprintf(msig, sizeof(msig), "%s@%s", sig, mn);
+        if (up_hook_field_method(m, mn, off, bytes, size, msig)) hooked++;
+    }
+    if (!hooked) {
+        up_log_first(sig, "nenhum método hookável pra field %s::%s", r->cls, r->member);
+        return false;
+    }
+    up_log("%s: field aplicado em %d método(s) (%d visto(s))", sig, hooked, seen);
+    return true;
+}
+
 // Uma passada: lê todo *.patch (menos *.off) + <id>.conf, aplica regra nova.
 // Retorna quantas regras aplicou.
 static int up_scan_apply(const Il2Cpp &il) {
@@ -428,6 +563,8 @@ static int up_scan_apply(const Il2Cpp &il) {
                             ok = up_apply_return(il, klass, &r, valstr, sig);
                         } else if (r.kind == UP_MUL) {
                             ok = up_apply_mul(il, klass, &r, valstr, sig);
+                        } else if (r.kind == UP_FIELD) {
+                            ok = up_apply_field(il, klass, &r, valstr, sig);
                         } else {
                             ok = up_apply_static(il, klass, &r, valstr, sig);
                         }
@@ -497,6 +634,10 @@ static void *up_worker(void *) {
     up_thunk_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (up_thunk_page == MAP_FAILED) up_thunk_page = nullptr;
+    // Página RX pros thunks field (mesmo esquema, pool separado).
+    up_field_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (up_field_page == MAP_FAILED) up_field_page = nullptr;
     up_log("il2cpp ok, dir %s", up_dir);
     for (;;) {
         int n = up_scan_apply(il);

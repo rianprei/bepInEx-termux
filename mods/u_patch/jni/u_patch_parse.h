@@ -6,14 +6,15 @@
 #include <cstdint>
 #include <cstring>
 
-typedef enum { UP_NONE, UP_RETURN, UP_MUL, UP_STATIC } up_kind_t;
+typedef enum { UP_NONE, UP_RETURN, UP_MUL, UP_STATIC, UP_FIELD } up_kind_t;
 typedef enum { UP_BOOL, UP_INT, UP_FLOAT } up_type_t;
 
 struct up_rule_t {
     up_kind_t kind;
     char cls[128];     // Namespace.Nome ou só Nome
-    char member[128];  // método (return/mul) ou campo (static)
-    int nargs;         // return/mul (0 = sem namespace... não: nº de args)
+    char member[128];  // método (return/mul), campo (static/field)
+    int nargs;         // return/mul: nº de args; field: args do método ou -1 (auto)
+    char fmethod[128]; // field: método onde fixar ("" = auto, até 8 métodos)
     up_type_t type;
     char value[64];    // número, true/false ou $key
 };
@@ -60,6 +61,22 @@ static inline bool up_parse_type(const char *s, up_type_t *out) {
     return false;
 }
 
+// nargs: inteiro >= 0, só dígitos (strtol aceitaria lixo tipo "3x").
+static inline bool up_parse_nargs(const char *tok, int *out) {
+    long nargs = 0;
+    bool neg = false;
+    const char *s = tok;
+    if (*s == '-') { neg = true; s++; }
+    if (!*s) return false;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9') return false;
+        nargs = nargs * 10 + (*s - '0');
+        if (nargs > 64) return false;
+    }
+    *out = neg ? -(int)nargs : (int)nargs;
+    return *out >= 0;
+}
+
 // Parse de UMA linha. 0 = regra ok, 1 = vazia/comentário (pular),
 // -1 = inválida (logar e seguir).
 static inline int up_parse_line(char *line, up_rule_t *r) {
@@ -79,27 +96,28 @@ static inline int up_parse_line(char *line, up_rule_t *r) {
         // static <Classe> <campo> <tipo> <valor>
         if (n != 5) return -1;
         r->kind = UP_STATIC;
+    } else if (strcmp(tok[0], "field") == 0) {
+        // field <Classe> <campo> <tipo> <valor> [<Método> <nargs>]
+        // 5 campos = auto (até 8 métodos de instância); 7 = método explícito.
+        if (n != 5 && n != 7) return -1;
+        r->kind = UP_FIELD;
     } else {
         return -1;
     }
     snprintf(r->cls, sizeof(r->cls), "%s", tok[1]);
     snprintf(r->member, sizeof(r->member), "%s", tok[2]);
-    int vi = 3;  // índice do próximo campo a ler
-    if (r->kind != UP_STATIC) {
-        // nargs: inteiro >= 0, só dígitos (strtol aceitaria lixo tipo "3x").
-        long nargs = 0;
-        bool neg = false;
-        const char *s = tok[3];
-        if (*s == '-') { neg = true; s++; }
-        if (!*s) return -1;
-        for (; *s; s++) {
-            if (*s < '0' || *s > '9') return -1;
-            nargs = nargs * 10 + (*s - '0');
-            if (nargs > 64) return -1;
-        }
-        r->nargs = neg ? -(int)nargs : (int)nargs;
-        if (r->nargs < 0) return -1;
+    int vi = 3;  // índice do tipo (return/mul: 4, após o nargs)
+    if (r->kind == UP_RETURN || r->kind == UP_MUL) {
+        if (!up_parse_nargs(tok[3], &r->nargs)) return -1;
         vi = 4;
+    } else if (r->kind == UP_FIELD) {
+        if (n == 5) {
+            r->nargs = -1;  // auto: sem método
+        } else {
+            snprintf(r->fmethod, sizeof(r->fmethod), "%s", tok[5]);
+            if (!r->fmethod[0]) return -1;
+            if (!up_parse_nargs(tok[6], &r->nargs)) return -1;
+        }
     }
     if (!up_parse_type(tok[vi], &r->type)) return -1;
     if (r->kind == UP_MUL && r->type == UP_BOOL) return -1;  // mul só int|float

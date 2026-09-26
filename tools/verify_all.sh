@@ -252,6 +252,19 @@ else
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
 fi
 
+# Execução real do thunk (qemu-aarch64): run_host.sh do thunk_exec.
+# qemu ausente = SKIP com aviso, nunca PASS.
+if [ -f "$ROOT/test/device/thunk_exec/run_host.sh" ]; then
+    if [ -x "${QEMU:-/usr/bin/qemu-aarch64}" ] || command -v qemu-aarch64 >/dev/null 2>&1; then
+        run_step "u_patch exec test (thunk_exec)" 420 bash "$ROOT/test/device/thunk_exec/run_host.sh"
+    else
+        record "u_patch exec test (thunk_exec, qemu-aarch64 missing)" SKIP 0 0
+        echo "AVISO: qemu-aarch64 ausente; exec test do u_patch ignorado" >&2
+    fi
+else
+    record "u_patch exec test (not present)" SKIP 0 0
+fi
+
 if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/main.cpp"; then
     run_step "VERSION matches loader" "$TIMEOUT_TEST" bash -c '
         version=$(awk "{print \$1}" "$1/VERSION")
