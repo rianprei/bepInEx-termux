@@ -97,6 +97,11 @@ não derruba mod.
 
 ## `.patch` (C4) — regras declarativas (u_patch)
 
+> **MOTOR EM INTEGRAÇÃO (F4):** o `u_patch` ainda não mergeou — esta seção
+> documenta o **contrato fixo** do roadmap (C4), mas nada aqui é operacional
+> hoje. Não empacote nem distribua `.patch`/`type:patch` até o merge; o
+> passo a passo de instalação entra aqui quando isso acontecer.
+
 Uma regra por linha, campos separados por espaço, `#` é comentário.
 `<Classe>` = `Namespace.Nome` ou só `Nome` (o último `.` separa).
 `<valor>`/`<fator>` pode ser `$key`, que vem do `<id>.conf`.
@@ -116,30 +121,30 @@ field   <Classe>  <campo>   <bool|int|float>           <valor>  [<Método> <narg
   Sem `<Método>`/`<nargs>`, o u_patch escolhe sozinho até 8 métodos de
   instância da classe que passam na guarda de tamanho.
 
-### Exemplo real (Swamp Attack 2) — e o porquê de "aplicar" não é "resolver"
+### A lição de device que criou o verbo `field` (Swamp Attack 2)
 
-Munição infinita com **uma linha**:
-
-```
-field WeaponInfo unlimitedAmmo bool true
-```
-
-Funciona porque é o campo que o **próprio jogo** consulta
-(`ReloadWeaponClip` trata a reserva como 1.000.000 quando a flag liga) — é
-o mesmo mecanismo que o mod nativo `mods/sa2ammo` usa.
-
-A regra "óbvia" **não basta**, e vale entender por quê:
+Quem escreveu o contrato mediu no device antes de escolher o verbo. A regra
+que parece a certa:
 
 ```
 return ComplexCreature HasAmmo 0 bool true
 ```
 
-Essa regra **aplica, roda e é chamada** (12x numa sessão, medido no device
-com Frida) — e a munição acaba do mesmo jeito. Motivo: o jogo **lê e
+**aplicou, rodou e foi chamada** (12x numa sessão, medido no device com
+Frida) — e a munição acabou do mesmo jeito. Motivo: o jogo **lê e
 decrementa o campo da arma direto**, sem passar por `HasAmmo()` toda vez.
-Conclusão prática: patcheie método quando o método é o gargalo; patcheie
-**campo** quando a lógica espalhada lê o estado direto. O `dump.tsv` do
-u_dump mostra os dois (linhas `M` e `F`) pra você comparar.
+Já o campo é o ponto que o **próprio jogo** consulta
+(`ReloadWeaponClip` trata a reserva como 1.000.000 quando a flag liga) —
+é o mesmo mecanismo que o mod nativo `mods/sa2ammo` usa e valida hoje:
+
+```
+field WeaponInfo unlimitedAmmo bool true
+```
+
+Conclusão prática pra quando o u_patch mergear: patcheie método quando o
+método é o gargalo; patcheie **campo** quando a lógica espalhada lê o
+estado direto. O `dump.tsv` do u_dump mostra os dois (linhas `M` e `F`)
+pra você comparar.
 
 Regra que não resolve (classe/método inexistente, método minúsculo demais
 pra patchar) vira linha de log clara e não derruba nada: nem o jogo, nem
@@ -148,7 +153,8 @@ as outras regras.
 ## `dump.tsv` (C5) — o inventário do jogo (u_dump)
 
 Gerado pelo `u_dump` na primeira vez que o jogo roda com ele presente
-(futuro Mod Maker copia e remove sozinho; hoje dá pra copiar na mão).
+(hoje: `tools/deploy_mod.sh u_dump <pacote>` — ver README; no futuro o Mod
+Maker copia e remove sozinho).
 Separador **TAB**. Cabeçalho + 3 tipos de linha:
 
 ```
@@ -176,7 +182,7 @@ pela extensão:
 | `.bmod` | zip com `manifest.json` | sim |
 | `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim (copia pra pasta) |
 | `.so` arm32/x86 | ELF de outra arquitetura | não |
-| `.patch` | texto nas regras C4 | sim (u_patch) |
+| `.patch` | texto nas regras C4 | **em integração** (u_patch, F4) |
 | script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | em desenvolvimento (F11) |
 | `.dll` IL2CPP (BepInEx 6/MelonLoader IL2CPP) | PE + CLI + refs `Il2CppInterop`/`UnhollowerBaseLib` | depois (F12) |
 | `.dll` Mono em jogo Android **Mono** | AssemblyRefs sem `Il2Cpp*` + engine mono | depois (F13) |
@@ -189,14 +195,15 @@ runtime.
 
 ## Exemplo ponta a ponta: o `sa2-infinite-ammo.bmod`
 
+> Ainda **não operacional**: `type:patch` depende do `u_patch` (F4, em
+> integração). O exemplo fica como referência do formato — quando o F4 e o
+> Manager mergarem, o `pack_bmod.sh` valida e empacota, o Manager instala
+> com um toque e os arquivos viram `sa2-infinite-ammo.patch`/`.json` como
+> na seção C1 acima.
+
 ```
 manifest.json    {"format":1,"id":"sa2-infinite-ammo","name":"Munição
                   infinita","version":"1.0","game":"com.hyperdotstudios.
                   swampattack2","engine":"unity-il2cpp","type":"patch"}
 mod.patch        field WeaponInfo unlimitedAmmo bool true
 ```
-
-Empacota com `tools/pack_bmod.sh sa2-infinite-ammo` (valida o manifest) e
-pronto: `.bmod` único, compartilhável, instalável com um toque quando o
-Manager chegar (hoje, descompacte na pasta do jogo com root — os nomes
-viram `sa2-infinite-ammo.patch`/`.json` como na seção C1 acima).

@@ -9,16 +9,21 @@ nada de quebrar assinatura, nada de perder login do Google Play — o arquivo
 do jogo fica intocado do começo ao fim (regra dura do projeto).
 
 Como o mod entra **em tempo de execução** (runtime), ele sobrevive a updates
-do jogo sem reinstalar nada: o que muda num update é o endereço interno das
-funções, e os mods do projeto resolvem tudo por **nome** (classe, método,
-campo) usando a API que o próprio jogo expõe.
+do jogo sem reinstalar nada. No caminho genérico (Unity IL2CPP — Swamp
+Attack 2, TABS e amigos), os mods resolvem classe/método/campo por **nome**
+usando a API que o próprio jogo expõe. No caminho Battle Cats (histórico),
+os hooks acham a função por assinatura de bytes (AOB), com RVA e build-id
+conferidos como primeira tentativa — o efeito é o mesmo: update muda
+endereço interno, o mod acha de novo; o que muda o CORPO da função é que
+quebra, em qualquer um dos dois caminhos.
 
 Hoje o projeto é validado em: **Swamp Attack 2** (Unity IL2CPP, mods em
 produção: munição infinita e conteúdo extra) e **Battle Cats** (caminho
 próprio, histórico, intacto). TABS Pocket Edition é o próximo alvo. O app
 **bepInEx Manager** (instalar/ligar/desligar mods com um toque, sem terminal)
 está **em desenvolvimento** — enquanto ele não chega, o botão **Ação** do
-Magisk e os scripts `tools/` cobrem o mesmo caminho.
+Magisk mostra o diagnóstico (mods instalados, log, SELinux) e os scripts
+`tools/` fazem a instalação.
 
 ## Requisitos
 
@@ -36,20 +41,22 @@ Magisk e os scripts `tools/` cobrem o mesmo caminho.
    *Módulos → Instalar do armazenamento*.
 2. **Reinicie o celular.** Módulo Zygisk só carrega depois de um reboot de
    verdade.
-3. **Toque no botão "Ação"** do módulo (app Magisk/KernelSU). Se o
-   **bepInEx Manager** estiver instalado, ele abre; senão, o botão mostra o
-   diagnóstico na tela: versão, estado do SELinux, os jogos com mods, o que
-   está ligado/desligado e as últimas linhas do log de cada jogo.
+3. **Toque no botão "Ação"** do módulo (app Magisk/KernelSU). Ele faz
+   exatamente uma dessas duas coisas: abre o **bepInEx Manager**, se ele
+   estiver instalado; senão, mostra o diagnóstico na tela — versão, estado
+   do SELinux, os jogos com mods, o que está ligado/desligado e as últimas
+   linhas do log de cada jogo. O botão não instala nem liga mod.
 
 Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
 **bepInEx-termux** ativo, Zygisk ligado na tela inicial.
 
 ## Instalar um mod
 
-> **Pelo Manager (em desenvolvimento):** você abre o arquivo `.bmod`
-> (baixado, recebido no WhatsApp, de onde for), o Manager mostra o que ele
-> faz, instala com um toque, oferece liga/desliga e ajuste de opções. O que
-> segue é o caminho que **já funciona hoje**, sem Manager.
+> **Pelo Manager (em desenvolvimento — ainda não existe):** quando chegar,
+> você vai abrir o arquivo `.bmod` (baixado, recebido no WhatsApp, de onde
+> for) e ele mostra o que o mod faz, instala com um toque e oferece
+> liga/desliga e opções. Nada disso funciona hoje. O que segue é o caminho
+> que **já funciona**, sem Manager.
 
 Hoje, instalar um mod = colocar os arquivos dele na pasta do jogo e
 reiniciar o jogo. O jeito mais curto é um script que faz tudo (build,
@@ -89,18 +96,20 @@ Hoje isso já funciona por partes, sem Manager:
 
 - **Descobrir nomes:** o scanner `u_dump` (já mergeado) gera o `dump.tsv`
   com todas as classes, métodos e campos do jogo (Unity IL2CPP), pela API em
-  runtime — sem depender de ferramenta de dump externa.
-- **Aplicar regras:** um `.patch` com regras declarativas simples (verbo
-  `return`/`mul`/`static`/`field`), servido pelo `u_patch` (em integração —
-  fase F4). Exemplo real que funciona no Swamp Attack 2:
-
-  ```
-  field WeaponInfo unlimitedAmmo bool true
-  ```
-
-  (Detalhe honesto e importante em [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md):
-  a regra "óbvia" `return ComplexCreature HasAmmo 0 bool true` **aplica e
-  roda, mas não basta** — o jogo lê o campo direto.)
+  runtime — sem depender de ferramenta de dump externa. Caminho de hoje (com
+  terminal, no PC com adb): `tools/deploy_mod.sh u_dump <pacote>` — builda,
+  instala e reinicia o jogo; o dump sai em
+  `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que o jogo
+  abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar o
+  jogo); remova o `u_dump.so` da pasta do jogo quando terminar de usar.
+  No Manager isso vira o botão "Escanear jogo".
+- **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
+  `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em
+  integração** (fase F4): o contrato das regras já está fixado no roadmap e
+  a lição que criou o verbo `field` veio de teste real no device, mas nada
+  de `.patch` é instalável até o F4 mergear. De propósito não há instrução
+  operacional aqui — quando mergear, esta seção e o
+  [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md) ganham o passo a passo.
 
 ## Que mods rodam
 
@@ -111,7 +120,7 @@ não pela extensão, e dizer em português se roda. A tabela honesta:
 |---|---|---|
 | `.bmod` (nosso pacote) | **sim** | zip com manifest + mod |
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
-| `.patch` (regras declarativas) | **sim** | precisa do `u_patch` (F4, em integração) |
+| `.patch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
 | `.js` script Frida | em desenvolvimento (F11) | via frida-gadget |
 | `.dll` de BepInEx/MelonLoader **IL2CPP** | depois (F12) | exige runtime .NET no processo |
@@ -154,11 +163,20 @@ existem no binário IL2CPP. O caminho é recriar o mod aqui (Mod Maker ou SDK).
 ### Meu celular usa SELinux Enforcing — funciona?
 É o padrão em celular de fábrica, e o módulo já carrega as regras
 (`module/sepolicy.rule`, tipo próprio `bepinex_mod_file`) que liberam só o
-mínimo: o zygote achar a pasta e o jogo ler/executar os mods. Instalar mod
-depois do boot exige aplicar o rótulo no arquivo — o `deploy_mod.sh` e o
-Manager (em desenvolvimento) fazem isso sozinhos; se você copia na mão,
-aplique `chcon u:object_r:bepinex_mod_file:s0 <arquivo>` via root. O botão
-**Ação** mostra o estado do SELinux e o rótulo da pasta pra diagnosticar.
+mínimo: o zygote achar a pasta e o jogo ler/executar os mods.
+
+O que foi **medido de verdade** (não promessa): num **POCO C75 (HyperOS)**,
+com o módulo **v0.4.0** e `setenforce 1`, o **Swamp Attack 2** (mods
+nativos `sa2ammo` + `sa2content` via Dobby, e o `u_dump`) e o **Battle
+Cats** (4/4 mods, hooks ativos) funcionaram, sem nenhum `avc: denied` do
+nosso caminho. Isso é o teste que existe — não "qualquer celular": política
+de fábrica varia por fabricante, e se algo não carregar o botão **Ação**
+mostra o estado do SELinux e o rótulo da pasta pra diagnosticar.
+
+Instalar mod depois do boot exige aplicar o rótulo no arquivo — o
+`deploy_mod.sh` e o Manager (em desenvolvimento) fazem isso sozinhos; se
+você copia na mão, aplique
+`chcon u:object_r:bepinex_mod_file:s0 <arquivo>` via root.
 
 ### Como desinstalo sem perder meus mods?
 Remover o módulo pelo app Magisk **não apaga nada seu**: os mods
@@ -522,7 +540,7 @@ python3 bc_log_viewer.py --host 127.0.0.1 --port 17654 list_patches
 ## Testado ao vivo
 
 Device físico rooted (Magisk), Android 16/HyperOS. 4/4 hooks ativos em
-gameplay real, zero crash/ANR. Bateria de 55 casos de teste (234
+gameplay real, zero crash/ANR. Bateria de 60 casos de teste (311
 assertions, contagem real reverificada — compilar e rodar
 `test/selftest_harness.cpp` confirma) do hook lifecycle, do loader de mods dinâmico e do AOB
 pattern scan (`test/selftest_harness.cpp`, 0
@@ -554,6 +572,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
   chamadas simultâneas de `list_patches` competiam pela mesma Android
   property (só suporta 1 pedido em voo); resolvido com mutex serializando
   só o ciclo sinaliza→espera→lê, sem travar o resto do accept loop.
+  (Depois disso o protocolo de sinal foi redesenhado — v0.4.1: o
+  companion, que é root, **escreve** properties como **contadores de
+  sequência**; o processo do jogo **só lê** e age quando o valor muda —
+  e nunca escreve property, que em SELinux Enforcing é negado pro app.
+  Ver `jni/bc_signal.h`.)
 
 ## Ver também
 

@@ -39,7 +39,7 @@ static void *worker(void *) {
     mod_log(TAG, "carregado, esperando libil2cpp.so");
     Il2Cpp il;
     if (!il2cpp_boot(il)) {
-        mod_log(TAG, "il2cpp não subiu em 120s — desistindo");
+        mod_log(TAG, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
         return nullptr;
     }
     // Daqui pra frente: il.find_class("<ns>", "Classe") etc. (il2cpp_min.h).
@@ -55,7 +55,10 @@ __attribute__((constructor)) static void mod_template_init() {
 
 O `constructor` roda no `dlopen` (feito pelo loader ainda no zygote), por
 isso ele só solta a thread e volta — todo o trabalho pesado espera o
-runtime il2cpp subir dentro da thread.
+runtime il2cpp subir dentro da thread. O orçamento total do `il2cpp_boot`
+é de **~240s** (até 120s esperando a `libil2cpp.so` aparecer + até 120s
+esperando o domínio/corlib ficar pronto — ver `il2cpp_min.h`); em jogo
+saudável são poucos segundos.
 
 ## 2. Build
 
@@ -82,8 +85,8 @@ Enforcing) → `am force-stop` (reinicia o processo do jogo).
 
 Abra o jogo e confira o log — dois caminhos:
 
-- **Botão Ação** do módulo no app Magisk: mostra os mods ativos e as
-  últimas 5 linhas do log do jogo.
+- **Botão Ação** do módulo no app Magisk: abre o Manager, se instalado;
+  senão mostra os mods ativos e as últimas 5 linhas do log do jogo.
 - Terminal: `adb shell su -c "tail -5 /data/data/<pacote>/files/bepinex/log.txt"`
 
 Esperado (contrato C1, `HH:MM:SS [mod] mensagem`):
