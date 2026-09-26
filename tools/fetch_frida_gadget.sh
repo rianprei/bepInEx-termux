@@ -35,3 +35,4 @@ echo "${SO_SHA256}  ${SO}" | sha256sum -c -
 mv -f "$SO" frida-gadget.bin
 echo "$VERSION" > VERSION.txt
 ls -l frida-gadget.bin
+# Instalar no device (bin + .js + .config com su+chcon): tools/deploy_frida.sh

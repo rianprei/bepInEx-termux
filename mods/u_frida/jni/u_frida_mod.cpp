@@ -1,13 +1,18 @@
 // u_frida — carrega scripts Frida .js como mod (FASE F11, runtime-only).
-// O usuário solta meu_mod.js na pasta do jogo; este .so escreve o config
-// JSON do gadget (modo script-directory) e dá dlopen nele. Sem PC, sem
-// frida-server, sem patch de APK. Log mínimo próprio (F2 dá mod_common.h
-// e a gente troca).
+// O usuário solta meu_mod.js na pasta do jogo; este .so SÓ verifica
+// frida-gadget.bin + frida-gadget.config ao lado e dá dlopen no binário.
+// Sem PC, sem frida-server, sem patch de APK. Log mínimo próprio (F2 dá
+// mod_common.h e a gente troca).
 //
-// Onde mora o quê (revisão kilo-12): o processo do jogo NÃO escreve em
-// /data/local/tmp — só lê. Então binário + config vão pra onde ele escreve
-// (/data/data/<pkg>/files/bepinex/), e os .js continuam lidos da pasta de
-// mods. O gadget deriva o config do próprio caminho (gadget.vala:2016).
+// Onde mora o quê (re-review: Enforcing): binário E config ficam na pasta
+// de mods (/data/local/tmp/mods/<pkg>/), que é bepinex_mod_file e tem
+// map+execute no sepolicy.rule. dlopen a partir de
+// /data/data/<pkg>/files (app_data_file) é NEGADO em Enforcing — AOSP
+// private/app.te não dá execute em app_data_file pro appdomain (passava
+// só porque o device de teste está Permissive). Quem instala
+// (Manager/deploy via su) copia o .bin e ESCREVE o .config com os caminhos
+// dos .js; o jogo só lê e executa. O gadget deriva o config do próprio
+// caminho do binário (gadget.vala:2016-2028).
 #include <android/log.h>
 #include <dirent.h>
 #include <dlfcn.h>
@@ -45,10 +50,12 @@ static void uf_log(const char *fmt, ...) {
     va_end(ap);
     __android_log_print(ANDROID_LOG_INFO, UF_TAG, "%s", msg);
     if (!uf_pkg[0]) return;
-    char path[384], dir[384];
+    char path[384], files[384], dir[384];
     snprintf(path, sizeof(path), UF_LOG_FMT, uf_pkg);
+    snprintf(files, sizeof(files), "/data/data/%s/files", uf_pkg);
     snprintf(dir, sizeof(dir), UF_OUT_DIR_FMT, uf_pkg);
-    mkdir(dir, 0755);  // files/ existe (é do app); bepinex/ a gente cria
+    mkdir(files, 0771);  // files/ antes de bepinex/ (dono é o app, pode)
+    mkdir(dir, 0755);
     struct stat st;
     if (stat(path, &st) == 0 && (uint64_t)st.st_size > UF_LOG_MAX) {
         FILE *rf = fopen(path, "r");
@@ -107,36 +114,6 @@ static bool uf_read_pkg_once() {
     return true;
 }
 
-// Copia src→dst (binário sai de onde o jogo só lê pra onde ele escreve).
-// true com destino do mesmo tamanho da origem.
-static bool uf_copy_file(const char *src, const char *dst, size_t expect) {
-    FILE *rf = fopen(src, "rb");
-    if (!rf) return false;
-    FILE *wf = fopen(dst, "wb");
-    if (!wf) { fclose(rf); return false; }
-    char buf[65536];
-    size_t total = 0;
-    bool ok = true;
-    for (;;) {
-        size_t r = fread(buf, 1, sizeof(buf), rf);
-        size_t w = 0;
-        while (w < r) {
-            size_t k = fwrite(buf + w, 1, r - w, wf);
-            if (k == 0) { ok = false; break; }
-            w += k;
-        }
-        if (!ok) break;
-        total += r;
-        if (r < sizeof(buf)) {
-            if (ferror(rf)) ok = false;
-            break;
-        }
-    }
-    fclose(rf);
-    if (fclose(wf) != 0) ok = false;
-    return ok && total == expect;
-}
-
 static int uf_has_il2cpp_cb(struct dl_phdr_info *info, size_t, void *out) {
     if (info->dlpi_name && strstr(info->dlpi_name, "/libil2cpp.so")) {
         *(int *)out = 1;
@@ -162,38 +139,29 @@ static void *uf_worker(void *) {
     free(ents);
     if (!first_js) { uf_log("sem *.js em %s, gadget não carregado", uf_dir); return nullptr; }
 
-    // Binário + config moram onde o jogo escreve (revisão kilo-12).
-    char outdir[384], gsrc[448], gdst[448], cfg[448];
-    snprintf(outdir, sizeof(outdir), UF_OUT_DIR_FMT, uf_pkg);
-    mkdir(outdir, 0755);
-    snprintf(gsrc, sizeof(gsrc), "%s/%s", uf_dir, UF_GADGET_FILE);
-    snprintf(gdst, sizeof(gdst), "%s/%s", outdir, UF_GADGET_FILE);
-    snprintf(cfg, sizeof(cfg), "%s/%s", outdir, UF_CONFIG_FILE);
-    struct stat ss, sd;
-    if (stat(gsrc, &ss) != 0) {
-        uf_log("sem %s na pasta (Manager copia junto com o .js)", UF_GADGET_FILE);
+    // Binário + config TÊM que estar na pasta de mods (bepinex_mod_file,
+    // com map+execute). O jogo só verifica: quem instala (Manager/deploy
+    // via su) copia o .bin e escreve o .config. Sem .bin/.config válido,
+    // nada carrega (log explica).
+    char gadget[448], cfg[448];
+    snprintf(gadget, sizeof(gadget), "%s/%s", uf_dir, UF_GADGET_FILE);
+    snprintf(cfg, sizeof(cfg), "%s/%s", uf_dir, UF_CONFIG_FILE);
+    struct stat st;
+    if (stat(gadget, &st) != 0) {
+        uf_log("sem %s na pasta (quem instala copia via su+chcon)", UF_GADGET_FILE);
         return nullptr;
     }
-    if (stat(gdst, &sd) != 0 || (uint64_t)sd.st_size != (uint64_t)ss.st_size) {
-        if (!uf_copy_file(gsrc, gdst, (size_t)ss.st_size)) {
-            uf_log("cópia do gadget pra %s falhou", gdst);
-            return nullptr;
-        }
-        uf_log("gadget copiado (%lld bytes)", (long long)ss.st_size);
-    }
-    // Config ANTES do dlopen: o constructor do gadget lê na carga. Aponta
-    // pra pasta de mods (scripts são só lidos de lá). Sem JSON válido,
-    // sem gadget (revisão kilo-19).
-    char json[512];
-    int jn = uf_build_config(json, sizeof(json), uf_dir);
-    if (jn < 0 || (size_t)jn >= sizeof(json)) {
-        uf_log("config JSON não coube, gadget não carregado");
+    if (stat(cfg, &st) != 0 || st.st_size == 0) {
+        uf_log("sem %s válido (quem instala escreve via su+chcon)", UF_CONFIG_FILE);
         return nullptr;
     }
-    FILE *f = fopen(cfg, "w");
-    if (!f) { uf_log("não consegui escrever %s", cfg); return nullptr; }
-    fputs(json, f);
-    fclose(f);
+    FILE *cf = fopen(cfg, "r");
+    int first = cf ? fgetc(cf) : EOF;
+    if (cf) fclose(cf);
+    if (first != '{') {
+        uf_log("%s não é JSON (primeiro byte %d), gadget não carregado", UF_CONFIG_FILE, first);
+        return nullptr;
+    }
 
     // Espera o il2cpp antes do dlopen (revisão kilo-14, como o sa2ammo):
     // script Il2Cpp.* carregado antes do init falha. Jogo não-Unity não
@@ -214,9 +182,9 @@ static void *uf_worker(void *) {
     // stdout do jogo vai pra /dev/null: console.log do script não aparece
     // no logcat. Script de teste tem que fazer efeito observável (escrever
     // arquivo, mudar comportamento), não só logar.
-    void *h = dlopen(gdst, RTLD_NOW);
+    void *h = dlopen(gadget, RTLD_NOW);
     if (!h) { uf_log("dlopen do gadget falhou: %s", dlerror()); return nullptr; }
-    uf_log("gadget ativo (scripts em %s, 1º %s)", uf_dir, first_js);
+    uf_log("gadget ativo (bin+config em %s, 1º script %s)", uf_dir, first_js);
     return nullptr;
 }
 
