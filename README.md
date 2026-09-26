@@ -84,6 +84,14 @@ Pra criar um mod seu do zero (C++), veja [docs/SDK.md](docs/SDK.md). O
 formato dos arquivos (`.bmod`, `.patch`, `.conf`) está em
 [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
 
+Para gerar uma release local completa (zip Magisk, APK do Manager, exemplos
+nativos, `SHA256SUMS` e `BUILD-INFO.txt`), use `tools/build_release.sh`.
+A árvore Git precisa estar limpa. Sem
+`MANAGER_KEYSTORE=/caminho/fora/do/repo`, o APK é produzido como
+`UNSIGNED-DEBUG`; uma release assinada exige uma chave fixa fornecida
+externamente. A reprodução pode ser conferida com
+`VERIFY_RELEASE=1 tools/verify_all.sh`.
+
 ## Criar mod sem código (Mod Maker) — em desenvolvimento
 
 A meta (fase F6 do roadmap): no Manager, você toca em **"Escanear jogo"**,

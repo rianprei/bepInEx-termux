@@ -11,12 +11,16 @@ set -eu
 # Comandos usados:
 #   curl -sL -o fg.xz <URL> && sha256sum fg.xz && wc -c fg.xz
 #   unxz -k fg.xz && sha256sum fg && ls -l fg   (.so: 25233136 bytes)
-VERSION="17.19.0"
-XZ_SHA256="da55241ed73873176997298f2d00aa02729fc6ce935850923b6a28c587a1d9aa"
+LOCK="$(dirname "$0")/deps.lock"
+IFS='|' read -r _ VERSION XZ_SHA256 BASE _ <<EOF
+$(grep '^frida-gadget-xz|' "$LOCK")
+EOF
+BASE="${BASE%/*}"
 XZ_SIZE="6969732"
 # sha256 do .so já desempatado (referência, medido 2026-09-26):
-SO_SHA256="99a5e32fe07d9136571404a33375140386c568bb0953499c7d553056a0b8d674"
-BASE="https://github.com/frida/frida/releases/download/${VERSION}"
+IFS='|' read -r _ _ SO_SHA256 _ _ <<EOF
+$(grep '^frida-gadget-so|' "$LOCK")
+EOF
 OUTDIR="$(dirname "$0")/../mods/u_frida/gadget"
 mkdir -p "$OUTDIR"
 cd "$OUTDIR"
