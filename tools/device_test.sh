@@ -96,7 +96,10 @@ echo "--- snapshot inicial ---"
 snapshot "$HOST_TMP/before.txt"
 
 echo "--- backup mods/$PKG ---"
-dev "rm -rf $BAK $STAGE && cp -a $MODS $BAK && mkdir -p $STAGE" || { echo "FAIL: sem pasta mods/$PKG no device (instale os mods antes)"; exit 1; }
+# Staging precisa ser gravável pelo shell (adb push roda como uid 2000):
+# cria via su e devolve a ele (2000:2000 + 775). Sem isso o push morre com
+# Permission denied (staging herdava dono root do mkdir via su).
+dev "rm -rf $BAK $STAGE && cp -a $MODS $BAK && mkdir -p $STAGE && chown 2000:2000 $STAGE && chmod 775 $STAGE" || { echo "FAIL: sem pasta mods/$PKG no device (instale os mods antes)"; exit 1; }
 if dev "test -f $OUT/log.txt"; then
     echo 1 > "$HOST_TMP/log_present"
     dev "cp $OUT/log.txt $OUT/log.txt.t1bak"
