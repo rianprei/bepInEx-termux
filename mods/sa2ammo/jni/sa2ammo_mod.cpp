@@ -12,12 +12,18 @@
 // pela libil2cpp.so.
 //
 // Carregado pelo caminho genérico do loader (/data/local/tmp/mods/<pkg>/).
-#include <android/log.h>
+//
+// Log: mod_common (C1). Antes ia só pro logcat (que o roadmap já chamava de
+// buraco negro); agora a mesma linha vai pro logcat E para
+// /data/data/<pkg>/files/bepinex/log.txt, no mesmo formato do loader
+// ("HH:MM:SS [sa2ammo] msg"). O texto das mensagens não mudou.
 #include <pthread.h>
 #include "dobby.h"
 #include "../../common/il2cpp_min.h"
+#include "../../common/mod_common.h"
 
-#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "sa2ammo", __VA_ARGS__)
+#define TAG "sa2ammo"
+#define LOG(...) mod_log(TAG, __VA_ARGS__)
 
 #define WEAPON_TYPE_PRIMARY 0  // WeaponType 0: armas de fogo (Shotgun, Kalashnikov...)
 
