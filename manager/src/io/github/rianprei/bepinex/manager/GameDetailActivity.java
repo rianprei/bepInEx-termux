@@ -23,8 +23,8 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import io.github.rianprei.bepinex.manager.core.BmodInstaller;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
+import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.ModInfo;
@@ -119,6 +119,7 @@ public class GameDetailActivity extends Activity {
         });
 
         findViewById(R.id.btn_action_install_bmod).setOnClickListener(v -> {
+            // type */*: o C7 olha o CONTEUDO do arquivo, nao a extensao.
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
@@ -146,34 +147,60 @@ public class GameDetailActivity extends Activity {
         if (requestCode == REQUEST_PICK_BMOD_FOR_GAME && resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                installSelectedBmod(uri);
+                installSelectedFile(uri);
             }
         }
     }
 
-    private void installSelectedBmod(Uri uri) {
+    // C7: o usuario escolhe QUALQUER arquivo e o Manager descobre pelo
+    // conteudo o que e (.bmod, .so arm64, .patch, .js, .dll de PC...). O
+    // nome original so importa para virar o id do arquivo instalado.
+    private void installSelectedFile(Uri uri) {
+        String displayName = resolveDisplayName(uri);
+        File tmp = new File(getCacheDir(), "install_" + System.currentTimeMillis() + "_" + displayName);
         try {
-            File tmp = new File(getCacheDir(), "install_" + System.currentTimeMillis() + ".bmod");
             try (InputStream in = getContentResolver().openInputStream(uri);
                  FileOutputStream out = new FileOutputStream(tmp)) {
-                byte[] buf = new byte[4096];
+                byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
             }
 
-            BmodInstaller.InstallResult res = BmodInstaller.install(tmp, mPkg, mEngine);
+            LooseModInstaller.Result res = LooseModInstaller.installFromFile(tmp, mPkg, mEngine);
             tmp.delete();
 
             new AlertDialog.Builder(this)
-                    .setTitle(res.success ? "Sucesso" : "Falha")
+                    .setTitle(res.success ? "Sucesso" : "Nao instalado")
                     .setMessage(res.message)
                     .setPositiveButton("OK", null)
                     .show();
 
             loadMods();
         } catch (Exception e) {
-            Toast.makeText(this, "Erro: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            tmp.delete();
+            new AlertDialog.Builder(this)
+                    .setTitle("Nao instalado")
+                    .setMessage("Erro ao ler o arquivo: " + e.getMessage())
+                    .setPositiveButton("OK", null)
+                    .show();
         }
+    }
+
+    private String resolveDisplayName(Uri uri) {
+        String name = null;
+        try (android.database.Cursor c = getContentResolver()
+                .query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME},
+                        null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) name = c.getString(idx);
+            }
+        } catch (Exception ignored) {}
+        if (name == null || name.trim().isEmpty()) {
+            String last = uri.getLastPathSegment();
+            name = (last != null) ? last : "mod.bin";
+        }
+        return name.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     private void loadMods() {

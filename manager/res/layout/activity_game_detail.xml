@@ -99,7 +99,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="+ Instalar .bmod"
+            android:text="@string/btn_install_mod"
             android:textColor="@color/text_primary"
             android:background="@drawable/btn_secondary"
             android:layout_marginRight="4dp"
@@ -116,6 +116,14 @@
             android:layout_marginLeft="4dp"
             android:textSize="12sp" />
     </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/install_any_file_hint"
+        android:textColor="@color/text_muted"
+        android:textSize="10sp"
+        android:layout_marginBottom="12dp" />
 
     <!-- Titulo da Secao de Mods -->
     <TextView

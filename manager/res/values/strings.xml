@@ -16,6 +16,8 @@
     <string name="btn_view_log">Ver Log</string>
     <string name="btn_mod_maker">Criar Mod (Mod Maker)</string>
     <string name="btn_install_bmod">Instalar .bmod</string>
+    <string name="btn_install_mod">+ Instalar mod</string>
+    <string name="install_any_file_hint">Pode escolher qualquer arquivo: o Manager descobre pelo conteudo se e .bmod, .so (arm64), .patch ou script .js, e diz em portugues se roda.</string>
     <string name="btn_save">Salvar</string>
     <string name="btn_cancel">Cancelar</string>
     <string name="btn_delete">Excluir</string>
