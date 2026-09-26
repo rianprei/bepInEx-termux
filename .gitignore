@@ -7,3 +7,15 @@ bc-poc-v12-authuid.zip
 libs/
 out/
 mods/u_frida/gadget/
+
+# Chave e binário assinado NUNCA entram no repo. A chave de release do
+# usuário mora em ~/.config/bepinex-termux/ (fora do repositório), e o
+# keystore de debug que o build cria é manager/.debug.keystore — mas um
+# `git add .` com a chave largada na raiz é exatamente o acidente que
+# não se desfaz: commit de chave privada é irrecuperável no histórico.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.idsig
+*.apk

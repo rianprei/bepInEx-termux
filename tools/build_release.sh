@@ -43,11 +43,27 @@ command -v python3 >/dev/null || { echo "ERRO: python3 ausente" >&2; exit 1; }
 command -v javac >/dev/null || { echo "ERRO: javac ausente" >&2; exit 1; }
 command -v java >/dev/null || { echo "ERRO: java ausente" >&2; exit 1; }
 
+# Chave de assinatura, em ordem de precedência:
+#   1) MANAGER_KEYSTORE (o que o CI ou o usuário passa explicitamente)
+#   2) ~/.config/bepinex-termux/manager-release.jks — o padrão do DESKTOP,
+#      que é onde a chave de release do usuário mora. Existe? Usa. Não
+#      existe? Cai no unsigned-debug de sempre (build de CI, sandbox).
+# A senha nunca é lida por este script: ela vem do ambiente (MANAGER_KS_PASS)
+# ou é pedida no terminal pelo apksigner. NUNCA pass:<literal> na linha de
+# comando, e este script nunca copia/abre/imprime o .jks.
+RELEASE_KEY_DEFAULT="$HOME/.config/bepinex-termux/manager-release.jks"
 if [ -n "${MANAGER_KEYSTORE:-}" ]; then
     [ -f "$MANAGER_KEYSTORE" ] || { echo "ERRO: MANAGER_KEYSTORE ausente: $MANAGER_KEYSTORE" >&2; exit 1; }
     MANAGER_UNSIGNED=0
     SIGNING_STATUS="SIGNED_EXTERNAL_KEY"
+elif [ -f "$RELEASE_KEY_DEFAULT" ]; then
+    MANAGER_KEYSTORE="$RELEASE_KEY_DEFAULT"
+    export MANAGER_KEYSTORE
+    MANAGER_UNSIGNED=0
+    SIGNING_STATUS="release-key"
+    echo "[*] chave de release em $RELEASE_KEY_DEFAULT (senha: env MANAGER_KS_PASS ou prompt)"
 else
+    MANAGER_KEYSTORE=""
     MANAGER_UNSIGNED=1
     SIGNING_STATUS="UNSIGNED-DEBUG"
 fi
@@ -63,6 +79,21 @@ MANAGER_KEYSTORE="${MANAGER_KEYSTORE:-}" \
 SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
 bash "$ROOT/manager/build.sh" >"$WORK/manager.log"
 cp "$WORK/manager/bepinex-manager-$VERSION.apk" "$RELEASE_DIR/bepinex-manager-$VERSION.apk"
+
+# Fingerprint SHA-256 do CERTIFICADO que assinou o APK. Sai do APK já
+# assinado (apksigner verify --print-certs) e NUNCA do .jks: abrir a chave
+# para extraircertificado exigiria a senha e não há motivo para isso — o
+# certificado é público e está dentro do próprio APK.
+CERT_SHA256=""
+if [ "$MANAGER_UNSIGNED" != 1 ] && [ -x "$BUILD_TOOLS/apksigner" ]; then
+    CERT_SHA256="$("$BUILD_TOOLS/apksigner" verify --print-certs \
+        "$RELEASE_DIR/bepinex-manager-$VERSION.apk" 2>/dev/null |
+        awk -F': *' '/certificate SHA-256 digest/ {print $NF; exit}')" || CERT_SHA256=""
+fi
+if [ "$MANAGER_UNSIGNED" != 1 ] && [ -z "$CERT_SHA256" ]; then
+    echo "ERRO: APK assinado mas o fingerprint do certificado nao veio (apksigner verify falhou?)" >&2
+    exit 1
+fi
 
 # These are the native examples explicitly described as working/distributed:
 # sa2ammo + sa2content in README, and mechabun as the SDK reference mod.
@@ -87,6 +118,7 @@ DIRTY_STATUS=CLEAN
     printf 'VERSION=%s\nversionCode=%s\n' "$VERSION" "$VERSION_CODE"
     printf 'SOURCE_DATE_EPOCH=%s\nstatus=%s\n' "$SOURCE_DATE_EPOCH" "$DIRTY_STATUS"
     printf 'manager_signing=%s\n' "$SIGNING_STATUS"
+    [ -n "$CERT_SHA256" ] && printf 'manager_signing_cert_sha256=%s\n' "$CERT_SHA256"
     printf 'ndk=%s\n' "$(awk -F= '$1 ~ /^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2}' "$NDK/source.properties")"
     printf 'build_tools=%s\n' "$(awk -F= '$1 ~ /^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2}' "$BUILD_TOOLS/source.properties")"
     printf 'javac=%s\n' "$(javac -version 2>&1)"
