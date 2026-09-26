@@ -135,9 +135,9 @@ while IFS= read -r test_file; do
         ' bash "$ROOT/test" "$(basename "$test_file")" "$binary"
     fi
 done < <(find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print | sort)
-if ! find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print -quit | grep -q .; then
-    record "host tests" SKIP 0 0
-    echo "AVISO: no host tests discovered; testes ignorados" >&2
+if [ ! -f "$ROOT/test/selftest_harness.cpp" ]; then
+    record "host selftest_harness.cpp" FAIL 0 1
+    echo "selftest_harness.cpp ausente: teste central do loader" >&2
 fi
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
@@ -146,12 +146,13 @@ run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
 ' bash "$ROOT"
 
 while IFS= read -r script; do
-    run_step "sh -n ${script#"$ROOT"/}" "$TIMEOUT_TEST" sh -n "$script"
-done < <(find "$ROOT/module" -maxdepth 1 -type f -name '*.sh' -print | sort)
-
-while IFS= read -r script; do
-    run_step "bash -n ${script#"$ROOT"/}" "$TIMEOUT_TEST" bash -n "$script"
-done < <(find "$ROOT/tools" -maxdepth 1 -type f -name '*.sh' -print | sort)
+    rel=${script#"$ROOT"/}
+    if head -n 1 "$script" | grep -q bash; then
+        run_step "bash -n $rel" "$TIMEOUT_TEST" bash -n "$script"
+    else
+        run_step "sh -n $rel" "$TIMEOUT_TEST" sh -n "$script"
+    fi
+done < <(cd "$ROOT" && git ls-files '*.sh' | sort)
 
 if shellcheck_bin=$("$ROOT/tools/fetch_shellcheck.sh"); then
     while IFS= read -r script; do
@@ -166,11 +167,24 @@ if shellcheck_bin=$("$ROOT/tools/fetch_shellcheck.sh"); then
             echo "AVISO: $label encontrou achados; scripts de outros agentes nao foram alterados" >&2
             record "$label (findings reported)" FAIL "$(( $(date +%s) - start ))" "$shellcheck_status"
         fi
-    done < <(find "$ROOT/module" "$ROOT/tools" -maxdepth 1 -type f -name '*.sh' -print | sort)
+    done < <(cd "$ROOT" && git ls-files '*.sh' | sed "s#^#$ROOT/#" | sort)
 else
     record "shellcheck bootstrap" FAIL 0 1
     echo "ShellCheck could not be downloaded or verified" >&2
 fi
+
+while IFS= read -r test_script; do
+    run_step "shell test ${test_script#"$ROOT"/}" "$TIMEOUT_TEST" bash "$test_script"
+done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
+
+for device_script in restore-sim.sh quoting-check.sh; do
+    path="$ROOT/test/device/$device_script"
+    if [ -f "$path" ]; then
+        run_step "device test test/device/$device_script" "$TIMEOUT_TEST" bash "$path"
+    else
+        record "device test test/device/$device_script (not present)" SKIP 0 0
+    fi
+done
 
 if [ -f "$ROOT/manager/build.sh" ]; then
     if [ -x "$ROOT/manager/run_tests.sh" ]; then
