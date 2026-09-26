@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Sem android:versionCode/versionName aqui de proposito: a versao vem do
+     VERSION da raiz do repo e entra no link pelo aapt2 (flags version-code e
+     version-name em manager/build.sh). Numero solto no manifest e o jeito
+     rapido de o APK do Manager saying 0.1.0 enquanto o projeto e v0.4.1. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.rianprei.bepinex.manager">
 

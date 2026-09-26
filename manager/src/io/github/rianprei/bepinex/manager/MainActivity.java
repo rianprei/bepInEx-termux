@@ -48,6 +48,7 @@ public class MainActivity extends Activity {
     private TextView mTvStatusRoot;
     private TextView mTvStatusModule;
     private TextView mTvStatusZygisk;
+    private TextView mTvStatusVersion;
     private EditText mEtSearch;
     private CheckBox mCbFilterGames;
     private ProgressBar mProgress;
@@ -68,6 +69,7 @@ public class MainActivity extends Activity {
         mTvStatusRoot = findViewById(R.id.tv_status_root);
         mTvStatusModule = findViewById(R.id.tv_status_module);
         mTvStatusZygisk = findViewById(R.id.tv_status_zygisk);
+        mTvStatusVersion = findViewById(R.id.tv_status_version);
         mEtSearch = findViewById(R.id.et_search);
         mCbFilterGames = findViewById(R.id.cb_filter_games);
         mProgress = findViewById(R.id.progress_loading);
@@ -214,6 +216,10 @@ public class MainActivity extends Activity {
 
                 mTvStatusZygisk.setText(status.zygiskActive ? "Zygisk: OK" : "Zygisk: ?");
                 mTvStatusZygisk.setTextColor(status.zygiskActive ? Color.parseColor("#22C55E") : Color.parseColor("#EAB308"));
+
+                // Versao do APK: BuildVersion vem do VERSION da raiz do repo
+                // (gerado no build), nunca de um numero solto no codigo.
+                mTvStatusVersion.setText("Manager: " + status.appVersion);
 
                 mAllGames.clear();
                 mAllGames.addAll(loaded);

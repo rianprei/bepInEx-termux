@@ -57,6 +57,15 @@
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_status_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Manager: ..."
+            android:textSize="11sp"
+            android:textColor="@color/text_muted" />
     </LinearLayout>
 
     <!-- Barra de busca e filtro -->

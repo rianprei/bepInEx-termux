@@ -10,7 +10,9 @@ public final class StatusChecker {
         public String moduleInfo = "Não instalado";
         public boolean zygiskActive = false;
         public String zygiskInfo = "Desconhecido";
-        public String appVersion = "1.0.0";
+        // Versao do APK: vem do VERSION da raiz do repo (BuildVersion e
+        // gerado pelo build.sh). Numero solto aqui mentia sobre a versao.
+        public String appVersion = BuildVersion.NAME + " (" + BuildVersion.CODE + ")";
     }
 
     private StatusChecker() {}

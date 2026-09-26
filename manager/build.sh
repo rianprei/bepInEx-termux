@@ -23,6 +23,12 @@ GEN_DIR="${ROOT_DIR}/gen"
 OUTPUT_APK="${ROOT_DIR}/bepinex-manager.apk"
 KEYSTORE="${ROOT_DIR}/.debug.keystore"
 
+# Versao: vem do VERSION da RAIZ do repo, nunca de numero solto aqui. O
+# manifest tambem nao fixa nada — quem passa para o aapt2 e este script.
+VERSION_FILE="${ROOT_DIR}/../VERSION"
+read -r VERSION_CODE VERSION_NAME < <(bash "${ROOT_DIR}/version.sh" "${VERSION_FILE}")
+echo "[*] Versao (VERSION da raiz): ${VERSION_NAME} (versionCode ${VERSION_CODE})"
+
 echo "[*] Limpando diretorios de build..."
 rm -rf "${BUILD_DIR}" "${GEN_DIR}"
 mkdir -p "${BUILD_DIR}/compiled_res" "${BUILD_DIR}/classes" "${BUILD_DIR}/dex" "${GEN_DIR}"
@@ -43,6 +49,8 @@ echo "[*] 2/6. Vinculando pacote com aapt2 link..."
 "${BUILD_TOOLS}/aapt2" link \
     -I "${PLATFORM_JAR}" \
     --manifest "${ROOT_DIR}/AndroidManifest.xml" \
+    --version-code "${VERSION_CODE}" \
+    --version-name "${VERSION_NAME}" \
     -A "${ROOT_DIR}/assets" \
     --java "${GEN_DIR}" \
     -o "${BUILD_DIR}/unaligned.apk" \
@@ -50,6 +58,18 @@ echo "[*] 2/6. Vinculando pacote com aapt2 link..."
     --auto-add-overlay
 
 echo "[*] 3/6. Compilando codigo Java com javac --release 17..."
+# Constante de versao para o codigo (StatusChecker mostra na tela de status).
+mkdir -p "${GEN_DIR}/io/github/rianprei/bepinex/manager/core"
+cat > "${GEN_DIR}/io/github/rianprei/bepinex/manager/core/BuildVersion.java" <<JAVA_EOF
+package io.github.rianprei.bepinex.manager.core;
+
+// Gerado por manager/build.sh a partir do VERSION da raiz do repo. Nao editar.
+public final class BuildVersion {
+    public static final String NAME = "${VERSION_NAME}";
+    public static final int CODE = ${VERSION_CODE};
+    private BuildVersion() {}
+}
+JAVA_EOF
 find "${ROOT_DIR}/src" "${GEN_DIR}" -name "*.java" > "${BUILD_DIR}/sources.txt"
 javac --release 17 -cp "${PLATFORM_JAR}" -d "${BUILD_DIR}/classes" @"${BUILD_DIR}/sources.txt"
 
@@ -72,3 +92,7 @@ echo "[*] 6/6. Alinhando e assinando APK final..."
 echo "[+] Build concluido com sucesso: ${OUTPUT_APK}"
 echo "--- Informacoes do APK gerado ---"
 "${BUILD_TOOLS}/aapt2" dump badging "${OUTPUT_APK}" | grep -E "package|minSdkVersion|targetSdkVersion|application-label"
+# A versao do APK tem que ser a do VERSION da raiz: se divergir, o build falhou.
+"${BUILD_TOOLS}/aapt2" dump badging "${OUTPUT_APK}" | grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'" \
+    || { echo "ERRO: o APK saiu com outra versao (esperado ${VERSION_NAME}/${VERSION_CODE})." >&2; exit 1; }
+echo "[-] APK confere com o VERSION da raiz: ${VERSION_NAME} (${VERSION_CODE})"
