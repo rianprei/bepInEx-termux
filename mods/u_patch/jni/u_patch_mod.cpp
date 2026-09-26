@@ -492,7 +492,7 @@ static void *up_worker(void *) {
     }
     up_log("carregado, esperando libil2cpp.so");
     Il2Cpp il;
-    if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em 120s — desistindo"); return nullptr; }
+    if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo"); return nullptr; }
     // Página RX pros thunks mul (código separado dos dados).
     up_thunk_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
