@@ -120,17 +120,49 @@ else
 fi
 
 # --- 6. zip ----------------------------------------------------------------------
-# zip -r é o caminho normal; o zipfile do python3 é o plano B (o mesmo formato,
-# mesma lista de entradas) pra máquina sem o binário zip.
+# G7 (release imutável): o zip precisa sair BIT-IDÊNTICO em dois builds limpos.
+# O `zip -qr9` não garante isso (mtime de cada entrada + ordem do readdir + campos
+# extras de uid/gid), então o empacotamento é feito com o zipfile do python3, onde
+# cada uma dessas coisas é explícita:
+#   - ordem fixa: todas as entradas ordenadas por caminho;
+#   - mtime fixo: SOURCE_DATE_EPOCH (default: timestamp do último commit);
+#   - permissões normalizadas: 755 no que é executável, 644 no resto, sem uid/gid;
+#   - nada de campo extra (equivalente ao -X do zip(1));
+#   - compressão em nível fixo.
+# Requer python3 (o repo já assume JDK/aapt2 do Manager; python3 é o mesmo tipo
+# de dependência de build).
 ZIP="$OUT/bepinex-termux-$VERSION.zip"
-(
-    cd "$STAGE"
-    if command -v zip >/dev/null 2>&1; then
-        zip -qr9 "$ZIP" .
-    else
-        python3 -m zipfile -c "$ZIP" .
-    fi
-)
-echo "pronto: $ZIP"
+EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}
+command -v python3 >/dev/null 2>&1 || { echo "ERRO: python3 é necessário pro zip determinístico" >&2; exit 1; }
+python3 - "$STAGE" "$ZIP" "$EPOCH" <<'PYEOF'
+import os
+import stat
+import sys
+import time
+import zipfile
+
+stage, out, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+date_time = time.gmtime(epoch)[0:6]
+
+entries = []
+for root, dirs, names in os.walk(stage):
+    dirs.sort()
+    for name in names:
+        path = os.path.join(root, name)
+        entries.append((os.path.relpath(path, stage).replace(os.sep, "/"), path))
+entries.sort()
+
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+    for arc, path in entries:
+        info = zipfile.ZipInfo(arc, date_time=date_time)
+        info.create_system = 3  # unix: external_attr é modo
+        info.compress_type = zipfile.ZIP_DEFLATED
+        mode = 0o755 if os.stat(path).st_mode & stat.S_IXUSR else 0o644
+        info.external_attr = mode << 16
+        with open(path, "rb") as fh:
+            zf.writestr(info, fh.read())
+PYEOF
+echo "pronto: $ZIP (SOURCE_DATE_EPOCH=$EPOCH, $(ls -l "$ZIP" | awk '{print $5}') bytes)"
+sha256sum "$ZIP"
 echo "  unzip -l \"$ZIP\""
 echo "  instalar: copiar pro device e flashear pelo app Magisk (ou Recovery), depois reiniciar"
