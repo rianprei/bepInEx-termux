@@ -60,7 +60,7 @@ zygote preAppSpecialize(pkg)            zygote preAppSpecialize(pkg)
 - Saída do processo do jogo (o jogo não escreve em `/data/local/tmp`): `/data/data/<pkg>/files/bepinex/`
   - `log.txt`: log de todos os mods (append, 1 linha = `HH:MM:SS [mod] msg`, corta em 256KB).
   - `dump.tsv`: saída do u_dump.
-  - Descobrir `<pkg>` dentro do mod: ler `/proc/self/cmdline`.
+  - Descobrir `<pkg>` dentro do mod: `getenv("BEPINEX_PKG")`, que o loader seta antes do `dlopen`. **Não** use `/proc/self/cmdline` no constructor: no device ele ainda vale `zygote64` nesse momento (achado 2026-09-26, u_patch leu `mods/zygote64`). Fallback só se a env faltar: cmdline, esperando sair de `zygote*`.
 
 ### C2. `.bmod` (zip)
 ```
