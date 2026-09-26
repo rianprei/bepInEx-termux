@@ -178,7 +178,7 @@ public class ModMakerActivity extends Activity {
 
                 // 2. Copia para /data/local/tmp/mods/<pkg>/u_dump.so
                 SuHelper.ensureModDir(mPkg);
-                SuHelper.copyFile(tmpSo.getAbsolutePath(), "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
+                SuHelper.installFile(tmpSo.getAbsolutePath(), "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
                 tmpSo.delete();
 
                 // 3. Remove dump.tsv antigo
@@ -496,7 +496,7 @@ public class ModMakerActivity extends Activity {
                         int n;
                         while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
                     }
-                    SuHelper.copyFile(tmpSo.getAbsolutePath(), dir + "u_patch.so", "755");
+                    SuHelper.installFile(tmpSo.getAbsolutePath(), dir + "u_patch.so", "755");
                     tmpSo.delete();
                 } catch (Exception ignored) {}
             } else {

@@ -95,9 +95,11 @@ public final class SuHelper {
         return ok;
     }
 
+    public static final String SELINUX_MOD_CONTEXT = "u:object_r:bepinex_mod_file:s0";
+
     public static boolean ensureModDir(String pkg) {
         String dir = "/data/local/tmp/mods/" + pkg;
-        Result r = exec("mkdir -p '" + dir + "' && chmod 755 '" + dir + "'");
+        Result r = exec("mkdir -p '" + dir + "' && chmod 755 '" + dir + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + dir + "'");
         return r.success;
     }
 
@@ -125,7 +127,7 @@ public final class SuHelper {
             try (FileOutputStream fos = new FileOutputStream(tmp)) {
                 fos.write(content.getBytes(StandardCharsets.UTF_8));
             }
-            Result r = exec("cp '" + tmp.getAbsolutePath() + "' '" + filePath + "' && chmod 644 '" + filePath + "'");
+            Result r = exec("cp '" + tmp.getAbsolutePath() + "' '" + filePath + "' && chmod 644 '" + filePath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + filePath + "'");
             tmp.delete();
             return r.success;
         } catch (IOException e) {
@@ -135,8 +137,17 @@ public final class SuHelper {
 
     public static boolean copyFile(String srcPath, String destPath, String chmodMode) {
         String mode = (chmodMode != null) ? chmodMode : "644";
-        Result r = exec("cp -f '" + srcPath + "' '" + destPath + "' && chmod " + mode + " '" + destPath + "'");
+        Result r = exec("cp -f '" + srcPath + "' '" + destPath + "' && chmod " + mode + " '" + destPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + destPath + "'");
         return r.success;
+    }
+
+    // Helper de instalacao de arquivos (adendo F1c SELinux: cp + chmod 644 + chcon)
+    public static boolean installFile(String srcPath, String destPath, String chmodMode) {
+        return copyFile(srcPath, destPath, chmodMode);
+    }
+
+    public static boolean installFile(String srcPath, String destPath) {
+        return copyFile(srcPath, destPath, "644");
     }
 
     public static boolean deleteFile(String filePath) {
@@ -167,7 +178,7 @@ public final class SuHelper {
                 return true;
             }
         }
-        Result r = exec("mv '" + currentPath + "' '" + newPath + "'");
+        Result r = exec("mv '" + currentPath + "' '" + newPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + newPath + "'");
         return r.success;
     }
 

@@ -125,10 +125,10 @@ public final class BmodInstaller {
             String destDir = "/data/local/tmp/mods/" + targetPkg + "/";
             SuHelper.ensureModDir(targetPkg);
 
-            SuHelper.copyFile(jsonFile.getAbsolutePath(), destDir + jsonFile.getName(), "644");
-            SuHelper.copyFile(payloadFile.getAbsolutePath(), destDir + payloadFile.getName(), "644");
+            SuHelper.installFile(jsonFile.getAbsolutePath(), destDir + jsonFile.getName(), "644");
+            SuHelper.installFile(payloadFile.getAbsolutePath(), destDir + payloadFile.getName(), "644");
             if (confFile != null && confFile.exists()) {
-                SuHelper.copyFile(confFile.getAbsolutePath(), destDir + confFile.getName(), "644");
+                SuHelper.installFile(confFile.getAbsolutePath(), destDir + confFile.getName(), "644");
             }
 
             return new InstallResult(true, "Mod '" + manifest.name + "' instalado com sucesso!", manifest);
