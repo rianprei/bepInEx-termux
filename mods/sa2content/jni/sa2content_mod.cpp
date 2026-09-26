@@ -191,7 +191,7 @@ static void fake_try_show_interstitial(void *, void *) {
 }
 
 static void *worker(void *) {
-    if (!il2cpp_boot(il)) { LOG("il2cpp não subiu — desistindo"); return nullptr; }
+    if (!il2cpp_boot(il)) { LOG("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo"); return nullptr; }
     void *gb = nullptr, *cat = nullptr, *item = nullptr, *ads = nullptr;
     for (int i = 0; i < 600 && !(gb && cat && item && ads); i++) {
         gb = il.find_class("", "GameBalancer");
