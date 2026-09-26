@@ -19,6 +19,25 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 
 **Pronto quando:** num celular limpo, o usuário faz o fluxo 1→5 no **TABS Pocket Edition** (nunca testado) e no **SA2**, sem adb e sem terminal. Battle Cats continua funcionando.
 
+## Status validado no device (POCO C75, HyperOS, Android 16)
+
+| Fase | Estado | Evidência |
+|---|---|---|
+| F1 zero-config + log C1 | merged, validado | 2026-09-26: SA2 sem allowlist carrega mods; `log.txt` escrito; BC 4/4 |
+| F1b `BEPINEX_PKG` | merged, validado | u_patch/u_dump leem o pacote certo |
+| F1c SELinux | merged, validado em Enforcing | v0.4.0 `setenforce 1`: SA2 (Dobby, u_dump) + BC 4/4, sem `avc` do nosso caminho |
+| sinais Termux→BC por seq | merged, **teste de device pendente** | `feeaab0` |
+| F1d crashguard | merged, **teste de device pendente** | `dd6746b`/`faf0afd` |
+| F2 SDK | merged | `new_mod`/`pack_bmod` testados no host |
+| F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
+| F4 u_patch | branch, em correção | `return` bool aplicou e foi chamado 12x (Frida); revisão achou encoding errado em mul/float |
+| F5/F6 Manager | branch, em correção | APK compila; faltam chcon, field, C7, frida, crashguard |
+| F7 zip | merged | v0.4.1 determinístico (`d34b709`); instalação do formato novo pendente |
+| F8 docs | branch, em correção | 8 achados de revisão |
+| F9b u_noads | branch, em correção | cobertura zero no SA2 → adapters AudienceNetwork/Metica |
+| F11 u_frida | branch | teste de device pendente |
+| T2 verify_all | branch, em revisão | |
+
 ## Diferença honesta pro Lucky Patcher
 
 | | Lucky Patcher | bepInEx-termux |
