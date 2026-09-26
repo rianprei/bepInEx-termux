@@ -1632,6 +1632,11 @@ static int load_generic_pkg_mods(const char *pkg) {
         LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
         return 0;
     }
+    // Contrato C1: o mod descobre o próprio pacote por getenv("BEPINEX_PKG"),
+    // não por /proc/self/cmdline — nesse instante o cmdline ainda é "zygote64"
+    // (o dlopen roda no constructor, antes do specialize virar app). A env
+    // precisa estar posta ANTES do loop: o constructor do mod lê no dlopen.
+    setenv("BEPINEX_PKG", pkg, 1);
     int loaded = 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
