@@ -29,10 +29,23 @@ type bepinex_mod_file file_type
 
 # --- zygote: o stat() que decide o caminho ------------------------------------
 # search em shell_data_file:dir = entrar em /data/local/tmp.
-allow zygote shell_data_file dir search
+#
+# zygote64 entra na lista porque ate o Android 11 existia um segundo dominio de
+# zygote, e em API <= 30 e o que roda o preAppSpecialize. No AOSP atual o tipo
+# zygote64 nao existe mais, e isso NAO quebra o arquivo: magiskpolicy expande
+# "allow { a b }" no produto cartesiano e chama add_rule() uma vez por par; um
+# tipo inexistente so faz aquele par falhar com um LOGW
+# (sepolicy.cpp:244 "target type ... does not exist" + api.cpp:59 expand) — o
+# resto do sepolicy.rule continua sendo aplicado.
+allow { zygote zygote64 } shell_data_file dir search
 # getattr + search em bepinex_mod_file:dir = stat() do /mods/<pkg>/ e olhar o
 # nome dentro de /mods/ (o stat e do objeto final; o search, do diretorio pai).
-allow zygote bepinex_mod_file dir { getattr search }
+allow { zygote zygote64 } bepinex_mod_file dir { getattr search }
+# getattr/open/read no conf da allowlist legada (experimento Cocos): o post-fs-data
+# chcona esse arquivo pro tipo novo, entao ele nao e mais shell_data_file:file e o
+# zygote consegue access() + fopen() nele. Sem isto a allowlist fica muda em
+# Enforcing (todo app cairia em DLCLOSE por causa de um conf opcional).
+allow { zygote zygote64 } bepinex_mod_file file { getattr open read }
 
 # --- appdomain: scandir() + dlopen() dos mods ---------------------------------
 # search em shell_data_file:dir = chegar em /data/local/tmp/mods a partir do
@@ -40,8 +53,9 @@ allow zygote bepinex_mod_file dir { getattr search }
 # desce na arvore.
 allow appdomain shell_data_file dir search
 # search/read/open na pasta: scandir() = opendir() (open) + readdir() (read) e
-# lookup do nome dos .so (search).
-allow appdomain bepinex_mod_file dir { search read open }
+# lookup do nome dos .so (search). getattr cobre o fstat() que o scandir() faz
+# no dirfd — preventative, para nao depender da libc do device.
+allow appdomain bepinex_mod_file dir { getattr search read open }
 # getattr/open/read/map/execute no .so: dlopen() abre e le o arquivo, mmap com
 # PROT_EXEC (map) e o SO precisa ser executavel (execute).
 allow appdomain bepinex_mod_file file { getattr open read map execute }

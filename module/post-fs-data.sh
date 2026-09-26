@@ -12,15 +12,30 @@
 # applets do proprio busybox.
 
 MODS=/data/local/tmp/mods
+BC_MODS=/data/local/tmp/bc_mods
+ALLOWLIST=/data/local/tmp/bc_generic_allowlist.conf
 
 # Contrato C1: dono root, pasta 755. Sem isso o app (uid proprio) não consegue
 # nem stat() o diretório.
-mkdir -p "$MODS"
-chmod 755 "$MODS"
-chown 0:0 "$MODS"
+mkdir -p "$MODS" "$BC_MODS"
+chmod 755 "$MODS" "$BC_MODS"
+chown 0:0 "$MODS" "$BC_MODS"
 
 # Tipo novo em vez de shell_data_file: o app ganha acesso so aos .so de mod, e
 # qualquer outro arquivo que o root largue em /data/local/tmp continua
 # inacessivel pro jogo (ver module/sepolicy.rule).
+#
+# bc_mods entra pelo mesmo motivo (não quebrar o caminho Battle Cats): o loader
+# faz dlopen de /data/local/tmp/bc_mods/*.so e lê os .conf de la, também de
+# shell_data_file. Como a regra é por TIPO e não por caminho, rotular a arvore
+# resolve sem nenhuma regra nova.
+chcon -R u:object_r:bepinex_mod_file:s0 "$BC_MODS"
+
+# Allowlist legada (experimento Cocos): arquivo opcional, então só rotula se já
+# existir — sem isso o zygote nem access() nele consegue e o Cocos morre em
+# Enforcing. Criado depois do boot pelo Manager/adb? Precisa de chcon de novo
+# (o mesmo que o Manager faz ao instalar mod).
+[ -f "$ALLOWLIST" ] && chcon u:object_r:bepinex_mod_file:s0 "$ALLOWLIST"
+
 chcon -R u:object_r:bepinex_mod_file:s0 "$MODS" ||
     log -p t -t bepinex "chcon falhou em $MODS: sepolicy.rule não aplicou?"
