@@ -1,0 +1,9 @@
+# T1 return — alvos reais do dump SA2 (C5). Sem save/IAP/anúncio.
+# return bool: munição infinita (aceite F4). Reserva vira 1M; arma não trava.
+return ComplexCreature HasAmmo 0 bool true
+# return int: força prioridade do canal de áudio. Efeito: sons somem/trocam.
+# Só áudio, sem save.
+return SoundChannel GetPlayingPriority 0 int 7
+# return float: velocidade de projétil constante. Efeito: projéteis em
+# velocidade uniforme. Só movimento, sem save.
+return Projectile GetMovementSpeed 0 float 5

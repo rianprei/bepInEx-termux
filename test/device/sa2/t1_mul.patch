@@ -1,0 +1,6 @@
+# T1 mul — alvos reais do dump SA2. Sem save/IAP/anúncio.
+# mul int: prioridade de áudio ×3. Efeito: roubo de canal muda (sons somem).
+# Só áudio, sem save.
+mul SoundChannel GetPlayingPriority 0 int 3
+# mul float: projéteis 2× mais rápidos. Efeito bem visível; só movimento.
+mul Projectile GetMovementSpeed 0 float 2

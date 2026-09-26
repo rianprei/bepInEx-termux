@@ -1,0 +1,14 @@
+# T1 expectativas: 1 regex (grep -E) por linha contra o log.txt do jogo.
+# Formato do log: HH:MM:SS [u_patch] <sig>: <mensagem>. # aqui é comentário.
+\[u_patch\] .*HasAmmo.*return aplicado
+\[u_patch\] .*GetPlayingPriority.*return aplicado
+\[u_patch\] .*GetMovementSpeed.*return aplicado
+\[u_patch\] .*GetPlayingPriority.*mul aplicado
+\[u_patch\] .*GetMovementSpeed.*mul aplicado
+\[u_patch\] .*MonstersHaveUniqueSpeed.*static fixado
+\[u_patch\] .*WeaponReloadDurationSpeedUpFactor.*static fixado
+\[u_patch\] .*MaxFingers.*static fixado
+\[u_patch\] .*CanAttack.*return aplicado
+\[u_patch\] .*classe NoSuchClass_xyz não encontrada
+\[u_patch\] .*linha inválida, ignorando
+\[u_patch\] .*metodo curto demais

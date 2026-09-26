@@ -1,0 +1,3 @@
+# T1 $key — o valor vem do t1_key.conf (mesmo id do .patch). Prova a
+# substituição $key. Efeito: criaturas podem atacar (comportamento normal).
+return ComplexCreature CanAttack 0 bool $canattack

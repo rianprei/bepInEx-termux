@@ -1,0 +1,9 @@
+# T1 casos de falha — cada um deve virar LOG, nunca crash.
+# Classe inexistente: log "classe ... não encontrada", jogo segue.
+return NoSuchClass_xyz Foo 0 bool true
+# Linha inválida (verbo desconhecido): log "linha inválida", ignora.
+frobnicate ComplexCreature HasAmmo 0 bool true
+# Método curto: getter bool de ~8B (ldr+ret) com patch float de 16B.
+# Deve ser RECUSADO com "metodo curto demais". Se aplicar, IsFinished vira
+# lixo (só visual nos projéteis) — o expect exige a recusa.
+return Projectile get_IsFinished 0 float 1
