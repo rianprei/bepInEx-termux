@@ -49,6 +49,7 @@
 #include "bc_loader.h"      // loader dinâmico (mesma lógica pura do main.cpp)
 #include "bc_elf_symtab.h"  // enumeração de símbolo ELF dinâmico — núcleo puro testável no host
 #include "bc_generic_allowlist.h"  // allowlist de pacote pra generalização — núcleo puro testável no host
+#include "../mods/u_frida/jni/u_frida_config.h"  // F11: config do gadget (puro)
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
@@ -1782,6 +1783,110 @@ int main() {
             count = bc_crashguard_next_count(count, ts, now);
             check("após 40s sem morte: volta a carregar", !blocked && count == 1);
         }
+    }
+
+    // ================================================================
+    // Caso 61: u_frida_config (F11) — núcleo puro do mod u_frida
+    // ================================================================
+    printf("\n[Caso 61] u_frida_config: detecção de .js + JSON do gadget (F11)\n");
+    {
+        check("meu_mod.js é mod", uf_is_js_mod("meu_mod.js"));
+        check("nome sem ext não é", !uf_is_js_mod("meu_mod"));
+        check("foo.js.off não é (.off desliga)", !uf_is_js_mod("foo.js.off"));
+        check("oculto não é", !uf_is_js_mod(".js"));
+        check("subpasta não é", !uf_is_js_mod("a/b.js"));
+        check("nulo/vazio não é", !uf_is_js_mod(nullptr) && !uf_is_js_mod(""));
+        check(".so não é", !uf_is_js_mod("u_frida.so"));
+        char json[512];
+        int n = uf_build_config(json, sizeof(json), "/data/local/tmp/mods/com.foo.bar");
+        check("config JSON exato do modo script-directory", n > 0 &&
+              strcmp(json, "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"/data/local/tmp/mods/com.foo.bar\",\"on_change\":\"ignore\"}}") == 0);
+        check("nomes seguem a regra <stem>.config do gadget",
+              strcmp(UF_GADGET_FILE, "frida-gadget.bin") == 0 &&
+              strcmp(UF_CONFIG_FILE, "frida-gadget.config") == 0);
+
+        // uf_config_is_script_mode: dlopen do gadget SÓ no modo script.
+        // Fora dele o default é listen + on_load wait = jogo congela.
+        char why[64];
+        #define UF_CFG(s) uf_config_is_script_mode(s, strlen(s), why, sizeof(why))
+        check("config gerado por uf_build_config (script-directory) passa",
+              uf_config_is_script_mode(json, (size_t)n, why, sizeof(why)) &&
+              strcmp(why, "script-directory") == 0);
+        check("type script passa",
+              UF_CFG("{\"interaction\":{\"type\":\"script\",\"path\":\"/data/local/tmp/mods/p/a.js\"}}") &&
+              strcmp(why, "script") == 0);
+        check("espaço/quebra de linha JSON válidos passam",
+              UF_CFG(" \n{ \"teardown\" : \"minimal\",\n \"interaction\" : { \"type\" : \"script-directory\", \"path\" : \"/x\", \"n\": [1, -2.5e3, true, null, {}] } }\n"));
+        check("vazio recusa", !uf_config_is_script_mode("", 0, why, sizeof(why)) &&
+              strcmp(why, "vazio") == 0);
+        check("nulo recusa", !uf_config_is_script_mode(nullptr, 0, why, sizeof(why)));
+        check("{} recusa (default listen)", !UF_CFG("{}") &&
+              strcmp(why, "sem-interaction(padrao-listen)") == 0);
+        check("{\"teardown\":\"full\"} recusa", !UF_CFG("{\"teardown\":\"full\"}"));
+        check("interaction sem type recusa", !UF_CFG("{\"interaction\":{}}"));
+        check("listen recusa e loga o type",
+              !UF_CFG("{\"interaction\":{\"type\":\"listen\"}}") && strcmp(why, "listen") == 0);
+        check("listen com port 27042 recusa",
+              !UF_CFG("{\"interaction\":{\"type\":\"listen\",\"address\":\"127.0.0.1\",\"port\":27042,\"on_load\":\"wait\"}}"));
+        check("connect recusa",
+              !UF_CFG("{\"interaction\":{\"type\":\"connect\",\"address\":\"10.0.0.1\",\"port\":27052}}") &&
+              strcmp(why, "connect") == 0);
+        check("port solto no topo recusa", !UF_CFG("{\"port\":27042}"));
+        check("JSON inválido recusa (vírgula sobrando)",
+              !UF_CFG("{\"interaction\":{\"type\":\"script\",}}") && strcmp(why, "json-invalido") == 0);
+        check("JSON inválido recusa (sem fechar)", !UF_CFG("{\"interaction\":{\"type\":\"script\"}"));
+        check("JSON inválido recusa (lixo depois)", !UF_CFG("{\"interaction\":{\"type\":\"script\"}} x"));
+        check("JSON inválido recusa (não é JSON)", !UF_CFG("interaction: script"));
+        check("topo array recusa", !UF_CFG("[{\"interaction\":{\"type\":\"script\"}}]"));
+        check("type script só em objeto aninhado recusa",
+              !UF_CFG("{\"parameters\":{\"interaction\":{\"type\":\"script\"}}}"));
+        check("interaction duplicado recusa (último poderia ser listen)",
+              !UF_CFG("{\"interaction\":{\"type\":\"script\"},\"interaction\":{\"type\":\"listen\"}}"));
+        check("type duplicado recusa",
+              !UF_CFG("{\"interaction\":{\"type\":\"script\",\"type\":\"listen\"}}"));
+        check("chave com escape recusa (poderia ser interaction)",
+              !UF_CFG("{\"interac\\u0074ion\":{\"type\":\"script\"}}"));
+        check("type com escape recusa", !UF_CFG("{\"interaction\":{\"type\":\"scrip\\u0074\"}}"));
+        check("type prefixo/sufixo recusa",
+              !UF_CFG("{\"interaction\":{\"type\":\"scripts\"}}") &&
+              !UF_CFG("{\"interaction\":{\"type\":\"script-dir\"}}") &&
+              !UF_CFG("{\"interaction\":{\"type\":\"Script\"}}"));
+        check("type não-string recusa", !UF_CFG("{\"interaction\":{\"type\":1}}"));
+        check("interaction não-objeto recusa", !UF_CFG("{\"interaction\":\"script\"}"));
+        {
+            const char nul[] = "{\"interaction\":{\"type\":\"script\"}}\0{}";
+            check("NUL no meio recusa", !uf_config_is_script_mode(nul, sizeof(nul) - 1, why, sizeof(why)));
+        }
+        {
+            // JSON script válido de exatamente len bytes (preenchido no "pad").
+            static char big[UF_CONFIG_MAX + 1];
+            auto fill = [](size_t len) {
+                const char *head = "{\"interaction\":{\"type\":\"script\"},\"pad\":\"";
+                size_t hl = strlen(head);
+                memcpy(big, head, hl);
+                memset(big + hl, 'a', len - hl - 2);
+                big[len - 2] = '"';
+                big[len - 1] = '}';
+            };
+            fill(UF_CONFIG_MAX);
+            check("config de 4KB exato (script) passa",
+                  uf_config_is_script_mode(big, UF_CONFIG_MAX, why, sizeof(why)));
+            fill(UF_CONFIG_MAX + 1);
+            check("config > 4KB recusa (mesmo sendo script)",
+                  !uf_config_is_script_mode(big, UF_CONFIG_MAX + 1, why, sizeof(why)) &&
+                  strcmp(why, "maior-que-4KB") == 0);
+        }
+        check("aninhamento fundo recusa sem estourar pilha",
+              !UF_CFG("{\"interaction\":{\"type\":\"script\"},\"x\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}"));
+        #undef UF_CFG
+
+        // uf_pkg_ok: pacote vira caminho (/data/local/tmp/mods/<pkg>).
+        check("pkg normal ok", uf_pkg_ok("com.dts.freefireth") && uf_pkg_ok("com.foo_bar.Baz2"));
+        check("pkg com / recusa", !uf_pkg_ok("com.foo/../../etc") && !uf_pkg_ok("a/b"));
+        check("pkg .. recusa", !uf_pkg_ok("..") && !uf_pkg_ok("com..foo"));
+        check("pkg começando com . recusa", !uf_pkg_ok(".foo"));
+        check("pkg shell recusa", !uf_pkg_ok("x; id") && !uf_pkg_ok("x$(id)"));
+        check("pkg vazio/nulo/zygote recusa", !uf_pkg_ok("") && !uf_pkg_ok(nullptr) && !uf_pkg_ok("zygote64"));
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

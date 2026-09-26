@@ -6,3 +6,4 @@ bc-poc-v12-authuid.zip
 *.zip
 libs/
 out/
+mods/u_frida/gadget/
