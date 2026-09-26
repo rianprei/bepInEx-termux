@@ -23,7 +23,6 @@ PKG=com.fake.game
 FAILED=0
 ok() { echo "  ok: $1"; }
 bad() { echo "  FALHOU: $1"; FAILED=1; }
-check() { if [ "$1" = 0 ]; then ok "$2"; else bad "$2"; fi; }
 
 ROOT=$(mktemp -d)
 # KEEP_SIM_ROOT=1 mantém o device temporário para depurar (imprime o path)
@@ -47,12 +46,18 @@ new_device() {
 new_device a
 
 # --- adb/su falsos -------------------------------------------------------
-# su: lê o comando do stdin e roda com /data reescrito para $DEV/data.
-cat > "$BINDIR/su" <<'EOF'
+# su base: lê o comando do stdin e roda com /data reescrito para $DEV/data.
+# Cenários que precisam de su especial (r1/r3) sobrescrevem $BINDIR/su e
+# restauram este daqui depois.
+write_base_su() {
+    cat > "$BINDIR/su" <<'EOF'
 #!/bin/sh
 # ${DEV} é do ambiente do SIM, lido agora: cada cenário tem seu device.
 sed "s#/data/#${DEV:?}/data/#g" | sh
 EOF
+    chmod 755 "$BINDIR/su"
+}
+write_base_su
 # chown/chmod falsos: no device o su é root; aqui não, e o kit tolera a falha
 # mas o push do staging (que exige o dir criado) precisa passar.
 printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chown"
@@ -63,7 +68,7 @@ cat > "$BINDIR/adb" <<'EOF'
 case "$1" in
   get-state) echo device ;;
   logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
-  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
   shell)
       shift; case "$1" in
         su) su ;;
@@ -102,9 +107,9 @@ cat > "$BINDIR/adb" <<'EOF'
 case "$1" in
   get-state) echo device ;;
   logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
-  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
   shell) shift; case "$1" in
-      su) : ;;   # su falso: nada responde -> snapshot vazio
+      su) _c=$(cat); case "$_c" in *test*) exit 1;; *) exit 0;; esac ;;   # su morto: triggers honestos, resto silencio -> snapshot vazio
       am) shift 2 >/dev/null; : ;;
       monkey) : ;;
       pidof) echo "$FAKE_PID" ;;
@@ -122,7 +127,7 @@ cat > "$BINDIR/adb" <<'EOF'
 case "$1" in
   get-state) echo device ;;
   logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
-  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
   shell) shift; case "$1" in
       su) su ;;
       am) shift 2 >/dev/null; : ;;
@@ -173,7 +178,7 @@ cat > "$BINDIR/adb" <<'EOF'
 case "$1" in
   get-state) echo device ;;
   logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
-  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
   shell) shift; case "$1" in
       su) su ;;
       am) shift 2 >/dev/null; : ;;
@@ -199,7 +204,7 @@ cat > "$BINDIR/adb" <<'EOF'
 case "$1" in
   get-state) echo device ;;
   logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
-  push) cp "$2" "${3/\/data\//$DEV/data/}" ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
   shell) shift; case "$1" in
       su) su ;;
       am) shift 2 >/dev/null; : ;;
@@ -216,6 +221,127 @@ echo "== (campo) caso field roda separado =="
 new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
 echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
+
+# --- (r1) hash inicial de mods EXISTENTE falha (transiente): recusa, nada apagado
+# O bug antigo: saída vazia virava "AUSENTE" e o restore apagava a pasta sem
+# repor do backup. O su falo devolve vazio SÓ na 1ª leitura de hash de mods.
+echo "== (r1) hash inicial de mods falha (transiente) = recusa, nada apagado =="
+new_device r1
+cat > "$BINDIR/su" <<'EOF'
+#!/bin/sh
+CMD=$(cat)
+case "$CMD" in
+  *"mods/$FAKE_PKG' && {"*)
+    _n=$(cat "${MODS_HASH_STATE:?}" 2>/dev/null || echo 0)
+    _n=$((_n + 1))
+    echo "$_n" > "${MODS_HASH_STATE:?}"
+    [ "$_n" -le "${MODS_HASH_FAIL_FIRST:-1}" ] && exit 0
+    ;;
+esac
+printf '%s\n' "$CMD" | sed "s#/data/#${DEV:?}/data/#g" | sh
+EOF
+chmod 755 "$BINDIR/su"
+export FAKE_PKG="$PKG" MODS_HASH_STATE="$ROOT/r1-state-$$"
+: > "$MODS_HASH_STATE"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
+echo "$OUT" | grep -q "não consegui hashear mods" && ok "recusou com hash ilegível" || bad "recusou com hash ilegível"
+[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário intacto (nada apagado)" || bad "mod do usuário intacto (nada apagado)"
+grep -q "mod do usuario" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null && ok "conteúdo do mod preservado" || bad "conteúdo do mod preservado"
+[ "$RC" != 0 ] && ok "saída != 0 (foi $RC)" || bad "saída != 0 (veio $RC)"
+write_base_su
+unset FAKE_PKG MODS_HASH_STATE
+
+# --- (r2) mods ATUAL difere do backup órfão: conflito, nada apagado, BAK.conflict
+# O bug antigo: rm -rf nos mods atuais e cp do backup por cima — mods que o
+# usuário mexeu DEPOIS do crash do run anterior sumiam em silêncio.
+echo "== (r2) mods atual difere do backup do run morto = conflito, nada apagado =="
+new_device r2
+rm -rf "$DEV/data/local/tmp/t1-bak-$PKG"
+mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
+printf 'mod do usuario (so no backup)\n' > "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so"
+touch "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so"
+printf 'before_sha=deadbeef\n' > "$DEV/data/local/tmp/t1-inprogress-$PKG"
+printf 'mod do usuario EDITADO depois do crash\n' > "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
+echo "$OUT" | grep -q "DIFERE" && ok "detectou conflito (mod atual != backup)" || bad "detectou conflito (mod atual != backup)"
+grep -q "EDITADO depois do crash" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null \
+    && ok "mod editado pelo usuário preservado" || bad "mod editado pelo usuário preservado"
+[ -f "$DEV/data/local/tmp/t1-bak-$PKG.conflict/sa2ammo.so" ] && ok "cópia de segurança em .conflict" || bad "cópia de segurança em .conflict"
+[ -f "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so" ] && ok "backup original intacto" || bad "backup original intacto"
+[ "$RC" != 0 ] && ok "saída != 0 (foi $RC)" || bad "saída != 0 (veio $RC)"
+
+# --- (r3) recuperação que não confere: aborta, backup bom preservado
+# O bug antigo: recovery mangled (cp pela metade) seguia o run adiante e o
+# backup NOVO (do estado quebrado) destruía o único backup bom no rm do .part.
+echo "== (r3) recuperação não confere = aborta com backup bom preservado =="
+new_device r3
+rm -rf "$DEV/data/local/tmp/mods/$PKG"
+mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
+printf 'mod do usuario (so no backup)\n' > "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so"
+printf 'componente que o cp falho nao copia\n' > "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so"
+printf 'before_sha=deadbeef\n' > "$DEV/data/local/tmp/t1-inprogress-$PKG"
+cat > "$BINDIR/su" <<'EOF'
+#!/bin/sh
+CMD=$(cat)
+case "$CMD" in
+  *"cp -a /data/local/tmp/t1-bak-"*)
+    # cp falho: copia só o primeiro arquivo do backup
+    rm -rf "${DEV:?}/data/local/tmp/mods/$FAKE_PKG"
+    mkdir -p "${DEV:?}/data/local/tmp/mods/$FAKE_PKG"
+    cp "${DEV:?}/data/local/tmp/t1-bak-$FAKE_PKG/sa2ammo.so" "${DEV:?}/data/local/tmp/mods/$FAKE_PKG/" 2>/dev/null
+    exit 0
+    ;;
+esac
+printf '%s\n' "$CMD" | sed "s#/data/#${DEV:?}/data/#g" | sh
+EOF
+chmod 755 "$BINDIR/su"
+export FAKE_PKG="$PKG"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
+echo "$OUT" | grep -q "recuperação não confere" && ok "detectou recovery quebrado" || bad "detectou recovery quebrado"
+[ -f "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so" ] && ok "backup bom NÃO foi destruído" || bad "backup bom NÃO foi destruído"
+grep -q "componente que o cp falho nao copia" "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so" 2>/dev/null \
+    && ok "conteúdo do backup bom intacto" || bad "conteúdo do backup bom intacto"
+[ "$RC" != 0 ] && ok "saída != 0 (foi $RC)" || bad "saída != 0 (veio $RC)"
+write_base_su
+unset FAKE_PKG
+
+# --- (r4) lock VIVO de outro run: falha limpo, lock alheio intocado
+# O bug antigo: o trap de saída referenciava HASH_* não definidas (set -u
+# abortava no meio com "unbound variable") — o lock alheio sobrevivia por
+# acidente e a saída era ruído de shell.
+echo "== (r4) lock vivo de outro run = falha limpa, lock alheio preservado =="
+new_device r4
+mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
+printf 'pid=99999\nhost=lock-alheio\nts=%s\n' "$(date +%s)" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
+echo "$OUT" | grep -q "VIVO" && ok "reconheceu lock vivo" || bad "reconheceu lock vivo"
+echo "$OUT" | grep -Eq "unbound|parameter not set" && bad "sem crash de unbound variable" || ok "sem crash de unbound variable"
+grep -q "host=lock-alheio" "$DEV/data/local/tmp/t1-lock-$PKG/ts" 2>/dev/null && ok "lock alheio intocado" || bad "lock alheio intocado"
+[ "$RC" = 1 ] && ok "saída 1 (foi $RC)" || bad "saída 1 (veio $RC)"
+
+# --- (r5) --force: órfão quebra, VIVO recusa
+echo "== (r5a) --force NÃO quebra lock vivo =="
+new_device r5a
+mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
+printf 'pid=99999\nhost=lock-alheio\nts=%s\n' "$(date +%s)" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 --force 2>&1) || RC=$?
+echo "$OUT" | grep -q "VIVO" && ok "--force recusou lock vivo" || bad "--force recusou lock vivo"
+echo "$OUT" | grep -q "lock pego" && bad "não pode pegar lock vivo com --force" || ok "não pegou lock vivo com --force"
+grep -q "host=lock-alheio" "$DEV/data/local/tmp/t1-lock-$PKG/ts" 2>/dev/null && ok "lock vivo preservado" || bad "lock vivo preservado"
+[ "$RC" = 1 ] && ok "saída 1 (foi $RC)" || bad "saída 1 (veio $RC)"
+echo "== (r5b) --force quebra lock órfão =="
+new_device r5b
+mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
+printf 'pid=99999\nhost=run-morto\nts=%s\n' "$(( $(date +%s) - 1000 ))" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2" 6 --force 2>&1) || RC=$?
+echo "$OUT" | grep -q "lock pego" && ok "--force pegou lock órfão" || bad "--force pegou lock órfão"
+echo "$OUT" | grep -q "device restaurado" && ok "run do órfão completou" || bad "run do órfão completou"
 
 if [ -n "${KEEP_SIM_ROOT:-}" ]; then echo "device temporário: $ROOT"; fi
 if [ "$FAILED" = 0 ]; then
