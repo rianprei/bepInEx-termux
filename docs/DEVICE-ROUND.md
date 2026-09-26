@@ -224,7 +224,7 @@ adb shell su -c "test ! -e /data/local/tmp/mods/$PKG/u_dump.so"
 ```
 
 O log do mod deve conter `dump.tsv pronto: %lld linhas, %zu assemblies`
-(`mods/u_dump/jni/u_dump_mod.cpp:313`). Confirmar busca paginada por classe,
+(`mods/u_dump/jni/u_dump_mod.cpp:297`). Confirmar busca paginada por classe,
 método e campo, e gerar uma regra pela UI. Restaurar apagando apenas o dump
 de teste pelo botão/Manager; o scanner é removido sempre pelo fluxo.
 
