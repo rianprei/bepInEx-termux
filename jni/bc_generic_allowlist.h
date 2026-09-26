@@ -47,9 +47,17 @@ static inline bool bc_generic_allowlist_contains_buf(const char *buf, const char
 }
 
 #ifdef __ANDROID__
+#    include <unistd.h>
 // Lê o arquivo do disco e checa. Fail-safe: arquivo ausente/ilegível → lista
 // vazia → nenhum app genérico é atuado (nunca falha aberto).
+//
+// F1c: testa a existência ANTES do fopen, para o caso normal depois do F1 (a
+// pasta de mods basta, a allowlist é opcional) sair em silêncio, sem syscall
+// inútil. A leitura em si é permitida: o post-fs-data chcona este arquivo pro
+// tipo bepinex_mod_file e o zygote tem getattr/open/read nesse tipo — não
+// abrimos shell_data_file:file pra ninguém.
 static inline bool bc_generic_allowlist_contains(const char *pkg) {
+    if (access(BC_GENERIC_ALLOWLIST_PATH, F_OK) != 0) return false;
     FILE *f = fopen(BC_GENERIC_ALLOWLIST_PATH, "r");
     if (!f) return false;
     char buf[8192];
