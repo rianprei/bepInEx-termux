@@ -22,6 +22,9 @@ SA2=$(cd "$(dirname "$0")/sa2" && pwd)
 SA2_FIELD=$(cd "$(dirname "$0")/sa2-field" && pwd)
 PKG=com.fake.game
 FAILED=0
+# Timing por cenario (o orquestrador acompanha o custo do sim: 47s -> 62s -> 69s).
+T0=$(date +%s)
+scen() { echo "== $1 ==  [+$(($(date +%s) - T0))s]"; }
 ok() { echo "  ok: $1"; }
 bad() { echo "  FALHOU: $1"; FAILED=1; }
 
@@ -64,6 +67,15 @@ write_base_su
 # mas o push do staging (que exige o dir criado) precisa passar.
 printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chown"
 printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chmod"
+# RELÓGIO FALSO: o kit espera o jogo com "sleep 3" em cada poll (launch e
+# loop de expectativas). No SIM o tempo é simulado pelo próprio contador de
+# iterações do kit (ELAPSED += 3, launch 1..5), então o sleep real não
+# carrega prova nenhuma: nenhum cenário depende de espera de parede —
+# os locks usam ts de date com idades plantadas (now / now-1000), e a
+# interrupção do (5) dispara pelo gancho T1_SIM_EXIT na MESMA iteração
+# lógica. Sem isso o sim cresce em segundos REAIS a cada cenário com run
+# completo (69s com load) e o gate vira flaky por carga. sleep => instantâneo.
+printf '#!/bin/sh\n# relógio falso do sim: espera do kit vira tempo simulado\nexit 0\n' > "$BINDIR/sleep"
 # adb: shell su (stdin) / push / get-state / logcat / am / monkey / pidof.
 cat > "$BINDIR/adb" <<'EOF'
 #!/bin/sh
@@ -82,10 +94,10 @@ case "$1" in
   *) : ;;
 esac
 EOF
-chmod 755 "$BINDIR/su" "$BINDIR/adb" "$BINDIR/chown" "$BINDIR/chmod"
+chmod 755 "$BINDIR/su" "$BINDIR/adb" "$BINDIR/chown" "$BINDIR/chmod" "$BINDIR/sleep"
 export PATH="$BINDIR:$PATH"
 
-echo "== (a) run anterior interrompido: backup sem a pasta de mods =="
+scen "(a) run anterior interrompido: backup sem a pasta de mods"
 # simula o pior caso: o run morreu ENTRE o rm -rf e o mv, então os mods do
 # usuário existem só no backup.
 rm -rf "$DEV/data/local/tmp/mods/$PKG"
@@ -102,7 +114,7 @@ grep -q "so no backup" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null &&
 # o run novo tambem tem que ter restaurado o estado final
 if echo "$OUT" | grep -q "device restaurado"; then ok "estado final = inicial"; else bad "estado final = inicial" ; echo "$OUT" | tail -5; fi
 
-echo "== (3) snapshot vazio = falha, nunca 'device restaurado' =="
+scen "(3) snapshot vazio = falha, nunca 'device restaurado'"
 new_device c
 cat > "$BINDIR/adb" <<'EOF'
 #!/bin/sh
@@ -142,7 +154,7 @@ esac
 EOF
 chmod 755 "$BINDIR/adb"
 
-echo "== (5) interrupção: restaura uma vez, saída != 0, device volta ao inicial =="
+scen "(5) interrupção: restaura uma vez, saída != 0, device volta ao inicial"
 new_device e
 # arquivo do USUÁRIO que já estava no estado inicial: tem que continuar lá
 # depois do restore (o restore volta ao inicial, não a um mods vazio)
@@ -158,7 +170,7 @@ grep -q "log inicial\|11:00:00 \[loader\]" "$DEV/data/data/$PKG/files/bepinex/lo
     && ok "log.txt voltou ao inicial" || bad "log.txt voltou ao inicial"
 [ ! -f "$DEV/data/local/tmp/t1-inprogress-$PKG" ] && ok "marcador limpo" || bad "marcador limpo"
 
-echo "== (5b) interrupcao logo apos instalar (jogo nem subiu) =="
+scen "(5b) interrupcao logo apos instalar (jogo nem subiu)"
 new_device e2
 T1_SIM_EXIT=instalado sh "$KIT" "$PKG" "$SA2" 60 > "$ROOT/out2.txt" 2>&1 && RC=0 || RC=$?
 [ "$RC" != 0 ] && ok "saida != 0 (foi $RC)" || bad "saida != 0 (veio $RC)"
@@ -167,7 +179,7 @@ n=$(grep -c "restaurando device" "$ROOT/out2.txt" || true)
 [ -f "$DEV/data/local/tmp/mods/$PKG/t1_static.patch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
 [ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
 
-echo "== (1) sem backup verificado de files/bepinex: a pasta do usuario NAO e apagada =="
+scen "(1) sem backup verificado de files/bepinex: a pasta do usuario NAO e apagada"
 # O risco do achado: o restore fazia 'rm -rf files/bepinex' e so depois tentava
 # repor do BAK_OUT — se o backup nao existisse (ou nao conferisse), o
 # dump.tsv/crashguard do usuario sumia e o run ainda dizia "restaurado".
@@ -219,7 +231,7 @@ esac
 EOF
 chmod 755 "$BINDIR/adb"
 
-echo "== (campo) caso field roda separado =="
+scen "(campo) caso field roda separado"
 new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
 echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
@@ -227,7 +239,7 @@ echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad
 # --- (r1) hash inicial de mods EXISTENTE falha (transiente): recusa, nada apagado
 # O bug antigo: saída vazia virava "AUSENTE" e o restore apagava a pasta sem
 # repor do backup. O su falo devolve vazio SÓ na 1ª leitura de hash de mods.
-echo "== (r1) hash inicial de mods falha (transiente) = recusa, nada apagado =="
+scen "(r1) hash inicial de mods falha (transiente) = recusa, nada apagado"
 new_device r1
 cat > "$BINDIR/su" <<'EOF'
 #!/bin/sh
@@ -257,7 +269,7 @@ unset FAKE_PKG MODS_HASH_STATE
 # --- (r2) mods ATUAL difere do backup órfão: conflito, nada apagado, BAK.conflict
 # O bug antigo: rm -rf nos mods atuais e cp do backup por cima — mods que o
 # usuário mexeu DEPOIS do crash do run anterior sumiam em silêncio.
-echo "== (r2) mods atual difere do backup do run morto = conflito, nada apagado =="
+scen "(r2) mods atual difere do backup do run morto = conflito, nada apagado"
 new_device r2
 rm -rf "$DEV/data/local/tmp/t1-bak-$PKG"
 mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
@@ -277,7 +289,7 @@ grep -q "EDITADO depois do crash" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/
 # --- (r3) recuperação que não confere: aborta, backup bom preservado
 # O bug antigo: recovery mangled (cp pela metade) seguia o run adiante e o
 # backup NOVO (do estado quebrado) destruía o único backup bom no rm do .part.
-echo "== (r3) recuperação não confere = aborta com backup bom preservado =="
+scen "(r3) recuperação não confere = aborta com backup bom preservado"
 new_device r3
 rm -rf "$DEV/data/local/tmp/mods/$PKG"
 mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
@@ -314,7 +326,7 @@ unset FAKE_PKG
 # O bug antigo: o trap de saída referenciava HASH_* não definidas (set -u
 # abortava no meio com "unbound variable") — o lock alheio sobrevivia por
 # acidente e a saída era ruído de shell.
-echo "== (r4) lock vivo de outro run = falha limpa, lock alheio preservado =="
+scen "(r4) lock vivo de outro run = falha limpa, lock alheio preservado"
 new_device r4
 mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
 printf 'pid=99999\nhost=lock-alheio\nts=%s\n' "$(date +%s)" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
@@ -326,7 +338,7 @@ grep -q "host=lock-alheio" "$DEV/data/local/tmp/t1-lock-$PKG/ts" 2>/dev/null && 
 [ "$RC" = 1 ] && ok "saída 1 (foi $RC)" || bad "saída 1 (veio $RC)"
 
 # --- (r5) --force: órfão quebra, VIVO recusa
-echo "== (r5a) --force NÃO quebra lock vivo =="
+scen "(r5a) --force NÃO quebra lock vivo"
 new_device r5a
 mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
 printf 'pid=99999\nhost=lock-alheio\nts=%s\n' "$(date +%s)" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
@@ -336,7 +348,7 @@ echo "$OUT" | grep -q "VIVO" && ok "--force recusou lock vivo" || bad "--force r
 echo "$OUT" | grep -q "lock pego" && bad "não pode pegar lock vivo com --force" || ok "não pegou lock vivo com --force"
 grep -q "host=lock-alheio" "$DEV/data/local/tmp/t1-lock-$PKG/ts" 2>/dev/null && ok "lock vivo preservado" || bad "lock vivo preservado"
 [ "$RC" = 1 ] && ok "saída 1 (foi $RC)" || bad "saída 1 (veio $RC)"
-echo "== (r5b) --force quebra lock órfão =="
+scen "(r5b) --force quebra lock órfão"
 new_device r5b
 mkdir -p "$DEV/data/local/tmp/t1-lock-$PKG"
 printf 'pid=99999\nhost=run-morto\nts=%s\n' "$(( $(date +%s) - 1000 ))" > "$DEV/data/local/tmp/t1-lock-$PKG/ts"
@@ -349,7 +361,7 @@ echo "$OUT" | grep -q "device restaurado" && ok "run do órfão completou" || ba
 # O bug (b): o restore limpava o BAK_OUT no sucesso mas deixava o BAK (mods)
 # vivo — aí TODO run seguinte entrava em "run anterior interrompido" e
 # "recuperava" de um backup que não era de run morto nenhum.
-echo "== (r6) dois runs com sucesso = 2º sem recovery e sem BAK órfão =="
+scen "(r6) dois runs com sucesso = 2º sem recovery e sem BAK órfão"
 new_device r6
 OUT1=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1 || true)
 echo "$OUT1" | grep -q "device restaurado" && ok "1º run restaurou" || bad "1º run restaurou"

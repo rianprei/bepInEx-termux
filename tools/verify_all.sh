@@ -8,6 +8,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 TIMEOUT_BUILD=${TIMEOUT_BUILD:-600}
 TIMEOUT_TEST=${TIMEOUT_TEST:-120}
+# Device sims forkam muito (adb/su falsos) e rodam na carga junto com os builds
+# dos outros agentes: o timeout aqui existe para pegar TRAVA (deadlock, hook
+# esperando pra sempre), NÃO lentidão — por isso é bem maior que TIMEOUT_TEST.
+TIMEOUT_DEVICE_SIM=${TIMEOUT_DEVICE_SIM:-300}
 
 declare -a LABELS=()
 declare -a STATUSES=()
@@ -214,7 +218,9 @@ done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
 for device_script in restore-sim.sh quoting-check.sh; do
     path="$ROOT/test/device/$device_script"
     if [ -f "$path" ]; then
-        run_step "device test test/device/$device_script" "$TIMEOUT_TEST" bash "$path"
+        # TIMEOUT_DEVICE_SIM (não TIMEOUT_TEST): pega TRAVA, não lentidão —
+        # ver o comentário na definição da variável.
+        run_step "device test test/device/$device_script" "$TIMEOUT_DEVICE_SIM" bash "$path"
     else
         record "device test test/device/$device_script (not present)" SKIP 0 0
     fi
