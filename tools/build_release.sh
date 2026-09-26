@@ -21,7 +21,8 @@ if [ "$ALLOW_DIRTY" -ne 1 ] && [ -n "$(git status --porcelain --untracked-files=
     exit 1
 fi
 
-read -r VERSION VERSION_CODE < VERSION
+version_line="$(cat VERSION)"
+read -r VERSION VERSION_CODE <<< "$version_line"
 EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct)}"
 export SOURCE_DATE_EPOCH="$EPOCH"
 RELEASE_DIR="$OUTPUT/$VERSION"
@@ -52,7 +53,7 @@ else
 fi
 
 OUT_DIR="$WORK/module" "$ROOT/tools/build_module.sh" >"$WORK/build_module.log"
-cp "$WORK/module"/bepinex-termux-"$VERSION".zip "$RELEASE_DIR/bepinex-termux-$VERSION.zip"
+cp "$WORK/module/bepinex-termux-$VERSION.zip" "$RELEASE_DIR/bepinex-termux-$VERSION.zip"
 
 MANAGER_OUTPUT_APK="$WORK/manager/bepinex-manager-$VERSION.apk" \
 MANAGER_BUILD_DIR="$WORK/manager/build" \
