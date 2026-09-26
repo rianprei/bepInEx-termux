@@ -154,16 +154,20 @@ static long long dump_class(FILE *out, void *image, void *klass, const char *cls
     fwrite(line, 1, (size_t)w, out);
     n++;
 
-    // Métodos: iterador com cursor (void** estilo Java Enumeration).
+    // Métodos: iterador com cursor (void** estilo Java Enumeration). O cursor
+    // (iter) é estado do runtime: NUNCA sobrescrever com o retorno (achado em
+    // device: SIGSEGV em il2cpp_type_get_name — o próximo iter_* recebia o
+    // MethodInfo* anterior como "cursor").
     if (il.class_get_methods && il.method_get_name) {
-        void *it = nullptr;
-        while ((it = il.class_get_methods(klass, &it)) != nullptr) {
+        void *iter = nullptr;
+        void *m;
+        while ((m = il.class_get_methods(klass, &iter)) != nullptr) {
             uint32_t iflags = 0;
-            uint32_t flags = il.method_get_flags ? il.method_get_flags(it, &iflags) : 0;
-            const char *ret = type_name_of(il.method_get_return_type(it), line, sizeof(line));
+            uint32_t flags = il.method_get_flags ? il.method_get_flags(m, &iflags) : 0;
+            const char *ret = type_name_of(il.method_get_return_type(m), line, sizeof(line));
             char mline[896];
             w = dump_write_method(mline, sizeof(mline), cls_name,
-                                  il.method_get_name(it), il.method_get_param_count(it),
+                                  il.method_get_name(m), il.method_get_param_count(m),
                                   ret, (flags & dump_attr_static_mask()) != 0);
             fwrite(mline, 1, (size_t)w, out);
             n++;
@@ -171,17 +175,18 @@ static long long dump_class(FILE *out, void *image, void *klass, const char *cls
     }
     // Campos: offset do field_get_offset (0 é offset real de estático/literal).
     if (il.class_get_fields && il.field_get_name) {
-        void *it = nullptr;
-        while ((it = il.class_get_fields(klass, &it)) != nullptr) {
-            const char *nm = il.field_get_name(it);
+        void *iter = nullptr;
+        void *f;
+        while ((f = il.class_get_fields(klass, &iter)) != nullptr) {
+            const char *nm = il.field_get_name(f);
             if (!nm) continue;
-            int fflags = il.field_get_flags ? il.field_get_flags(it) : 0;
+            int fflags = il.field_get_flags ? il.field_get_flags(f) : 0;
             char tbuf[512];
-            const char *t = type_name_of(il.field_get_type(it), tbuf, sizeof(tbuf));
+            const char *t = type_name_of(il.field_get_type(f), tbuf, sizeof(tbuf));
             char fline[1024];
             w = dump_write_field(fline, sizeof(fline), cls_name, nm, t,
                                  (fflags & (int)dump_attr_static_mask()) != 0,
-                                 (int)il.field_get_offset(it));
+                                 (int)il.field_get_offset(f));
             fwrite(fline, 1, (size_t)w, out);
             n++;
         }
