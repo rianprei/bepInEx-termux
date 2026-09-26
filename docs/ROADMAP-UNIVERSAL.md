@@ -28,15 +28,16 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | F1c SELinux | merged, validado em Enforcing | v0.4.0 `setenforce 1`: SA2 (Dobby, u_dump) + BC 4/4, sem `avc` do nosso caminho |
 | sinais Termux→BC por seq | merged, validado; bug de baseline em correção | 2026-09-26 v0.4.1: `reload_config` via Termux → prop seq 3 → jogo reagiu; props `persist.*` antigas disparam na abertura (kilo) |
 | F1d crashguard | merged, validado | 2026-09-26: t_crash matou 2x, 3ª abertura sem mods e viva, aviso no log; reativar = mods voltam; contador zera após 20s vivo |
-| F2 SDK | merged | `new_mod`/`pack_bmod` testados no host |
+| F2 SDK | merged, sem device | `new_mod`/`pack_bmod`/template só testados no host |
 | F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
-| F4 u_patch | branch, em correção (2ª rodada) | re-review: `add x17,x18` (x18 reservado) e loop infinito em linha em branco introduzidos pelo fix |
-| F5/F6 Manager | branch, em correção | APK compila; faltam chcon, field, C7, frida, crashguard |
-| F7 zip | merged | v0.4.1 determinístico (`d34b709`); instalação do formato novo pendente |
-| F8 docs | branch, em correção | 8 achados de revisão |
-| F9b u_noads | branch, em correção | cobertura zero no SA2 → adapters AudienceNetwork/Metica |
-| F11 u_frida | branch | teste de device pendente |
-| T2 verify_all | branch, em revisão | |
+| F4 u_patch | **não mergeado** | em andamento: `uni/f4-upatch` (kimi) |
+| F5/F6 Manager | merged, sem device | APK compila e os testes JVM passam no gate; o app nunca foi instalado num celular |
+| F7 zip | merged, sem device | v0.4.1 determinístico (`d34b709`); instalar o zip num celular segue pendente |
+| F8 docs | merged, sem device | 8 achados de revisão corrigidos (`15b9a3f`) |
+| F9b u_noads | merged, sem device | `f08164b`: fecha o anúncio pelo callback de cada SDK (6 SDKs, 15 hooks); falta rodar no SA2 com `sa2content` desligado |
+| F11 u_frida | merged, sem device | script `.js` por `tools/deploy_frida.sh` (PC+adb) nunca rodou num celular |
+| T2 verify_all | merged, sem device | roda no host; `device test test/device/*.sh` segue SKIP por não existir |
+| guarda do gadget no loader | merged, sem device | `e92b13f` rejeita `.so` com `DT_SONAME` de gadget (Caso 63) — é barreira de host, ainda não testada com o gadget real num celular |
 
 ## Diferença honesta pro Lucky Patcher
 
@@ -67,9 +68,18 @@ zygote preAppSpecialize(pkg)            zygote preAppSpecialize(pkg)
                                           u_dump.so      scanner (pedido pelo Manager)  F3
                                           <id>.conf      opções key=value
                                           <id>.json      manifest (pro Manager listar)
-                                        bepInEx Manager (APK, root)                     F5-F6
+                                        u_noads.so     fecha anúncio pelo callback    F9b
+                                           frida-gadget.bin + .config  script .js         F11
+                                         bepInEx Manager (APK, root)                     F5-F6
                                         zip Magisk que instala o Manager                F7
-```
+
+ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
+  JÁ NO MAPA: zero-config por pasta (F1), log C1, crashguard de 20s (F1d),
+  sepolicy bepinex_mod_file (F1c), scanner u_dump (F3), scripts Frida em
+  modo script (F11), bloqueio de frida-gadget renomeado por DT_SONAME
+  (e92b13f), supressão de anúncio (F9b).
+  AINDA FORA DO MAPA: o motor de regras u_patch (F4, branch) e qualquer
+  coisa que rode .dll (F12/F13).
 
 ## Contratos (fixos — todos os agentes seguem)
 
@@ -168,7 +178,7 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 
 | Garantia | Como é garantida |
 |---|---|
-| **G1. Mod nunca derruba o jogo pra sempre** | F1d: proteção contra crash em loop. 2 mortes seguidas < 60s depois de carregar mod ⇒ o loader não carrega mais mods daquele jogo até o usuário reativar. |
+| **G1. Mod nunca derruba o jogo pra sempre** | F1d: proteção contra crash em loop. 2 mortes seguidas < **20s** depois de carregar mod ⇒ o loader não carrega mais mods daquele jogo até o usuário reativar. (A janela era 60s e virou 20s em `faf0afd`: 60s dava falso positivo quando o jogo crasha por motivo alheio ao mod.) |
 | **G2. Mod nunca derruba o celular** | Loader só atua em app com pasta de mods; o resto recebe `DLCLOSE`. Magisk safe mode desliga o módulo se o boot falhar. |
 | **G3. Jogo atualizado não quebra, só desliga o mod** | Tudo resolvido por nome em runtime; não achou ⇒ log claro e segue. Nada de offset fixo. |
 | **G4. Nada no disco do jogo é alterado** | Runtime-only. Nenhum caminho escreve em APK, OBB ou `/data/app`. |
@@ -185,113 +195,119 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 ## Fases (TODO)
 
 ### F1d — Proteção contra crash em loop (G1)
-- [ ] Loader, antes do `dlopen` dos mods: lê `/data/data/<pkg>/files/bepinex/crashguard` (contador + timestamp). Com 2 mortes seguidas < 60s ⇒ não carrega nenhum mod, loga `mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager` e cria o `disabled_by_crashguard`.
-- [ ] Thread do loader zera o contador depois de 60s vivo.
-- [ ] Manager mostra o aviso e tem "Reativar" (apaga os dois arquivos).
-- [ ] Lógica de decisão pura + teste no harness.
+- [x] Loader, antes do `dlopen` dos mods: lê `/data/data/<pkg>/files/bepinex/crashguard` (contador + timestamp). Com 2 mortes seguidas < **20s** ⇒ não carrega nenhum mod, loga `mods desativados: o jogo fechou 2x logo depois de carregar — reative no Manager` e cria o `disabled_by_crashguard`. (`faf0afd` mudou a janela de 60s para 20s; device 2026-09-26: `t_crash` matou 2x, 3ª abertura sobe limpa, sem mod, com o aviso no log.)
+- [x] Thread do loader zera o contador depois de 20s vivo. (`jni/main.cpp::crashguard_clear_thread`; device 2026-09-26: contador zera após 20s vivo.)
+- [~] Manager mostra o aviso e tem "Reativar" (apaga os dois arquivos). (host OK: `CrashGuardState` + banner em `GameDetailActivity` + botão que apaga marcador **e** zera o contador, `CrashGuardStateTest`; device: pendente — o banner nunca apareceu num celular.)
+- [x] Lógica de decisão pura + teste no harness. (Caso 60 `bc_crashguard_blocks/next_count`.)
 - **Verifica:** mod de teste que dá `abort()` em 2s ⇒ na 3ª abertura o jogo sobe limpo, sem mod, com o aviso no log.
 
 
 ### F1 — Ativação zero-config (loader)
-- [ ] `preAppSpecialize`: `mods/<pkg>/` existe ⇒ caminho genérico, sem precisar da allowlist (1 `stat`, sem scan).
-- [ ] A allowlist continua só pro experimento Cocos sem pasta (compatível com o que existe).
-- [ ] Função pura `decide_path(pkg, dir_exists, in_allowlist)` + teste no harness.
-- [ ] Loader escreve em `/data/data/<pkg>/files/bepinex/log.txt` quais mods carregaram ou falharam (contrato C1).
+- [x] `preAppSpecialize`: `mods/<pkg>/` existe ⇒ caminho genérico, sem precisar da allowlist (1 `stat`, sem scan). (device 2026-09-26: SA2 fora da allowlist carrega mods; BC 4/4.)
+- [x] A allowlist continua só pro experimento Cocos sem pasta (compatível com o que existe). (Caso 62 `bc_generic_allowlist_contains_buf`; device: Battle Cats intacto.)
+- [x] Função pura `decide_path(pkg, dir_exists, in_allowlist)` + teste no harness. (Caso 56 `bc_decide_path`.)
+- [x] Loader escreve em `/data/data/<pkg>/files/bepinex/log.txt` quais mods carregaram ou falharam (contrato C1). (`jni/main.cpp`; `mod_common.h::mod_log`; device: `log.txt` escrito no SA2.)
 - **Verifica:** SA2 fora da allowlist carrega os mods; app sem pasta não gera log novo; BC intacto; harness 0 falhas; build 0 warnings.
 
 ### F1c — SELinux Enforcing (obrigatório pra gente normal)
 Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso que o zygote lê `/data/local/tmp` e o jogo faz `dlopen` de lá (o logcat mostra `avc: denied ... permissive=1`). Num celular comum (Enforcing) nada disso carrega.
-- [ ] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app.
-- [ ] `module/post-fs-data.sh`: cria `/data/local/tmp/mods` e aplica `chcon -R` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo.
-- [ ] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento.
+- [x] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app. (`b510b1e` + etapa `sepolicy grammar` do gate; device: v0.4.0 com `setenforce 1`, SA2 + BC 4/4, zero `avc` do nosso caminho.)
+- [x] `module/post-fs-data.sh`: cria `/data/local/tmp/mods` e aplica `chcon -R` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
+- [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (Caso 62.)
 - **Verifica:** `setenforce 1` no device de teste → SA2 carrega os mods e o u_patch aplica; `dmesg`/logcat sem `avc: denied` do nosso caminho → `setenforce 0` de volta.
 
 ### F2 — SDK de mod + kit
-- [ ] `mods/common/mod_common.h`: `mod_pkg()`, `mod_dir()`, `mod_log(tag, fmt, ...)` (logcat + log.txt C1), `mod_conf_get(id, key, default)` (C3).
-- [ ] `mods/_template/` (Android.mk, Application.mk, `mod.cpp` com boot il2cpp + log).
-- [ ] `tools/new_mod.sh <id>`, `tools/deploy_mod.sh <id> <pkg>` (ndk-build + push + force-stop), `tools/pack_bmod.sh <id>` (gera `.bmod`, C2).
-- [ ] Migrar sa2ammo/sa2content pra `mod_common.h`, **só se** não mudar comportamento.
+- [~] `mods/common/mod_common.h`: `mod_pkg()`, `mod_dir()`, `mod_log(tag, fmt, ...)` (logcat + log.txt C1), `mod_conf_get(id, key, default)` (C3). (host OK: `6fd1415` + etapa `host test/mod_common_test.cpp`; device: pendente.)
+- [~] `mods/_template/` (Android.mk, Application.mk, `mod.cpp` com boot il2cpp + log). (host OK: `d0e35f7` + etapa `ndk-build mods/_template` PASS; device: pendente — `new_mod.sh hello` no SA2 nunca rodou.)
+- [~] `tools/new_mod.sh <id>`, `tools/deploy_mod.sh <id> <pkg>` (ndk-build + push + force-stop), `tools/pack_bmod.sh <id>` (gera `.bmod`, C2). (host OK: `d0e35f7`, `bash -n` + shellcheck PASS no gate; device: pendente.)
+- [ ] Migrar sa2ammo/sa2content pra `mod_common.h`, **só se** não mudar comportamento. (Falta: só `_template`, `u_dump` e `u_frida` usam `mod_common.h`; `sa2ammo` e `sa2content` seguem com o log próprio.)
 - **Verifica:** `new_mod.sh hello` → deploy no SA2 → `hello: il2cpp ok` no log.txt.
 
 ### F3 — u_dump (scanner universal Unity IL2CPP)
-- [ ] `mods/u_dump`: C5 via API runtime (imune a metadata v39 e criptografia de metadata).
-- [ ] Roda numa thread própria, depois do boot il2cpp, e não trava o jogo (yield entre assemblies).
+- [x] `mods/u_dump`: C5 via API runtime (imune a metadata v39 e criptografia de metadata). (`752cfa7`; device: SA2 com 162.804 linhas e `unity=6000.3.13f1`, em Permissive e Enforcing.)
+- [x] Roda numa thread própria, depois do boot il2cpp, e não trava o jogo (yield entre assemblies). (`u_dump_mod.cpp`; o dump completo de 162k linhas no device mostra que a thread não travou o jogo; Casos 57-58 cobrem `dump_core` e `dump_join_class_name`.)
 - **Verifica:** dump.tsv no SA2 contém `ComplexCreature`/`HasAmmo`; no TABS, `UnitBlueprint`.
 
 ### F4 — u_patch (motor declarativo = base do Mod Maker)
-- [ ] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4.
-- [ ] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim.
-- [ ] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto.
-- [ ] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar).
-- [ ] Parser puro e testável (harness host).
+- [ ] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (em andamento: `uni/f4-upatch`)
+- [ ] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (em andamento: `uni/f4-upatch`)
+- [ ] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (em andamento: `uni/f4-upatch`)
+- [ ] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (em andamento: `uni/f4-upatch`)
+- [ ] `field`: campo de instância reescrito a cada chamada de `<Método>` (a 4ª linha do verbo C4). É o que falta para o C4 fechar. (em andamento: `uni/f4-upatch`, kimi)
+- [ ] Parser puro e testável (harness host). (em andamento: `uni/f4-upatch`; enquanto o mod não entra na base, o gate mostra `u_patch encoding harness (not present) | SKIP`.)
 - **Verifica:** SA2 com `return ComplexCreature HasAmmo 0 bool true` → munição não trava; regra inválida → log e jogo segue.
 
 ### F5 — bepInEx Manager: núcleo (APK)
-- [ ] Java puro, sem AndroidX/Gradle: build com SDK (`aapt2` + `javac --release 17` + `d8` + `apksigner`) por `manager/build.sh`, usando `~/Android/Sdk` (build-tools 37, android-36). minSdk 26.
-- [ ] Tela Jogos: apps instalados (filtra jogos + qualquer app com engine detectado, C6), ícone, badge do engine, nº de mods.
-- [ ] Tela Jogo: mods instalados (C1/C2) com switch (renomeia `.off`), opções geradas do manifest (C3), "Reiniciar jogo" (`am force-stop` + launch), "Ver log" (log.txt C1).
-- [ ] Instalar `.bmod`: intent filter pra abrir `.bmod` + botão "+" (SAF). Mostra o manifest, avisa se `game` ≠ pacote ou engine incompatível, e copia os arquivos via `su`.
-- [ ] Tela Status: root ok? módulo ativo (`/data/adb/modules/<id>`)? Zygisk ligado? Versão.
-- [ ] Todo `su` num helper só; falha de root = mensagem clara, sem crash.
+- [~] Java puro, sem AndroidX/Gradle: build com SDK (`aapt2` + `javac --release 17` + `d8` + `apksigner`) por `manager/build.sh`, usando `~/Android/Sdk` (build-tools 37, android-36). minSdk 26. (host OK: `manager/build.sh` gera APK assinado e o `badging` confere com o `VERSION` da raiz (`dacad11`); device: pendente — o APK nunca foi instalado num celular.)
+- [~] Tela Jogos: apps instalados (filtra jogos + qualquer app com engine detectado, C6), ícone, badge do engine, nº de mods. (host OK: `MainActivity` + `EngineDetectorTest` (C6); device: pendente.)
+- [~] Tela Jogo: mods instalados (C1/C2) com switch (renomeia `.off`), opções geradas do manifest (C3), "Reiniciar jogo" (`am force-stop` + launch), "Ver log" (log.txt C1). (host OK: `GameDetailActivity` + `SuHelper.toggleMod`, `ConfTest` (C3), `CrashGuardStateTest`; device: pendente.)
+- [~] Instalar `.bmod`: intent filter pra abrir `.bmod` + botão "+" (SAF). Mostra o manifest, avisa se `game` ≠ pacote ou engine incompatível, e copia os arquivos via `su`. (host OK: `AndroidManifest.xml` tem o filter (`pathPattern .*\.bmod`), `BmodInstaller` valida compatibilidade e `LooseModInstaller` cobre qualquer arquivo (C7), com tetos anti-zip-bomb (`BmodInstallerTest`); device: pendente.)
+- [~] Tela Status: root ok? módulo ativo (`/data/adb/modules/<id>`)? Zygisk ligado? Versão. (host OK: `StatusChecker` + card de status com versão vinda do `VERSION` (`BuildVersionTest`); device: pendente.)
+- [~] Todo `su` num helper só; falha de root = mensagem clara, sem crash. (host OK: `SuHelper` com validação central de todo dado interpolado no shell root (`SuHelperTest`: pkg/nome/chmod/caminho hostis recusados antes de montar o comando); device: pendente — `su` de verdade ainda não foi exercitado por teste automatizado.)
 - **Verifica:** instalar `sa2-infinite-ammo.bmod` pelo app, ligar, reiniciar SA2 → ativo; desligar → volta ao normal.
 
 ### F6 — Mod Maker (criar mod sem código)
-- [ ] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`.
-- [ ] Busca com filtro (classe/método/campo), resultados paginados (dump pode ter 100k+ linhas).
-- [ ] Ação por item: método bool → "sempre verdadeiro/falso"; método int/float → "sempre N" ou "multiplicar por N"; campo estático → "fixar em N". Gera regras C4.
-- [ ] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`.
+- [ ] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`. (Falta: o código do fluxo existe (`ModMakerActivity`, com guarda `hasAsset`), mas `manager/assets/` não existe — o `u_dump.so` ainda não está embutido no APK.)
+- [~] Busca com filtro (classe/método/campo), resultados paginados (dump pode ter 100k+ linhas). (host OK: `ModMakerActivity` + `DumpParserTest` (C5) com leitura de arquivo de 100k+ linhas; device: pendente.)
+- [~] Ação por item: método bool → "sempre verdadeiro/falso"; método int/float → "sempre N" ou "multiplicar por N"; campo estático → "fixar em N"; campo de instância → verbo `field` do C4. Gera regras C4. (host OK: `PatchGeneratorTest` (C4) cobre `return`/`mul`/`static`/`field` com round-trip; device: pendente.)
+- [~] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.patch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; device: pendente — e `u_patch.so` nem existe na base ainda, F4.)
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)
-- [ ] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`.
-- [ ] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar).
+- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. (host OK: `b8034b2` + `e5d16a4`, v0.4.1 determinístico (`d34b709`), `bash -n` + shellcheck PASS; device: pendente — o zip não foi instalado pelo app Magisk em nenhum celular.)
+- [~] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar). (host OK: README e `module/*.sh` citam os três; device: pendente — só Magisk foi exercitado, e nem isso desde o formato novo.)
 - **Verifica:** zip instalado pelo app Magisk → reboot → Manager no launcher → SA2 com mod funciona.
 
 ### F8 — Docs pra gente normal
-- [ ] README PT-BR no topo: "Instalar em 3 passos", "Instalar um mod", "Criar mod sem código", FAQ (sem root? Play Protect? jogo online?).
-- [ ] `docs/BMOD-FORMAT.md` (C2–C5) pra quem faz mod.
-- [ ] `docs/SDK.md`: mod nativo C++ com o template (F2).
+- [x] README PT-BR no topo: "Instalar em 3 passos", "Instalar um mod", "Criar mod sem código", FAQ (sem root? Play Protect? jogo online?). (`15b9a3f`, 8 achados do hermes corrigidos; seções existem no README. O texto do doc describe um fluxo que ainda não foi seguido de ponta a ponta por uma pessoa normal no device — isso é o item 3 da "Definição de pronto", não do doc.)
+- [x] `docs/BMOD-FORMAT.md` (C2–C5) pra quem faz mod. (`15b9a3f`.)
+- [x] `docs/SDK.md`: mod nativo C++ com o template (F2). (`15b9a3f`.)
 
 ### F9 — Pesquisa: bloqueio de anúncio genérico + UX de referência
-- [ ] Ponto de hook comum de AdMob/AppLovin/ironSource/Unity Ads (Java via JNI vs wrapper C#). Go/no-go de um `u_noads`.
-- [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager.
+- [~] Ponto de hook comum de AdMob/AppLovin/ironSource/Unity Ads (Java via JNI vs wrapper C#). Go/no-go de um `u_noads`. (host OK: `f08164b` — `mods/u_noads` hooka os `Show` de 6 SDKs (15 hooks) e dispara o fechamento pelo callback de cada SDK, com "nunca suprimir sem fechar"; Caso 64 + `test_targets.cpp`/`test_closers.cpp`; device: pendente — precisa rodar no SA2 com o `sa2content` desligado, senão os dois mods brigam pelo mesmo banner.)
+- [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager. (Falta: existe `docs/ROADMAP-COMPETITORS.md` (pesquisa de concorrentes por fonte primária, 3 agentes), mas a lista de padrões de UX para copiar no Manager não foi escrita.)
 
 ### F11 — Scripts Frida como mod (runtime, sem PC)
 - [x] Mod `mods/u_frida` (existe, branch): com `*.js` na pasta do jogo, confere `frida-gadget.bin` + `frida-gadget.config` ao lado e dá `dlopen` no gadget. Só no modo script: `uf_config_is_script_mode()` exige JSON válido (≤4KB) com `interaction.type` `script`/`script-directory` — `{}`, `listen`, `connect` ou inválido recusa (o default do gadget é `listen` + `on_load: wait`, que congela o jogo). Selftest Caso 61.
 - [x] Instalador `tools/deploy_frida.sh` (PC + adb + su): valida o pacote, copia `.js` + `.bin` e escreve config `script-directory` apontando pra `mods/<pkg>/`, chmod 644 + chcon `bepinex_mod_file`, cada passo conferido. Gadget pinado por sha256 em `tools/fetch_frida_gadget.sh` (17.19.0, licença wxWindows).
-- [ ] Manager (F5): instalar `.js` + gadget (nos assets) + config pelo celular, sem PC. Hoje não tem código.
+- [~] Manager (F5): instalar `.js` + gadget + config pelo celular, sem PC. (host OK: o botão de instalar virou "qualquer arquivo" e o `LooseModInstaller` instala o gadget pelo caminho certo — `frida-gadget.bin` **sem .so** + `frida-gadget.config` em `script-directory` — e recusa o `.so` do gadget; `ModContentDetectorTest`; device: pendente. O `gadget` ainda não vem embutido nos assets do APK: hoje o usuário escolhe o binário.)
 - [ ] Rodada de device Enforcing: coletar `avc: denied` do u_frida e adicionar SÓ a permissão negada à regra (`module/sepolicy.rule`). [NAO VERIFICADO EM ENFORCING: `bepinex_mod_file` não tem `execmod`; o gum pode precisar de `mprotect(+PROT_EXEC)` em página do binário. Não adicionar por teoria.]
-- [ ] [NAO VERIFICADO: tamanho do gadget em RAM + detecção por anti-tamper.]
-- [ ] Suporte a `frida-il2cpp-bridge` (scripts da comunidade que usam `Il2Cpp.perform`).
+- [~] Loader recusa o gadget renomeado antes do `dlopen`. (host OK: `e92b13f` + Caso 63 — `.so` com `DT_SONAME` de gadget é barrado no preflight do ELF, sem abrir o arquivo; device: pendente — só o ELF sintético do harness foi usado, o binário real de 25MB nunca passou pelo loader.)
+- [ ] [NAO VERIFICADO: tamanho do gadget em RAM + detecção por anti-tamper.] (Falta medir com o binário real de 25MB rodando; o `fetch_frida_gadget.sh` dá o tamanho em disco, não o de RAM.)
+- [ ] Suporte a `frida-il2cpp-bridge` (scripts da comunidade que usam `Il2Cpp.perform`). (Falta: o gadget so roda o que está na pasta; a bridge é um pacote npm que teria que ser embutido e reexportado a cada execução.)
 - **Verifica:** script `.js` simples que hooka um método do SA2 com efeito observável (escreve arquivo em `files/bepinex/` — `console.log` vai pra `/dev/null`), instalado por `tools/deploy_frida.sh`, em Permissive e Enforcing; depois o mesmo instalado pelo Manager.
 
 ### F12 — Mods `.dll` IL2CPP (BepInEx 6 IL2CPP / MelonLoader IL2CPP) — spike primeiro
-- [ ] Spike: carregar o runtime .NET (CoreCLR) **dentro do processo pelo nosso Zygisk** (sem container), reaproveitando o que o NextBep/FusionCore já portou (CoreCLR android-arm64 + Il2CppInterop + HarmonyX). Medir tamanho, RAM, tempo da 1ª execução (geração dos assemblies proxy).
-- [ ] Go/no-go com números. Se go: fase de implementação separada.
+- [ ] Spike: carregar o runtime .NET (CoreCLR) **dentro do processo pelo nosso Zygisk** (sem container), reaproveitando o que o NextBep/FusionCore já portou (CoreCLR android-arm64 + Il2CppInterop + HarmonyX). Medir tamanho, RAM, tempo da 1ª execução (geração dos assemblies proxy). (Pesquisa em andamento: `raw/f12-spike.md` no vault, com fontes e veredito.)
+- [ ] Go/no-go com números. Se go: fase de implementação separada. (Depende do spike acima; nada de implementação antes do número.)
 - Limite real: só roda `.dll` feito pra versão **IL2CPP** do jogo. Mod de PC Mono não entra aqui.
 
 ### F13 — Mods `.dll` Mono em jogo Unity Mono
-- [ ] `mono_min.h` + carregar assembly (`mono_domain_assembly_open`) + HarmonyX (roda nativo em Mono).
-- [ ] Compat BepInEx 5 mínima (`BaseUnityPlugin`, `Logger`, `Config`) pra mod de PC do mesmo jogo carregar sem recompilar, quando o jogo Android também é Mono.
+- [ ] `mono_min.h` + carregar assembly (`mono_domain_assembly_open`) + HarmonyX (roda nativo em Mono). (Falta tudo: não existe `mono_min.h` no repo, e sem jogo-alvo Unity Mono real não dá para validar.)
+- [ ] Compat BepInEx 5 mínima (`BaseUnityPlugin`, `Logger`, `Config`) pra mod de PC do mesmo jogo carregar sem recompilar, quando o jogo Android também é Mono. (Depende do item acima.)
 - Precisa de jogo-alvo Unity Mono real pra validar.
 
 ### F10 — Depois (fora do caminho crítico)
-- `mono_min.h` (Unity Mono), com jogo-alvo real.
+- `mono_min.h` (Unity Mono), com jogo-alvo real. (mesma lacuna da F13; o `il2cpp_min.h` do nosso lado é só IL2CPP)
 - Helper de thread principal Unity (habilita `u_speed`/`u_fps` universais).
 - Stream/console no genérico sem abrir Termux por cima do jogo.
 - Unificar o caminho BC no genérico (decisão do usuário).
 
 ## Ordem, dependências, dono
 
-| Fase | Depende de | Agente | Branch/worktree |
-|---|---|---|---|
-| F1 loader | — | kilo | `uni/f1-zeroconfig` |
-| F2 SDK + kit | F1 (log C1) | OpenCode | `uni/f2-sdk` |
-| F3 u_dump | contrato C5 | freebuff | `uni/f3-udump` |
-| F4 u_patch | contrato C4 | kimi | `uni/f4-upatch` |
-| F5+F6 Manager | contratos C1–C6 | Antigravity | `uni/f5-manager` |
-| F7 módulo + F8 docs | F5 | OpenCode (depois de F2) | `uni/f7-module` |
-| F9 pesquisa | — | hermes | só relatório |
+| Fase | Depende de | Agente | Branch/worktree | Estado (2026-09-26) |
+|---|---|---|---|---|
+| F1 loader | — | kilo | `uni/f1-zeroconfig` | mergeado, device validado |
+| F2 SDK + kit | F1 (log C1) | OpenCode | `uni/f2-sdk-v2` | mergeado, sem device |
+| F3 u_dump | contrato C5 | freebuff | `uni/f3-udump` | mergeado, device validado |
+| F4 u_patch | contrato C4 | kimi | `uni/f4-upatch` | **em andamento** (única fase de código fora da base) |
+| F5+F6 Manager | contratos C1–C6 | Antigravity | `uni/f5-manager` | mergeado, sem device |
+| F7 módulo + F8 docs | F5 | OpenCode / hermes | `uni/f7-module`, `uni/f8-docs` | mergeados, sem device |
+| F9/F9b pesquisa + u_noads | — | hermes | `uni/f9b-noads` | mergeado (`f08164b`), sem device |
+| F11 u_frida | — | kimi | `uni/f11-frida` | mergeado, sem device |
+| guarda do gadget | F11 | hermes | `uni/loader-frida-guard` | mergeado (`e92b13f`), sem device |
+| T1 device | tudo acima | OpenCode | `uni/t1-devicetest` | em andamento |
+| T2 verify_all | — | — | `uni/t2-verify` | mergeado, roda no host |
 
 F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até ele chegar, F3/F4 usam o próprio log mínimo e trocam depois. Integração: merge em `feat/generic-pkg-mods` (sem push sem autorização do usuário), revisão cruzada por outro agente, validação no device (SA2 + BC) pelo orquestrador.
 
