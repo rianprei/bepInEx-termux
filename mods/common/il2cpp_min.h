@@ -22,6 +22,8 @@ struct Il2Cpp {
     void *(*object_new)(void *);
     void *(*runtime_invoke)(void *, void *, void **, void **);
     void *(*string_new)(const char *);
+    // Escrita de estático (u_patch fixa campo static e reaplica a cada 2s).
+    void (*field_static_set_value)(void *, void *);
     // Escrita de referência em campo de objeto gerenciado: o GC do Unity 6
     // pode ser incremental, então tem que passar pela write barrier.
     void (*gc_wbarrier_set_field)(void *obj, void **field, void *value);
@@ -160,9 +162,15 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM(class_get_method_from_name); IL2CPP_SYM(class_get_field_from_name);
     IL2CPP_SYM(field_get_offset); IL2CPP_SYM(field_static_get_value); IL2CPP_SYM(object_get_class);
     IL2CPP_SYM(object_new); IL2CPP_SYM(runtime_invoke); IL2CPP_SYM(string_new);
+    IL2CPP_SYM(field_static_set_value);
     IL2CPP_SYM(gc_wbarrier_set_field); IL2CPP_SYM(field_get_value); IL2CPP_SYM(field_set_value);
     IL2CPP_SYM(field_get_type); IL2CPP_SYM(class_from_type); IL2CPP_SYM(class_is_valuetype);
     IL2CPP_SYM(gchandle_new);
+    // Opcionais (ver comentário no struct): tolerantes a símbolo ausente.
+#define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)
+    IL2CPP_SYM_MAY(class_get_namespace);
+    IL2CPP_SYM_MAY(field_get_flags);
+#undef IL2CPP_SYM_MAY
 #undef IL2CPP_SYM
     // Enumeração (u_dump, F3): resolução tolerante, ver comentário no struct.
 #define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)

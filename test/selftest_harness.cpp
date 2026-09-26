@@ -59,6 +59,8 @@
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
 #include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
+#include "../mods/u_patch/jni/u_patch_parse.h"  // F4: parser C4/C3 (puro)
+#include "../mods/u_patch/jni/u_patch_arm64.h"  // F4: emissores arm64 (puros)
 
 // --- schema espelho do main.cpp/companion.cpp (sync manual entre os 3) ---
 static const char *const T_SRC_DOMAIN[] = {"game", "companion", nullptr};
@@ -1485,7 +1487,6 @@ int main() {
         const char *bc_so = "../mods/kungfux/libs/arm64-v8a/libkungfux.so";
         const char *autonomous_so = "../mods/sa2ammo/libs/arm64-v8a/libsa2ammo.so";
         std::FILE *src = std::fopen(bc_so, "rb");
-        check("arquivo BC real existe", src != nullptr);
         std::vector<unsigned char> original;
         if (src != nullptr) {
             std::fseek(src, 0, SEEK_END);
@@ -1496,6 +1497,7 @@ int main() {
                   std::fread(original.data(), 1, original.size(), src) == original.size());
             std::fclose(src);
         }
+        if (original.empty()) original.shrink_to_fit();
         auto write_temp = [](const std::vector<unsigned char> &data, const char *tag) {
             char path[128];
             std::snprintf(path, sizeof(path), "/tmp/bc-elf-%s-XXXXXX", tag);
@@ -1526,54 +1528,64 @@ int main() {
                 }
             }
         };
-        check("BC real tem bc_mod_register",
-              bc_elf_file_has_bc_mod_register(bc_so).result == BC_ELF_FILE_HAS_SYMBOL);
-        check("mod autonomo nao tem bc_mod_register",
-              bc_elf_file_has_bc_mod_register(autonomous_so).result == BC_ELF_FILE_NO_SYMBOL);
-        check("arquivo vazio", probe_copy("empty", [](auto &d) { d.clear(); }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("arquivo nao ELF", probe_copy("notelf", [](auto &d) { d[0] = 'X'; }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("ELF32", probe_copy("elf32", [](auto &d) { d[EI_CLASS] = ELFCLASS32; }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("big-endian", probe_copy("be", [](auto &d) { d[EI_DATA] = ELFDATA2MSB; }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("e_shoff fora do arquivo",
-              probe_copy("shoff", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shoff = d.size() + 1; }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("e_shnum gigante",
-              probe_copy("shnum", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shnum = 0xffff; }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("dynsym fora do arquivo", probe_copy("symoff", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (sym) sym->sh_offset = d.size() + 1;
-        }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("dynsym sh_size fora do arquivo", probe_copy("symsize", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (sym) sym->sh_size = d.size() + 1;
-        }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("sh_link invalido", probe_copy("link", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (sym) sym->sh_link = 0xffff;
-        }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("st_name fora do strtab", probe_copy("name", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (!sym) return;
-            Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
-            for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) symbols[i].st_name = str->sh_size + 1;
-        }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("strtab sem NUL", probe_copy("nonul", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (str && str->sh_size > 0) memset(d.data() + str->sh_offset, 'X', str->sh_size);
-        }).result == BC_ELF_FILE_NO_SYMBOL);
-        check("arquivo inexistente",
-              bc_elf_file_has_bc_mod_register("/tmp/bc-elf-does-not-exist.so").result == BC_ELF_FILE_ERROR);
-        check("simbolo importado nao conta", probe_copy("undef", [&](auto &d) {
-            Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
-            if (!sym || !str) return;
-            Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
-            const char *strings = (const char *)(d.data() + str->sh_offset);
-            for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) {
-                if (symbols[i].st_name < str->sh_size &&
-                    strcmp(strings + symbols[i].st_name, "bc_mod_register") == 0) {
-                    symbols[i].st_shndx = SHN_UNDEF; symbols[i].st_value = 0; break;
+        if (src == nullptr) {
+            // #4(b) do review: sem esta guarda, probe_copy mutava um vector VAZIO
+            // -> abort em std::vector::operator[] e o harness inteiro morria sem
+            // imprimir FAIL (os ~30 casos depois deste não rodavam). O .so é
+            // artefato de build: quando falta, SKIP com aviso é a resposta honesta.
+            printf("  [SKIP] Caso 53: %s e %s ausentes — rode verify_all (ou o "
+                   "run_host.sh) para compilar os mods antes do host test\n", bc_so, autonomous_so);
+        } else {
+            check("arquivo BC real existe", true);
+            check("BC real tem bc_mod_register",
+                  bc_elf_file_has_bc_mod_register(bc_so).result == BC_ELF_FILE_HAS_SYMBOL);
+            check("mod autonomo nao tem bc_mod_register",
+                  bc_elf_file_has_bc_mod_register(autonomous_so).result == BC_ELF_FILE_NO_SYMBOL);
+            check("arquivo vazio", probe_copy("empty", [](auto &d) { d.clear(); }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("arquivo nao ELF", probe_copy("notelf", [](auto &d) { d[0] = 'X'; }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("ELF32", probe_copy("elf32", [](auto &d) { d[EI_CLASS] = ELFCLASS32; }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("big-endian", probe_copy("be", [](auto &d) { d[EI_DATA] = ELFDATA2MSB; }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("e_shoff fora do arquivo",
+                  probe_copy("shoff", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shoff = d.size() + 1; }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("e_shnum gigante",
+                  probe_copy("shnum", [](auto &d) { ((Elf64_Ehdr *)d.data())->e_shnum = 0xffff; }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("dynsym fora do arquivo", probe_copy("symoff", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (sym) sym->sh_offset = d.size() + 1;
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("dynsym sh_size fora do arquivo", probe_copy("symsize", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (sym) sym->sh_size = d.size() + 1;
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("sh_link invalido", probe_copy("link", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (sym) sym->sh_link = 0xffff;
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("st_name fora do strtab", probe_copy("name", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (!sym) return;
+                Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
+                for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) symbols[i].st_name = str->sh_size + 1;
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("strtab sem NUL", probe_copy("nonul", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (str && str->sh_size > 0) memset(d.data() + str->sh_offset, 'X', str->sh_size);
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+            check("arquivo inexistente",
+                  bc_elf_file_has_bc_mod_register("/tmp/bc-elf-does-not-exist.so").result == BC_ELF_FILE_ERROR);
+            check("simbolo importado nao conta", probe_copy("undef", [&](auto &d) {
+                Elf64_Shdr *sym = nullptr, *str = nullptr; section_info(d, &sym, &str);
+                if (!sym || !str) return;
+                Elf64_Sym *symbols = (Elf64_Sym *)(d.data() + sym->sh_offset);
+                const char *strings = (const char *)(d.data() + str->sh_offset);
+                for (size_t i = 1; i < sym->sh_size / sizeof(*symbols); i++) {
+                    if (symbols[i].st_name < str->sh_size &&
+                        strcmp(strings + symbols[i].st_name, "bc_mod_register") == 0) {
+                        symbols[i].st_shndx = SHN_UNDEF; symbols[i].st_value = 0; break;
+                    }
                 }
-            }
-        }).result == BC_ELF_FILE_NO_SYMBOL);
+            }).result == BC_ELF_FILE_NO_SYMBOL);
+        }
     }
 
     printf("\n[Caso 63] bc_elf_file: bloqueio por DT_SONAME do frida-gadget\n");
@@ -2081,6 +2093,13 @@ int main() {
         prologue[2] = 0xD503201Fu;
         check("prólogo sem terminador cabe no trampolim", uno_method_fits(prologue));
     }
+
+
+    // Os casos do u_patch (C4/C5) vivem em mods/u_patch/jni/upatch_harness.cpp
+    // (69-72), que o gate compila e roda na etapa "u_patch encoding harness".
+    // Eles ESTAVAM duplicados aqui (65-68) com o mesmo conteúdo: dois lugares
+    // para atualizar, e o "harness case ids unicos" do gate só olhava este
+    // arquivo — então a colisão dele com upatch_harness (61-64 x 65-68) passava.
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;

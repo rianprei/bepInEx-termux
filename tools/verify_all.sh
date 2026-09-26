@@ -153,10 +153,13 @@ done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_cl
 
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
-    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- test/selftest_harness.cpp |
+    # TODOS os arquivos que declaram [Caso N] — não só selftest_harness.cpp.
+    # Antes o grep olhava um arquivo só, e a colisão do F4 (61-64 no
+    # upatch_harness x 61-64/65-68 da base) passava reto (achado do review).
+    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- "test/*.cpp" "mods/*/jni/*harness*.cpp" |
         grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
     if [ -n "$duplicates" ]; then
-        printf "IDs duplicados: %s\n" "$duplicates" >&2
+        printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
         exit 1
     fi
 ' bash "$ROOT"
@@ -320,6 +323,19 @@ if [ -d "$ROOT/mods/u_patch" ]; then
 else
     record "u_patch encoding harness (not present)" SKIP 0 0
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
+fi
+
+# Execução real do thunk (qemu-aarch64): run_host.sh do thunk_exec.
+# qemu ausente = SKIP com aviso, nunca PASS.
+if [ -f "$ROOT/test/device/thunk_exec/run_host.sh" ]; then
+    if [ -x "${QEMU:-/usr/bin/qemu-aarch64}" ] || command -v qemu-aarch64 >/dev/null 2>&1; then
+        run_step "u_patch exec test (thunk_exec)" 420 bash "$ROOT/test/device/thunk_exec/run_host.sh"
+    else
+        record "u_patch exec test (thunk_exec, qemu-aarch64 missing)" SKIP 0 0
+        echo "AVISO: qemu-aarch64 ausente; exec test do u_patch ignorado" >&2
+    fi
+else
+    record "u_patch exec test (not present)" SKIP 0 0
 fi
 
 if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/main.cpp"; then
