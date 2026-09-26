@@ -25,11 +25,12 @@ Unity — é lá que jogo chama Show), com `thread_attach` antes de qualquer
   `OnAdDidDismissFullScreenContent` NÃO é campo do `InterstitialAd`: é evento da
   ponte interna (`_client`), que o jogo não enxerga — por isso a revisão apontou
   que ele nunca fechava nada.
-- Fonte: https://github.com/googleads/googleads-mobile-unity
+- Fonte: https://github.com/googleads/googleads-mobile-unity/tree/v11.5.0
   `source/plugin/Assets/GoogleMobileAds/Api/InterstitialAd.cs:54`
   (`public event Action OnAdFullScreenContentClosed;`), `:229-231` (é ele que
-  dispara no close) e `:175` (`public void Show()`); v6 no
-  `googleads-mobile-unity-plugin`, `Api/InterstitialAd.cs`
+  dispara no close) e `:175` (`public void Show()`); v6 no histórico do
+  repositório principal `googleads-mobile-unity`, em
+  `source/plugin/Assets/GoogleMobileAds/Api/InterstitialAd.cs`
   (`public event EventHandler<EventArgs> OnAdClosed;`).
 - Risco residual: plugin v6/v7 não reconhecido → **não suprime** (regra acima) e
   o log aponta o que faltou.
@@ -70,9 +71,10 @@ Unity — é lá que jogo chama Show), com `thread_attach` antes de qualquer
 
 - Alvo: `MaxSdk.ShowInterstitial` e `MaxSdk.ShowAppOpenAd`, **1, 2 e 3 args**:
   a assinatura é `ShowInterstitial(string adUnitIdentifier, string placement =
-  null, string customData = null)`, e parâmetro opcional no C# vira sobrecarga
-  no IL — o jogo pode chamar qualquer uma das três (a revisão pegou que só a de
-  3 estava registrada, e a de 1 é a mais comum).
+  null, string customData = null)`: é um método C# com parâmetro opcional e
+  continua um único método IL de 3 parâmetros. Os registros de 1, 2 e 3
+  permanecem porque o plugin antigo `release_4_3_4` tinha overloads explícitos
+  de 1 e 2 argumentos (a de 1 é a mais comum nesse plugin antigo).
 - Fecha: campo estático internal `onAdHiddenEvent`
   (`Action<string, AdInfo>`) em `MaxSdkCallbacks.Interstitial` /
   `MaxSdkCallbacks.AppOpen`, invocado com `(args[0] do Show = adUnitIdentifier,

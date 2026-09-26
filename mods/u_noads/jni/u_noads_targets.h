@@ -59,28 +59,27 @@ bool uno_close_max_interstitial(UNoAdsFireCtx &);
 bool uno_close_max_appopen(UNoAdsFireCtx &);
 bool uno_close_metica(UNoAdsFireCtx &);
 
-inline const UNoAdsShow GOOGLE_SHOWS[] = {
+static const UNoAdsShow GOOGLE_SHOWS[] = {
     {"GoogleMobileAds.Api.InterstitialAd", "Show", 0, uno_close_google},
     {"GoogleMobileAds.Api.AppOpenAd", "Show", 0, uno_close_google},
 };
 
-inline const UNoAdsShow UNITY_SHOWS[] = {
+static const UNoAdsShow UNITY_SHOWS[] = {
     // Show(adUnitId, listener) e Show(adUnitId, options, listener):
     // listener é sempre o ÚLTIMO arg (ver ADAPTERS.md).
     {"UnityEngine.Advertisements.Advertisement", "Show", 2, uno_close_unity},
     {"UnityEngine.Advertisements.Advertisement", "Show", 3, uno_close_unity},
 };
 
-inline const UNoAdsShow LEVELPLAY_SHOWS[] = {
+static const UNoAdsShow LEVELPLAY_SHOWS[] = {
     {"LevelPlayInterstitialAd", "ShowAd", 0, uno_close_levelplay},
     {"LevelPlayInterstitialAd", "ShowAd", 1, uno_close_levelplay},
 };
 
 // MaxSdkAndroid.cs:621/698: ShowInterstitial(adUnitIdentifier, placement =
-// null, customData = null) — parâmetros opcionais viram 3 sobrecargas no IL
-// (1, 2 e 3 args), e o jogo pode chamar qualquer uma. Registrar só a de 3
-// deixaria o overload mais comum (o de 1) desarmado.
-inline const UNoAdsShow MAX_SHOWS[] = {
+// null, customData = null) — um único método IL de 3 args. O plugin
+// release_4_3_4 tinha overloads explícitos de 1 e 2 args.
+static const UNoAdsShow MAX_SHOWS[] = {
     {"MaxSdk", "ShowInterstitial", 1, uno_close_max_interstitial},
     {"MaxSdk", "ShowInterstitial", 2, uno_close_max_interstitial},
     {"MaxSdk", "ShowInterstitial", 3, uno_close_max_interstitial},
@@ -89,17 +88,17 @@ inline const UNoAdsShow MAX_SHOWS[] = {
     {"MaxSdk", "ShowAppOpenAd", 3, uno_close_max_appopen},
 };
 
-inline const UNoAdsShow META_SHOWS[] = {
+static const UNoAdsShow META_SHOWS[] = {
     // Show retorna bool: suprime com false (closer null).
     {"AudienceNetwork.InterstitialAd", "Show", 0, nullptr},
 };
 
-inline const UNoAdsShow METICA_SHOWS[] = {
+static const UNoAdsShow METICA_SHOWS[] = {
     {"Metica.Ads.MeticaAds", "ShowInterstitial", 3, uno_close_metica},
     {"Metica.Ads.MeticaAdsImpl", "ShowInterstitial", 3, uno_close_metica},
 };
 
-inline const UNoAdsTarget U_NOADS_TARGETS[] = {
+static const UNoAdsTarget U_NOADS_TARGETS[] = {
     {UNoAdsSdk::GoogleMobileAds, "GoogleMobileAds", {GOOGLE_SHOWS[0], GOOGLE_SHOWS[1]}, 2},
     {UNoAdsSdk::UnityAds, "UnityAds", {UNITY_SHOWS[0], UNITY_SHOWS[1]}, 2},
     {UNoAdsSdk::LevelPlay, "LevelPlay", {LEVELPLAY_SHOWS[0], LEVELPLAY_SHOWS[1]}, 2},
@@ -109,7 +108,7 @@ inline const UNoAdsTarget U_NOADS_TARGETS[] = {
     {UNoAdsSdk::Metica, "Metica", {METICA_SHOWS[0], METICA_SHOWS[1]}, 2},
 };
 
-inline constexpr std::size_t U_NOADS_TARGET_COUNT =
+static constexpr std::size_t U_NOADS_TARGET_COUNT =
     sizeof(U_NOADS_TARGETS) / sizeof(U_NOADS_TARGETS[0]);
 
 // Pool de trampolins (vive no mod.cpp). Capacidade garantida por dois
