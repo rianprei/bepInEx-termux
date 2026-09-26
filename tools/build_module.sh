@@ -38,6 +38,10 @@ grep -q "BC_LOADER_VERSION \"$VERSION\"" jni/main.cpp || {
 # A doc oficial manda baixar o module_installer.sh e renomear pra update-binary.
 # Baixamos em build (em vez de versionar o arquivo, que é GPL-3.0 do Magisk
 # dentro de um repo MIT) e cacheamos em out/ — o 2º build não usa a rede.
+# O out/ precisa existir ANTES do curl: -o escreve direto no arquivo, e sem o
+# diretório o curl falha com "(23) client returned ERROR on write" — o que só
+# aparece em checkout limpo, porque com out/ em cache o download nem roda.
+mkdir -p "$OUT"
 if [ ! -f "$ZIP_IN" ]; then
     echo "baixando module_installer.sh (Magisk ${MAGISK_COMMIT:0:12})..."
     curl -fsSL "$UPDATE_BINARY_URL" -o "$ZIP_IN" || {
@@ -60,7 +64,6 @@ echo "${UPDATE_BINARY_SHA256}  ${ZIP_IN}" | sha256sum -c - >/dev/null || {
 # senão o Magisk aplica o arquivo em parte (statement ruim = warn e segue) e a
 # política do módulo fica pela metade, sem ninguém avisar.
 tools/check_sepolicy_rule.sh
-mkdir -p "$OUT"
 BUILD_LOG="$OUT/build.log"
 # Nada de >/dev/null: warning de compilação é sinal, e o único tolerado é o
 # '-static-libstdc++' do NDK 23 (argumento sem uso na linkagem do clang).
