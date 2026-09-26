@@ -70,10 +70,7 @@ run_ndk() {
     fi
     end=$(date +%s)
     elapsed=$((end - start))
-    if [ "$status" -eq 0 ] &&
-        grep -E 'warning:' "$output" |
-            grep -vF "argument unused during compilation: '-static-libstdc++'" |
-            grep -q .; then
+    if [ "$status" -eq 0 ] && grep -E 'warning:' "$output" | grep -q .; then
         status=1
         echo "non-benign compiler warning:" >&2
     fi

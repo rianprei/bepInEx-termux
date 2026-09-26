@@ -45,6 +45,7 @@
 #include "bc_signal.h"    // sinais companion<->poll SEM __system_property_set (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes na janela => não carrega mods (lógica pura)
 #include "bc_elf_symtab.h"   // enumeração de símbolo ELF dinâmico (generalização Cocos2d-x)
+#include "bc_elf_file.h"     // preflight bounded de .dynsym/.dynstr no arquivo
 #include "bc_engine_detect.h" // cascata de detecção de engine Cocos2d-x (generalização)
 #include "bc_generic_allowlist.h" // allowlist de pacote pra generalização atuar (detecta só nesses)
 #include "bc_generic_hook.h" // hook de log genérico (DobbyInstrument) em símbolo Java_* descoberto
@@ -1126,6 +1127,7 @@ static void mod_api_log(bc_log_level level, const char *msg) {
 // run_entry real: sym já foi resolvido via dlsym(handle, "bc_mod_register")
 // pelo bc_loader_load_one — só faz o cast e chama.
 static bool mod_entry_runner(void *api, void *sym) {
+    if (sym == nullptr) return false;
     auto fn = (bc_mod_register_fn)sym;
     return fn((const bc_mod_api *)api);
 }
@@ -1255,17 +1257,24 @@ static void load_dynamic_mods() {
     for (int i = 0; i < n_names; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
-        void *h = ops.dlopen(path, 2 /*RTLD_NOW*/);
-        if (h == nullptr) {
-            LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
+        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(path);
+        if (probe.result == BC_ELF_FILE_ERROR) {
+            LOGW("mod loader: %s — erro lendo ELF (%s), descartado sem abrir",
+                 names[i], strerror(probe.error_number));
+            failed++;
+            continue;
+        }
+        if (probe.result == BC_ELF_FILE_NO_SYMBOL) {
+            LOGW("mod loader: %s — sem bc_mod_register: nao e mod do Battle Cats, "
+                 "descartado sem abrir; mods autonomos vao em /data/local/tmp/mods/<pacote>/",
                  names[i]);
             failed++;
             continue;
         }
-        if (ops.dlsym(h, "bc_mod_register") == nullptr) {
-            LOGW("mod loader: %s — sem símbolo bc_mod_register, não é mod deste loader",
+        void *h = ops.dlopen(path, 2 /*RTLD_NOW*/);
+        if (h == nullptr) {
+            LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
                  names[i]);
-            ops.dlclose(h);
             failed++;
             continue;
         }
@@ -1327,6 +1336,14 @@ static void load_dynamic_mods() {
             int gi = res.order[k];
             int i = idx_map[gi];
             void *sym = ops.dlsym(handles[i], "bc_mod_register");
+            if (sym == nullptr) {
+                LOGW("mod loader: %s — bc_mod_register sumiu apos dlopen, descartado",
+                     names[i]);
+                ops.dlclose(handles[i]);
+                opened[i] = false;
+                failed++;
+                continue;
+            }
             bool active = mod_entry_runner(const_cast<bc_mod_api *>(&api), sym);
             if (active) {
                 LOGI("mod loader: %s carregado e ativo", names[i]);
