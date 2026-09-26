@@ -137,6 +137,16 @@ if [ ! -f "$ROOT/test/selftest_harness.cpp" ]; then
     echo "selftest_harness.cpp ausente: teste central do loader" >&2
 fi
 
+while IFS= read -r test_file; do
+    test_name=${test_file#"$ROOT"/}
+    binary="$TMP/$(basename "$test_file" .cpp)"
+    run_step "host $test_name" "$TIMEOUT_TEST" bash -c '
+        cd "$(dirname "$1")"
+        g++ -std=c++17 -Wall -Wextra -Werror -I jni "$(basename "$1")" -o "$2"
+        "$2"
+    ' bash "$test_file" "$binary"
+done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_closers.cpp' \) -print | sort)
+
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- test/selftest_harness.cpp |

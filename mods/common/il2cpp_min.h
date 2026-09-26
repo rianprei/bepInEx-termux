@@ -56,6 +56,10 @@ struct Il2Cpp {
     uint32_t (*image_get_class_count)(void *);
     void *(*image_get_class)(void *, uint32_t);
     void (*free)(void *);
+    // --- Opcionais (u_noads): classes aninhadas e nomes. Resolução
+    // TOLERANTE no boot: símbolo faltando (il2cpp velho) só desliga o
+    // recurso que usa — quem usa checa != nullptr.
+    void *(*class_get_nested_types)(void *, void **);
     void *domain;
 
     // Classe pelo nome em todas as imagens carregadas.
@@ -170,6 +174,9 @@ static inline bool il2cpp_boot(Il2Cpp &il) {
     IL2CPP_SYM_MAY(type_get_name); IL2CPP_SYM_MAY(field_get_flags);
     IL2CPP_SYM_MAY(image_get_name); IL2CPP_SYM_MAY(image_get_class_count);
     IL2CPP_SYM_MAY(image_get_class); IL2CPP_SYM_MAY(free);
+    // Opcionais (u_noads): nunca derrubam o boot.
+#define IL2CPP_SYM_MAY(f) il.f = (decltype(il.f))dlsym(h, "il2cpp_" #f)
+    IL2CPP_SYM_MAY(class_get_nested_types);
 #undef IL2CPP_SYM_MAY
     // il2cpp_domain_get CRIA o domínio (aloca pelo GC) se ainda não existe:
     // chamado antes do il2cpp_init, crasha o jogo (achado no device com a

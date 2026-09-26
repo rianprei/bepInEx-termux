@@ -28,6 +28,7 @@
 #include <string>
 #include <elf.h>
 #include <cstdarg>
+#include "../mods/u_noads/jni/u_noads_pure.h"
 #include <ctime>
 #include <cerrno>
 #include <atomic>
@@ -2071,6 +2072,14 @@ int main() {
         check("pkg começando com . recusa", !uf_pkg_ok(".foo"));
         check("pkg shell recusa", !uf_pkg_ok("x; id") && !uf_pkg_ok("x$(id)"));
         check("pkg vazio/nulo/zygote recusa", !uf_pkg_ok("") && !uf_pkg_ok(nullptr) && !uf_pkg_ok("zygote64"));
+    }
+
+    printf("\n[Caso 64] u_noads: guarda de prólogo curto\n");
+    {
+        uint32_t prologue[] = {0xD503201Fu, 0xD503201Fu, 0xD65F03C0u};
+        check("ret nos primeiros 3 words recusa hook", !uno_method_fits(prologue));
+        prologue[2] = 0xD503201Fu;
+        check("prólogo sem terminador cabe no trampolim", uno_method_fits(prologue));
     }
 
     printf("\n== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

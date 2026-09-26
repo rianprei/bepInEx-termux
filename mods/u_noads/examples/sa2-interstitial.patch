@@ -1,0 +1,15 @@
+# Exemplo documentado (NÃO é mod genérico): SA2, interstitial forçado.
+#
+# O jogo tem um gate PRÓPRIO (InterstitialAdManager.TryShowInterstitial, 0
+# args, void, instância) que decide exibir o forçado entre fases. Zerar esse
+# método equivale ao hook do sa2content (fake vazio = pula o corpo).
+# Método void: o valor (bool false) é descartado pelo chamador, o ret
+# precoce é o que importa.
+#
+# Dump SA2: M InterstitialAdManager TryShowInterstitial 0 System.Void 0
+# sa2content (mods/sa2content/jni/sa2content_mod.cpp): fake_try_show_*
+#   vazio (só log 1x) via DobbyHook — anúncio forçado some, opcionais ficam.
+#
+# COMO USAR: copie este arquivo pra /data/local/tmp/mods/<pkg>/ (Manager
+# copia) com u_patch.so junto. SÓ vale pro SA2 — não copie pra outro jogo.
+return InterstitialAdManager TryShowInterstitial 0 bool false
