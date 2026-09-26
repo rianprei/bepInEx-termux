@@ -95,7 +95,36 @@ case "$1" in
 esac
 EOF
 chmod 755 "$BINDIR/su" "$BINDIR/adb" "$BINDIR/chown" "$BINDIR/chmod" "$BINDIR/sleep"
-export PATH="$BINDIR:$PATH"
+
+# --- BLINDAGEM: tem celular REAL neste host — NADA pode alcançar adb/su reais.
+# Três camadas independentes:
+#   1. env: um adb REAL, se por azar for invocado, não acha servidor
+#      (ADB_SERVER_SOCKET numa porta sem nada escutando) nem aparelho
+#      (ANDROID_SERIAL inválido);
+#   2. caminho: o kit recebe o adb FALSO por caminho absoluto (ADB=...), não
+#      depende da ordem do PATH;
+#   3. guarda + armadilha: se adb/su não resolverem DENTRO do BINDIR, aborta
+#      antes do primeiro cenário; e um "adb real" falso fica no FINAL do PATH
+#      gravando um marcador se alguém o invocar — o marcador reprova no fim.
+export ANDROID_SERIAL=sim-invalido
+export ADB_SERVER_SOCKET=tcp:127.0.0.1:1
+export ADB="$BINDIR/adb"
+EVILBIN="$ROOT/evilbin"
+EVIL_MARKER="$ROOT/evil-adb-called.marker"
+rm -rf "$EVILBIN"; mkdir -p "$EVILBIN"
+# shellcheck disable=SC2016  # ${EVIL_MARKER} expande no RUNTIME do adb falso, não aqui
+printf '#!/bin/sh\n# armadilha: qualquer caminho que invoque um adb fora do BINDIR grava o marcador.\n# NUNCA executa adb real de verdade.\nprintf x > "${EVIL_MARKER:?}"\nexit 1\n' > "$EVILBIN/adb"
+chmod 755 "$EVILBIN/adb"
+export EVIL_MARKER
+export PATH="$BINDIR:$PATH:$EVILBIN"
+for _tool in adb su; do
+    _p=$(command -v "$_tool" 2>/dev/null || true)
+    case "$_p" in
+        "$BINDIR"/*) ;;
+        *) echo "FALHOU: $_tool resolve para '$_p' (fora de $BINDIR) — abortando antes de qualquer cenário" >&2
+           exit 1 ;;
+    esac
+done
 
 scen "(a) run anterior interrompido: backup sem a pasta de mods"
 # simula o pior caso: o run morreu ENTRE o rm -rf e o mv, então os mods do
@@ -373,6 +402,13 @@ echo "$OUT2" | grep -q "run anterior interrompido detectado" \
 echo "$OUT2" | grep -q "device restaurado" && ok "2º run restaurou" || bad "2º run restaurou"
 [ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário segue lá" || bad "mod do usuário segue lá"
 [ ! -d "$DEV/data/local/tmp/t1-bak-$PKG" ] && ok "sem BAK órfão no fim" || bad "sem BAK órfão no fim"
+
+# --- armadilha do adb "real": o marcador NUNCA pode existir no fim ----------
+# Se QUALQUER caminho (kit, sim, fakes) tiver invocado um adb fora do BINDIR,
+# o falso do FINAL do PATH gravou o marcador e isto reprova. Roda DEPOIS de
+# todos os cenários, cobrindo o run inteiro.
+[ -f "$EVIL_MARKER" ] && bad "adb fora do BINDIR foi invocado (marcador em $EVIL_MARKER)" \
+    || ok "nenhum adb fora do BINDIR foi invocado (marcador ausente)"
 
 if [ -n "${KEEP_SIM_ROOT:-}" ]; then echo "device temporário: $ROOT"; fi
 if [ "$FAILED" = 0 ]; then
