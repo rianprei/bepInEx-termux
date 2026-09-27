@@ -9,6 +9,7 @@
 # Só o .so: .conf/.json são com o Manager (F5). Nada toca arquivos do jogo.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$PWD"
 
 [ $# -eq 2 ] || { echo "uso: $0 <id> <pkg>" >&2; exit 2; }
 id=$1
@@ -21,6 +22,16 @@ NDK_BUILD=${NDK_BUILD:-$HOME/Android/Sdk/ndk/23.2.8568313/ndk-build}
 
 so="mods/$id/libs/arm64-v8a/lib$id.so"
 [ -f "$so" ] || { echo "build não gerou $so" >&2; exit 1; }
+
+# O .so que vai pro DEVICE tem que ser STRIPPED. O ndk-build agora sai
+# não-stripado (jni/repro.mk) para o release ter símbolo de crash, e 1,8 MB de
+# DWARF atravessando adb push é puro atraso. symbols_ship confere que o
+# build-id sobreviveu ao strip, que é o que faz o tombstone do aparelho cruzar
+# com os símbolos guardados.
+. "$ROOT/tools/symbols.sh"
+so_ship="$(mktemp -d)/mod.so"
+symbols_ship "$so" "$so_ship"
+so="$so_ship"
 
 adb wait-for-device
 adb shell su -c true || { echo "su indisponível no device" >&2; exit 1; }

@@ -91,30 +91,16 @@ mkdir -p "$STAGE/zygisk" "$STAGE/META-INF/com/google/android"
 # Aqui o loader é dividido em dois: a cópia não-stripada vai para $SYMBOLS_DIR
 # indexada pelo build-id, e o que segue para o STAGE (e portanto para o zip
 # Magisk e para o device) é o .so STRIPPED — o binário do device não cresce.
-if [ -n "${SYMBOLS_DIR:-}" ]; then
-    # shellcheck source=tools/symbols.sh
-    # shellcheck disable=SC1091
-    . "$ROOT/tools/symbols.sh"
-    # Falha se o .so veio sem symtab: é o sintoma do build-id ter voltado a
-    # depender do diretório, e é melhor falhar aqui do que num crash de usuário.
-    symbols_add "libs/arm64-v8a/libbc-poc.so" "$SYMBOLS_DIR" "libbc-poc" >/dev/null
-    strip_bin="$(symbols_strip_bin)"
-    [ -n "$strip_bin" ] || { echo "ERRO: llvm-strip ausente (instale o NDK)" >&2; exit 1; }
-    "$strip_bin" --strip-unneeded -o "$STAGE/zygisk/arm64-v8a.so" libs/arm64-v8a/libbc-poc.so
-    # Confere que o strip pegou. Um .symtab no stage significa que o símbolo
-    # de volta está indo para o celular.
-    # Sem pipe: `readelf | grep -q` mata o readelf com SIGPIPE no meio da
-    # escrita e o check vira loteria.
-    if "$(symbols_readelf)" -S "$STAGE/zygisk/arm64-v8a.so" >"$STAGE/.sections" 2>/dev/null &&
-       grep -q '\.symtab' "$STAGE/.sections"; then
-        echo "ERRO: o .so do stage ainda tem .symtab — o strip não pegou" >&2
-        rm -f "$STAGE/.sections"
-        exit 1
-    fi
-    rm -f "$STAGE/.sections"
-else
-    cp libs/arm64-v8a/libbc-poc.so "$STAGE/zygisk/arm64-v8a.so"
-fi
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "$ROOT/tools/symbols.sh"
+# symbols_ship faz as duas metades: guarda o não-stripado em symbols/ (quando
+# SYMBOLS_DIR está setado) e escreve o STRIPPED no stage. É o mesmo helper usado
+# por pack_bmod, deploy_mod e manager/build, para não existir um segundo caminho
+# de strip com regra diferente.
+symbols_ship "libs/arm64-v8a/libbc-poc.so" "$STAGE/zygisk/arm64-v8a.so" \
+    "${SYMBOLS_DIR:-}" || exit 1
+
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
 cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \
    module/action.sh "$STAGE/"

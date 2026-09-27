@@ -378,6 +378,20 @@ else
     echo "test/symbols/build_id_repro_test.sh ausente: o build-id volta a depender do diretorio"
 fi
 
+# Nada que sai da máquina pode carregar símbolo. Com APP_STRIP_MODE := none
+# (jni/repro.mk) o .so de build tem ~1,8 MB de DWARF, e TODO consumidor de
+# mods/*/libs/arm64-v8a/*.so passa a ter esse binário na mão: o .bmod que o
+# usuário baixa, o .so do adb push e o u_dump.so nos assets do APK. A etapa
+# gera um mod de verdade (new_mod.sh), empacota em .bmod e confere que o .so
+# entregue está stripped e com o build-id preservado. Diferente = FAIL.
+if [ -f "$ROOT/test/symbols/ship_stripped_test.sh" ]; then
+    run_step "nada entregue leva simbolo" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ship_stripped_test.sh"
+else
+    record "nada entregue leva simbolo (teste ausente)" FAIL 0 1
+    echo "test/symbols/ship_stripped_test.sh ausente: o .so nao-stripado vaza para o .bmod/APK/device"
+fi
+
 # tools/symbolize.sh: o crash do usuário tem que virar função:linha em 1
 # comando. O teste cruza um tombstone sintético, o tombstone REAL do device e
 # o cruzamento histórico do offset 0x1bb34 com o build que o gerou.

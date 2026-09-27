@@ -106,8 +106,6 @@ fi
 # shellcheck source=tools/symbols.sh
 # shellcheck disable=SC1091
 . "$ROOT/tools/symbols.sh"
-STRIP_BIN="$(symbols_strip_bin)"
-[ -n "$STRIP_BIN" ] || { echo "ERRO: llvm-strip ausente: instale o NDK" >&2; exit 1; }
 for mod in sa2ammo sa2content mechabun; do
     (
         cd "$ROOT/mods/$mod"
@@ -115,8 +113,7 @@ for mod in sa2ammo sa2content mechabun; do
     ) >"$WORK/ndk-$mod.log" 2>&1
     so="$ROOT/mods/$mod/libs/arm64-v8a/lib$mod.so"
     [ -f "$so" ] || { echo "ERRO: artefato ausente: $so" >&2; exit 1; }
-    symbols_add "$so" "$RELEASE_DIR/symbols" "lib$mod" >/dev/null
-    "$STRIP_BIN" --strip-unneeded -o "$RELEASE_DIR/mods/$mod.so" "$so"
+    symbols_ship "$so" "$RELEASE_DIR/mods/$mod.so" "$RELEASE_DIR/symbols"
 done
 
 while IFS= read -r bmod; do

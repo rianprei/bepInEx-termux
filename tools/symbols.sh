@@ -96,6 +96,71 @@ symbols_add() {
     printf '%s' "$bid"
 }
 
+# --- entrega (o que vai pro usuário) ----------------------------------------
+# symbols_ship <src-NAO-STRIPPED.so> <dest-que-vai-pro-usuario> [symbols-root]
+#
+# O ndk-build agora sai NÃO-stripado (APP_STRIP_MODE := none em jni/repro.mk),
+# porque sem .symtab/DWARF o .so de release é um offset morto. O preço é que
+# TODO mundo que copia o .so do diretório de build passa a levar o binário
+# gigante: o .bmod que o usuário baixa, o .so que o deploy joga no device, e o
+# u_dump.so embutido nos assets do APK (que cresce ~1,6 MB por .so).
+#
+# Esta função é o ÚNICO lugar onde isso é feito, e ela se recusa a entregar um
+# .so com símbolo. Todo consumidor de libs/arm64-v8a/*.so passa por aqui.
+#
+# Os três invariantes que ela checa, e por quê:
+#   1. dest NÃO tem .symtab — o binário do usuário/device é stripped;
+#   2. dest tem o MESMO build-id do src — o llvm-strip preserva a nota
+#      NT_GNU_BUILD_ID, e é isso que faz o tombstone do device cruzar com os
+#      símbolos guardados. Se um dia o strip mexer no build-id, o crash do
+#      usuário deixa de ter símbolo e a etapa do gate tem que gritar;
+#   3. dest é MENOR que src — strip que não rodou passa em 1 e 2 e falharia
+#      em 3.
+symbols_ship() {
+    local src="$1" dest="$2" root="${3:-}" strip_bin bid_src bid_dst
+    [ -f "$src" ] || { echo "symbols: .so de entrada ausente: $src" >&2; return 1; }
+    strip_bin="$(symbols_strip_bin)"
+    [ -n "$strip_bin" ] || {
+        echo "symbols: llvm-strip ausente (instale o NDK ou ponha no PATH)" >&2
+        return 1
+    }
+    # Guarda o não-stripado ANTES de gerar o stripped, e só quando pediram.
+    if [ -n "$root" ]; then
+        symbols_add "$src" "$root" "$(basename "$src" .so)" >/dev/null || return 1
+    fi
+    mkdir -p "$(dirname "$dest")"
+    "$strip_bin" --strip-unneeded -o "$dest" "$src" || {
+        echo "symbols: strip falhou: $src -> $dest" >&2
+        return 1
+    }
+    # (1) sem símbolo no que vai pro usuário. Saída para arquivo, sem pipe:
+    # `readelf | grep -q` mata o readelf com SIGPIPE e vira loteria (1 em 20).
+    local sec
+    sec="$(mktemp)"
+    "$(symbols_readelf)" -S "$dest" >"$sec" 2>/dev/null || true
+    if grep -q '\.symtab' "$sec"; then
+        rm -f "$sec"
+        echo "symbols: $dest AINDA tem .symtab — o .so do usuário/device não pode" >&2
+        echo "symbols: carregar símbolo. Strip quebrado ou caminho errado." >&2
+        return 1
+    fi
+    rm -f "$sec"
+    # (2) mesmo build-id: é o que liga um crash do device aos símbolos guardados.
+    bid_src="$(symbols_build_id "$src")"
+    bid_dst="$(symbols_build_id "$dest")"
+    if [ -n "$bid_src" ] && [ "$bid_src" != "$bid_dst" ]; then
+        echo "symbols: o strip MUDOU o build-id de $dest ($bid_src -> $bid_dst)." >&2
+        echo "symbols: o tombstone do device deixaria de cruzar com os símbolos." >&2
+        return 1
+    fi
+    # (3) tem que ter encolhido; um strip que não rodou deixaria do mesmo tamanho.
+    if [ "$(stat -c%s "$src")" = "$(stat -c%s "$dest")" ]; then
+        echo "symbols: $dest ficou do mesmo tamanho que $src — o strip não fez nada." >&2
+        return 1
+    fi
+    return 0
+}
+
 # --- consulta ----------------------------------------------------------------
 # symbols_find <root> <build-id> [nome]  -> caminho do .so (ou lista de nomes)
 #

@@ -57,7 +57,14 @@ if [[ ! -f "${U_DUMP_SO}" ]]; then
 fi
 ASSET_DIR="${BUILD_DIR}/assets"
 mkdir -p "${ASSET_DIR}"
-cp "${U_DUMP_SO}" "${ASSET_DIR}/u_dump.so"
+# O u_dump.so vai EMBUTIDO no APK (assets). O ndk-build agora sai não-stripado
+# (jni/repro.mk, para o release ter símbolo de crash), e o APK cresceria ~1,6 MB
+# por causa de DWARF que o celular não usa. symbols_ship gera a cópia stripped
+# e recusa entregar uma com .symtab.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/../tools/symbols.sh"
+symbols_ship "${U_DUMP_SO}" "${ASSET_DIR}/u_dump.so"
 
 # Garante keystore debug se nao existir
 if [[ "${MANAGER_UNSIGNED:-0}" != 1 && ! -f "${KEYSTORE}" ]]; then
