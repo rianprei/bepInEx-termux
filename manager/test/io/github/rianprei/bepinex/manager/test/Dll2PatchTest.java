@@ -32,6 +32,9 @@ public final class Dll2PatchTest {
         DllReader reader = DllReader.parse(dll);
         testFacts(reader);
         testReturnParameterMetadata(reader);
+        check("construtores Harmony externos resolvem o nome do atributo",
+                reader.getCustomAttributes().stream().anyMatch(attribute ->
+                        "HarmonyLib.HarmonyPatch".equals(attribute.typeName())));
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);

@@ -732,7 +732,7 @@ public final class DllReader {
             String parentName = parentTypeName(parent);
             int nameOffset = row + codedSize("MemberRefParent");
             String constructorName = getString(readIndex(nameOffset, "strings"));
-            return parentName.isEmpty() ? constructorName : parentName + "." + constructorName;
+            return parentName.isEmpty() ? constructorName : parentName;
         }
         if (constructor.table == 6) {
             if (methodOwners == null || constructor.rid >= methodOwners.length
