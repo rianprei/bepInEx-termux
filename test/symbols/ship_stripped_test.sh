@@ -37,8 +37,9 @@ WORK=$(mktemp -d)
 # O mod nasce DENTRO do repo (new_mod.sh escreve em mods/<id>/) e sai junto com
 # o trap: um gate que deixa mods/shipchk para trás polui `git status` e
 # quebra o build-id-repro, que tira o snapshot da arvore.
-cleanup() { rm -rf "$WORK" "$ROOT/mods/$TARGET"; }
-trap cleanup EXIT
+# O trap direto, e nao `trap cleanup EXIT`: o shellcheck marca SC2329 numa
+# funcao que so e referenciada pelo trap, e o gate trata finding como FAIL.
+trap 'rm -rf "$WORK" "$ROOT/mods/$TARGET"' EXIT
 fail=0
 
 # shellcheck source=tools/symbols.sh

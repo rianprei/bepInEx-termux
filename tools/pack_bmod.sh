@@ -18,6 +18,8 @@ dir="mods/$id"
 # símbolo aí seria Gift-Wrapping the ELF. symbols_ship também confere que o
 # build-id sobreviveu ao strip — é o que liga um crash do device aos símbolos
 # guardados em symbols/.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
 . "$ROOT/tools/symbols.sh"
 stage="$dir/.bmod-stage"
 rm -rf "$stage"; mkdir -p "$stage"

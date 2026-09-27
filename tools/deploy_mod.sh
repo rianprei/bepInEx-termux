@@ -28,6 +28,8 @@ so="mods/$id/libs/arm64-v8a/lib$id.so"
 # DWARF atravessando adb push é puro atraso. symbols_ship confere que o
 # build-id sobreviveu ao strip, que é o que faz o tombstone do aparelho cruzar
 # com os símbolos guardados.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
 . "$ROOT/tools/symbols.sh"
 so_ship="$(mktemp -d)/mod.so"
 symbols_ship "$so" "$so_ship"
