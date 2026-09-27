@@ -39,7 +39,7 @@ static void *worker(void *) {
     mod_log(TAG, "carregado, esperando libil2cpp.so");
     Il2Cpp il;
     if (!il2cpp_boot(il)) {
-        mod_log(TAG, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
+        mod_log(TAG, "boot IL2CPP falhou; motivo detalhado no log IL2CPP");
         return nullptr;
     }
     // Daqui pra frente: il.find_class("<ns>", "Classe") etc. (il2cpp_min.h).
@@ -56,9 +56,12 @@ __attribute__((constructor)) static void mod_template_init() {
 O `constructor` roda no `dlopen` (feito pelo loader ainda no zygote), por
 isso ele só solta a thread e volta — todo o trabalho pesado espera o
 runtime il2cpp subir dentro da thread. O orçamento total do `il2cpp_boot`
-é de **~240s** (até 120s esperando a `libil2cpp.so` aparecer + até 120s
-esperando o domínio/corlib ficar pronto — ver `il2cpp_min.h`); em jogo
-saudável são poucos segundos.
+é de **240s** para a biblioteca e o runtime juntos, com polling a cada
+200ms e logs periódicos e de desistência com o motivo. Em jogo saudável são
+poucos segundos. O caminho efetivamente usado para abrir a biblioteca
+(`__loader_dlopen` ou fallback `dlopen`) também aparece no log. `u_frida`
+usa um teto menor de 10s e carrega o gadget mesmo sem IL2CPP; scripts que
+dependem de `Il2Cpp.*` precisam do runtime pronto.
 
 ## 2. Build
 
@@ -164,7 +167,7 @@ No `manifest.json` do seu mod:
 ]
 ```
 
-O Manager (em desenvolvimento) vira isso em slider e grava `mult=2` no
+O Manager vira isso em slider e grava `mult=2` no
 `<id>.conf`. No mod: `double mult = mod_conf_float("hello", "mult", 2.0);`.
 Formato do `.conf` e regras do manifest: [BMOD-FORMAT.md](BMOD-FORMAT.md).
 

@@ -1,8 +1,10 @@
 package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.DllReader;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.HarmonyTranslator;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
+import io.github.rianprei.bepinex.manager.model.PatchRule;
 
 import java.io.BufferedReader;
 import java.lang.reflect.InvocationTargetException;
@@ -11,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
@@ -33,40 +34,144 @@ public final class Dll2PatchTest {
         DllReader reader = DllReader.parse(dll);
         testFacts(reader);
         testReturnParameterMetadata(reader);
-        check("construtores Harmony externos resolvem o nome do atributo",
-                reader.getCustomAttributes().stream().anyMatch(attribute ->
-                        "HarmonyLib.HarmonyPatch".equals(attribute.typeName())));
+        testExternalHarmonyAttributes(reader);
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);
+        testDetectorIntegration(dll);
         testFuzz(dll);
         if (failures != 0) throw new AssertionError("Dll2PatchTest falhou com " + failures + " erros");
         System.out.println("  [OK] Dll2PatchTest: todos os testes passaram");
     }
 
+    /**
+     * O tradutor produz TEXTO C4, e o texto nao tem extensao. O que decide o
+     * nome do arquivo instalado e o ModContentDetector, que decide pelo
+     * CONTEUDO. Este teste fecha a ligacao: a saida do tradutor tem que ser
+     * reconhecida como regra e virar &lt;id&gt;.bpatch.
+     *
+     * Sem ele, o tradutor continua correto e o Manager entrega um arquivo com a
+     * extensao errada — e nada no gate acusaria, porque cada lado passa
+     * sozinho.
+     */
+    private static void testDetectorIntegration(byte[] dll) throws Exception {
+        HarmonyTranslator.TranslationResult result = HarmonyTranslator.translate(dll);
+        String text = result.patchText();
+        check("o tradutor produz texto nao vazio", !text.isEmpty());
+
+        // 1. o texto traduzido vira um Sample do detector. O NOME e neutro (o
+        //    id vem do nome), e o CONTEUDO que tem que decidir.
+        ModContentDetector.Sample sample = rulesSample("meu_hack", text);
+        ModContentDetector.Detection d = ModContentDetector.detect(sample, true);
+        check("a saida do tradutor e reconhecida como regra (Kind.PATCH)",
+                d != null && d.kind == ModContentDetector.Kind.PATCH);
+        check("a extensao instalada e a nova (RULES_EXT)",
+                d != null && ModContentDetector.RULES_EXT.equals(d.targetExt));
+        check("o id sai do nome do arquivo", d != null && "meu_hack".equals(d.targetId));
+        check("e instala", d != null && d.installable);
+
+        // 2. o MESMO texto com um nome ".patch" (extensao antiga) tem que dar o
+        //    MESMO resultado: e o que garante que o item 3 do rename continua
+        //    valendo depois que o tradutor entrou.
+        ModContentDetector.Detection legacy = ModContentDetector.detect(
+                rulesSample("meu_hack.patch", text), true);
+        check("com a extensao antiga da o mesmo destino",
+                legacy != null && ModContentDetector.RULES_EXT.equals(legacy.targetExt)
+                        && "meu_hack".equals(legacy.targetId));
+
+        // 3. e sem extensao nenhuma tambem.
+        ModContentDetector.Detection noExt = ModContentDetector.detect(
+                rulesSample("meu_hack_sem_ext", text), true);
+        check("sem extensao da o mesmo destino",
+                noExt != null && ModContentDetector.RULES_EXT.equals(noExt.targetExt));
+
+        // 4. as recusas estritas continuam recusando. O tradutor e对手 de um
+        //    detector permissivo: texto que nao e C4 tem que continuar sendo
+        //    "isto nao e um mod", e nao virar um .bpatch vazio.
+        ModContentDetector.Detection junk = ModContentDetector.detect(
+                rulesSample("lixo.bpatch", "isto aqui nao e regra nenhuma\n"), true);
+        check("texto que nao e C4 continua recusado (nao virou .bpatch)",
+                junk != null && junk.kind == ModContentDetector.Kind.TEXT_OTHER
+                        && !junk.installable);
+
+        // 5. o nome sugerido para quem for gravar o arquivo tem que usar a
+        //    extensao da constante, e nao um literal novo.
+        check("o nome sugerido usa RULES_EXT",
+                ("meu_hack" + ModContentDetector.RULES_EXT)
+                        .equals(ModContentDetector.rulesFileName("meu_hack")));
+    }
+
+    /** A Sample que o detector espera: (fileName, head, text, zip?, frida?). */
+    private static ModContentDetector.Sample rulesSample(String name, String text) {
+        byte[] head = text.getBytes(StandardCharsets.UTF_8);
+        byte[] first = new byte[Math.min(head.length, 64)];
+        System.arraycopy(head, 0, first, 0, first.length);
+        return new ModContentDetector.Sample(name, first, text, false, false, head.length);
+    }
+
     private static void testTranslation(byte[] dll, DllReader reader) throws Exception {
         HarmonyTranslator.TranslationResult result = HarmonyTranslator.translate(dll);
+        // A saída REAL do tradutor vira artefato de gate: este teste grava o
+        // patchText() de verdade em test/fixtures/dll2patch/translator_output.bpatch
+        // e o harness C++ do u_patch ([Caso 80] do upatch_harness.cpp) repassa cada
+        // linha pelas funções REAIS de u_patch_parse.h. Nenhuma réplica Java no meio
+        // do caminho: a gravação vem ANTES das checagens para que o gate C++ julgue
+        // o que o tradutor emitir, mesmo quando alguma checagem daqui falha.
+        Path deviceGatePatch = findPath("test/fixtures/dll2patch/opcodes_table.csv").getParent()
+                .resolve("translator_output.bpatch");
+        byte[] patchBytes = result.patchText().getBytes(StandardCharsets.UTF_8);
+        // Achado #1: o arquivo é COMMITADO e regerado a cada rodada — se nada
+        // conferir, a cópia versionada envelhece em silêncio (o teste sobrescreve
+        // antes de qualquer um ler). A cópia commitada tem que ser EXATAMENTE a
+        // saída de hoje; divergiu, o gate falha e o diff sujo do worktree é a
+        // correção pronta pra commitar junto com o golden novo.
+        byte[] committed = Files.isRegularFile(deviceGatePatch)
+                ? Files.readAllBytes(deviceGatePatch) : new byte[0];
+        check("fixture versionada (translator_output.bpatch) bate com a saída gerada"
+                        + " — commit a nova quando o golden mudar",
+                Arrays.equals(committed, patchBytes));
+        Files.write(deviceGatePatch, patchBytes);
+        check("saída real do tradutor gravada para o gate C++ (translator_output.bpatch)",
+                Arrays.equals(Files.readAllBytes(deviceGatePatch), patchBytes));
         String expected = "# traduzido de Harmony para C4\n"
                 + "return Dll2PatchFixture.GameClass GetHealth 0 int 100\n"
                 + "return Dll2PatchFixture.GameClass GetMana 0 int 50\n"
+                // SEM a linha "static ... MaxScore": o tradutor do uni/dll2patch2
+                // (4207b99) passou a RECUSAR a atribuição static — ela é o
+                // caminho inseguro (escreve num campo que pode ser de
+                // instancia, não estático), e a expectativa antiga ainda pedia
+                // a linha. A semântica do dll2patch2 vence aqui; o lado da
+                // uni/bpatch carregava a expectativa do tradutor mais velho
+                // (70ad114), que ainda emitia static.
                 + "mul Dll2PatchFixture.GameClass GetDamage 0 int 2\n";
-        check("a-d: .patch exatamente esperado", expected.equals(result.patchText()));
+        // "texto C4 traduzido" e não ".patch": o nome da extensão mudou para
+        // .bpatch no rename, e um rótulo de check que diz ".patch" seria uma
+        // ocorrência da extensão velha na varredura final.
+        check("a-d: o texto C4 traduzido e exatamente o esperado",
+                expected.equals(result.patchText()));
 
-        Path c4Fixture = findPath("test/fixtures/c4_lines.tsv");
-        for (String raw : Files.readAllLines(c4Fixture, StandardCharsets.UTF_8)) {
-            String line = raw.split("#", 2)[0].trim();
-            int tab = line.indexOf('\t');
-            if (tab >= 0) {
-                String rule = line.substring(0, tab).trim();
-                boolean expectedDeviceAccept = line.substring(tab + 1).trim().equals("accept");
-                check("u_patch parser replica segue fixture C4: " + rule,
-                        deviceParseLine(rule) == expectedDeviceAccept);
+        // Achado #2: a réplica Java foi removida (049baeb) e com ela a
+        // checagem de que cada regra gerada APONTA para classe/método/campo
+        // que EXISTEM na DLL. Reposta sem réplica: quem quebra a linha em
+        // campos é o PatchGenerator (código de PRODUÇÃO do Manager, o mesmo
+        // que vai rodar no APK) e quem decide a existência é o DllReader
+        // vivo (fullName + paramCount) — nenhum clone do parser do u_patch.
+        for (String generated : result.patchLines()) {
+            List<PatchRule> parsed = PatchGenerator.parse(generated);
+            check("regra gerada é C4 válido para o Manager: " + generated,
+                    parsed.size() == 1);
+            if (parsed.size() == 1) {
+                check("classe/método/campo da regra existem na DLL: " + generated,
+                        targetExistsInDll(parsed.get(0), reader));
             }
         }
-        for (String generated : result.patchLines()) {
-            check("C4 device round-trip: " + generated,
-                    deviceRuleRoundTrips(generated, reader));
-        }
+
+        // A validação do lado do u_patch mora no parser C++ REAL: o Caso 80 do
+        // upatch_harness parseia o translator_output.bpatch gravado acima com
+        // up_parse_line/up_split_class (a mesma fixture compartilhada C4,
+        // test/fixtures/c4_lines.tsv, já corria no harness). A réplica Java do
+        // parser (deviceParseLine & cia.) foi REMOVIDA: clone de parser
+        // divergiria do C++ sem ninguém notar — o gate agora é o próprio C++.
 
         report(result, "GetAmmo", "usa Transpiler");
         report(result, "GetShield", "tem if");
@@ -83,9 +188,9 @@ public final class Dll2PatchTest {
                         || line.contains("GetScore") || line.contains("GetOtherScore")
                         || line.contains("GetNested")));
         String nestedRule = "return Dll2PatchFixture.Outer/Inner GetNested 0 int 1";
-        check("Manager aceita sintaxe C4 aninhada, mas split do u_patch não resolve a classe",
-                PatchGenerator.parse(nestedRule).size() == 1
-                        && !deviceRuleRoundTrips(nestedRule, reader));
+        check("Manager aceita sintaxe C4 aninhada (o Caso 80 do harness C++ prova que "
+                        + "o split do u_patch não resolve essa classe)",
+                PatchGenerator.parse(nestedRule).size() == 1);
 
         DllReader.MethodInfo transpiler = findMethod(reader, "TranspilerCase", "Transpiler");
         check("fixture exercita cabeçalho IL fat", transpiler != null && transpiler.fatHeader());
@@ -97,110 +202,27 @@ public final class Dll2PatchTest {
                 method != null && "bool".equals(method.returnType()) && method.parameters().isEmpty());
     }
 
-    private static boolean deviceRuleRoundTrips(String line, DllReader reader) throws Exception {
-        if (!deviceParseLine(line) || PatchGenerator.parse(line).size() != 1) return false;
-        String[] fields = deviceTokens(line);
-        if (fields.length == 0) return false;
-        String action = fields[0];
-        int valueIndex = ("return".equals(action) || "mul".equals(action)) ? 5 : 4;
-        if (!deviceTokenFits(fields[1], 128) || !deviceTokenFits(fields[2], 128)
-                || !deviceTokenFits(fields[valueIndex], 64)
-                || (fields.length == 7 && !deviceTokenFits(fields[5], 128))) return false;
-        byte[][] classParts = deviceSplitClass(fields[1]);
-        if (classParts == null) return false;
-
+    private static boolean targetExistsInDll(PatchRule rule, DllReader reader)
+            throws DllReader.DllReaderException {
         for (DllReader.TypeInfo type : reader.getTypes()) {
-            if (!Arrays.equals(classParts[0], type.namespace().getBytes(StandardCharsets.UTF_8))
-                    || !Arrays.equals(classParts[1], type.name().getBytes(StandardCharsets.UTF_8))) {
-                continue;
+            if (!type.fullName().equals(rule.targetClass)) continue;
+            if ("return".equals(rule.action) || "mul".equals(rule.action)) {
+                return type.methods().stream().anyMatch(method ->
+                        method.name().equals(rule.member) && method.paramCount() == rule.nargs);
             }
-            if ("return".equals(action) || "mul".equals(action)) {
-                int nargs = parseDeviceNargs(fields[3]);
-                return nargs >= 0 && type.methods().stream().anyMatch(method ->
-                        method.name().equals(fields[2]) && method.paramCount() == nargs);
-            }
-            String member = fields[2];
-            return type.fields().stream().anyMatch(field -> field.name().equals(member));
+            return type.fields().stream().anyMatch(field -> field.name().equals(rule.member));
         }
         return false;
     }
 
-    private static boolean deviceParseLine(String rule) {
-        String[] fields = deviceTokens(rule);
-        if (fields.length == 0) return true;
-        String action = fields[0];
-        int typeIndex;
-        if ("return".equals(action) || "mul".equals(action)) {
-            if (fields.length != 6 || parseDeviceNargs(fields[3]) < 0) return false;
-            typeIndex = 4;
-            if ("mul".equals(action) && "bool".equals(fields[typeIndex])) return false;
-        } else if ("static".equals(action)) {
-            if (fields.length != 5) return false;
-            typeIndex = 3;
-        } else if ("field".equals(action)) {
-            if (fields.length != 5 && fields.length != 7) return false;
-            if (fields.length == 7 && parseDeviceNargs(fields[6]) < 0) return false;
-            typeIndex = 3;
-        } else {
-            return false;
-        }
-        return fields[1].length() > 0 && fields[2].length() > 0
-                && isDeviceType(fields[typeIndex]) && fields[typeIndex + 1].length() > 0;
-    }
-
-    private static String[] deviceTokens(String rule) {
-        if (rule == null) return new String[0];
-        int comment = rule.indexOf('#');
-        String source = comment < 0 ? rule : rule.substring(0, comment);
-        List<String> fields = new ArrayList<>();
-        int cursor = 0;
-        while (cursor < source.length() && fields.size() < 8) {
-            while (cursor < source.length() && isDeviceWhitespace(source.charAt(cursor))) cursor++;
-            if (cursor == source.length()) break;
-            int start = cursor;
-            while (cursor < source.length() && !isDeviceWhitespace(source.charAt(cursor))) cursor++;
-            fields.add(source.substring(start, cursor));
-        }
-        return fields.toArray(String[]::new);
-    }
-
-    private static boolean isDeviceWhitespace(char value) {
-        return value == ' ' || value == '\t' || value == '\r' || value == '\n';
-    }
-
-    private static boolean isDeviceType(String value) {
-        return "bool".equals(value) || "int".equals(value) || "float".equals(value);
-    }
-
-    private static int parseDeviceNargs(String value) {
-        if (value == null || value.isEmpty()) return -1;
-        int result = 0;
-        for (int i = 0; i < value.length(); i++) {
-            char digit = value.charAt(i);
-            if (digit < '0' || digit > '9') return -1;
-            result = result * 10 + digit - '0';
-            if (result > 64) return -1;
-        }
-        return result;
-    }
-
-    private static byte[][] deviceSplitClass(String token) {
-        if (token == null || token.isEmpty()) return null;
-        byte[] bytes = token.getBytes(StandardCharsets.UTF_8);
-        bytes = Arrays.copyOf(bytes, Math.min(bytes.length, 127));
-        int dot = -1;
-        for (int i = 0; i < bytes.length; i++) {
-            if (bytes[i] == '.') dot = i;
-        }
-        byte[] namespace = dot < 0 ? new byte[0] : Arrays.copyOfRange(bytes, 0, dot);
-        byte[] name = dot < 0 ? bytes : Arrays.copyOfRange(bytes, dot + 1, bytes.length);
-        namespace = Arrays.copyOf(namespace, Math.min(namespace.length, 127));
-        name = Arrays.copyOf(name, Math.min(name.length, 127));
-        return name.length == 0 ? null : new byte[][]{namespace, name};
-    }
-
-    private static boolean deviceTokenFits(String token, int capacity) {
-        return token != null && token.getBytes(StandardCharsets.UTF_8).length < capacity;
+    private static void testExternalHarmonyAttributes(DllReader reader) throws Exception {
+        // A fixture referencia HarmonyLib como assembly EXTERNO (harmony-stubs),
+        // como um mod real: os atributos chegam como MemberRefs de construtor
+        // cujo pai é um TypeRef de fora. O DllReader tem que resolver o nome do
+        // ATRIBUTO (HarmonyLib.HarmonyPatch), não do construtor.
+        check("construtores Harmony externos resolvem o nome do atributo",
+                reader.getCustomAttributes().stream().anyMatch(attribute ->
+                        "HarmonyLib.HarmonyPatch".equals(attribute.typeName())));
     }
 
     private static void testFacts(DllReader reader) throws Exception {

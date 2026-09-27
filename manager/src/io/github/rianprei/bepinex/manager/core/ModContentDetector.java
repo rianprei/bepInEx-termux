@@ -19,7 +19,7 @@ import java.util.Set;
 //
 // O que o jogo faz com cada tipo:
 //   - ELF arm64  -> vira <id>.so em mods/<pkg>/ e o loader da dlopen (C1)
-//   - texto C4   -> vira <id>.patch, lido pelo u_patch
+//   - texto C4   -> vira <id>.bpatch, lido pelo u_patch
 //   - texto JS   -> vira <id>.js, lido pelo frida-gadget em modo script (F11)
 //   - .dll       -> NAO roda agora: .NET IL2CPP e F12, .NET Mono e F13, e
 //                   .dll Mono em jogo IL2CPP nao roda de jeito nenhum
@@ -34,12 +34,37 @@ import java.util.Set;
 // APK/OBB/arquivos do jogo: tudo em runtime.
 public final class ModContentDetector {
 
+    // Extensao do arquivo de REGRAS. ".bpatch" e nao ".patch" porque o nome
+    // colidia com o .patch de diff do git e confundia quem olha a pasta de mods
+    // (decisao do usuario, 2026-09-27).
+    //
+    // A constante e o UNICO lugar onde ela mora. Antes ela aparecia escrita em
+    // seis arquivos (o detector, o Mod Maker, o BmodInstaller, o ModInfo, a
+    // tela de detalhe do jogo), e seis literais e uma extensao esperando a
+    // proxima metade do rename. Quem precisa do nome — inclusive o tradutor de
+    // .dll, que produz texto C4 — le daqui ou daqui deriva pelo
+    // ModContentDetector.
+    //
+    // O CONTEUDO decide o tipo, nao o nome: um arquivo C4 valido chamado
+    // "minhas_regras.patch", ou sem extensao nenhuma, e reconhecido e
+    // instalado como <id>.bpatch. Ver as fixtures regras_ext_antiga.patch e
+    // regras_sem_extensao, e os casos da matriz de tipos.
+    public static final String RULES_EXT = ".bpatch";
+
+    // Nome do arquivo de regras para um id. Quem grava o arquivo usa isto em vez
+    // de montar `id + extensao` num literal: o tradutor de .dll (que produz
+    // texto C4), o Mod Maker e o instalador passam pelo mesmo caminho, entao nao
+    // ha como um deles voltar a escrever a extensao antiga.
+    public static String rulesFileName(String id) {
+        return (id == null ? "" : id) + RULES_EXT;
+    }
+
     public enum Kind {
         BMOD,             // zip com manifest.json do formato C2 (pelo CONTEUDO)
         ZIP_PLAIN,        // zip sem manifest.json de pacote .bmod
         ZIP_GAME_CONTAINER, // APK/OBB/XAPK: pacote do jogo, nunca mod
         BEPINEX_PC,       // zip de mod de PC com layout BepInEx: dll do PC;
-                          // traducao para .patch e o futuro (dll2patch)
+                          // traducao para .bpatch e o futuro (dll2patch)
         ELF_ARM64,        // ELF E_AARCH64 (183): mod nativo Android arm64
         ELF_MALFORMED,    // ELF arm64 com cabecalho/PT_LOAD incoerente
         ELF_OTHER_ARCH,   // ELF de outra arquitetura
@@ -55,7 +80,7 @@ public final class ModContentDetector {
         GAME_DATA,        // UnityFS / .pak de Unreal: dado do jogo, nao mod
         SAVE_GAME,        // save do jogador (progresso em JSON)
         BINARY_UNKNOWN,   // binario que nao e nada disso
-        TEXT_OTHER        // texto que nao e .patch nem script
+        TEXT_OTHER        // texto que nao e .bpatch nem script
     }
 
     // Resultado da deteccao: o que e, se instala, e por que (sempre em PT-BR).
@@ -64,7 +89,7 @@ public final class ModContentDetector {
         public final String label;
         public final boolean installable;
         public final String reason;      // por que roda, ou por que nao roda
-        public final String targetExt;   // ".so" / ".patch" / ".js", ou null
+        public final String targetExt;   // ".so" / ".bpatch" / ".js", ou null
         public final String targetId;    // id do arquivo destino, ou null
 
         Detection(Kind kind, String label, boolean installable, String reason,
@@ -171,7 +196,7 @@ public final class ModContentDetector {
                                 + "computador (a pasta BepInEx com plugins está aí dentro). O .dll "
                                 + "dele é feito para o jogo rodando no computador e não funciona "
                                 + "no celular. Em breve vai dar para converter mods simples para o "
-                                + "formato que o celular roda (.patch); por enquanto, procure a "
+                                + "formato que o celular roda (.bpatch); por enquanto, procure a "
                                 + "versão para Android deste mod.", null, null);
             }
             if (looksLikeGameContainer(s)) {
@@ -179,7 +204,7 @@ public final class ModContentDetector {
                 return new Detection(Kind.ZIP_GAME_CONTAINER, what, false,
                         "Isto é o " + what + " do próprio jogo, não um mod. O Manager nunca "
                                 + "modifica arquivo do jogo: nem pacote do aplicativo, nem expansão. "
-                                + "Para instalar mod, escolha o arquivo de mod em si (.so, .patch "
+                                + "Para instalar mod, escolha o arquivo de mod em si (.so, .bpatch "
                                 + "ou .js).", null, null);
             }
             return new Detection(Kind.ZIP_PLAIN, "arquivo compactado (.zip)", false,
@@ -235,7 +260,7 @@ public final class ModContentDetector {
                             "Este .dll é um mod feito para a versão do jogo compilada com IL2CPP "
                                     + "(tipo novo de build). O celular ainda não roda esse formato: não "
                                     + "há como instalar agora. Em breve a conversão de mods simples para "
-                                    + "regras .patch vai cuidar dos casos fáceis; por enquanto, use o "
+                                    + "regras .bpatch vai cuidar dos casos fáceis; por enquanto, use o "
                                     + "mod maker ou procure outra versão do mod.", null, null);
                 }
                 if (engineIl2cpp) {
@@ -243,13 +268,13 @@ public final class ModContentDetector {
                             "Este .dll é um mod da versão de PC do jogo (feita com Mono). O jogo do "
                                     + "seu celular não foi feito nesse formato: o arquivo não roda "
                                     + "aqui, de jeito nenhum. Em breve a conversão de mods simples para "
-                                    + "regras .patch vai cuidar dos casos fáceis; por enquanto, use o "
+                                    + "regras .bpatch vai cuidar dos casos fáceis; por enquanto, use o "
                                     + "mod maker ou procure a versão para Android do mod.", null, null);
                 }
                 return new Detection(Kind.DOTNET_MONO, "mod .dll da versão de PC", false,
                         "Este .dll é um mod da versão de PC do jogo (feita com Mono). Não roda em "
                                 + "nenhum jogo aqui hoje: o celular ainda não tem esse suporte. Em "
-                                + "breve a conversão de mods simples para regras .patch vai cuidar dos "
+                                + "breve a conversão de mods simples para regras .bpatch vai cuidar dos "
                                 + "casos fáceis; por enquanto, use o mod maker.", null, null);
             }
             return new Detection(Kind.PE_NATIVE, "programa de Windows", false,
@@ -288,7 +313,7 @@ public final class ModContentDetector {
                                 + "do jogo.", null, null);
             }
             if (!PatchGenerator.parse(t).isEmpty()) {
-                return installAs(s, ".patch", Kind.PATCH, "regras de mod (.patch)");
+                return installAs(s, RULES_EXT, Kind.PATCH, "regras de mod (" + RULES_EXT + ")");
             }
             if (hasJsMarker(t)) {
                 return installAs(s, ".js", Kind.FRIDA_JS, "script Frida (.js)");
@@ -309,15 +334,15 @@ public final class ModContentDetector {
                                 + "instala mod, então não há o que fazer com ele aqui.", null, null);
             }
             return new Detection(Kind.TEXT_OTHER, "arquivo de texto", false,
-                    "Isto é um arquivo de texto, mas não é um mod: não tem regras de .patch nem "
+                    "Isto é um arquivo de texto, mas não é um mod: não tem regras de .bpatch nem "
                             + "é um script .js. O Manager instala mod em arquivo .so (para Android), "
-                            + ".patch e .js.", null, null);
+                            + ".bpatch e .js.", null, null);
         }
 
         return new Detection(Kind.BINARY_UNKNOWN, "arquivo desconhecido", false,
                 "Não dá para dizer o que é este arquivo: não é pacote de mod (.bmod), nem mod "
                         + "para Android (.so), nem mod de computador (.dll), nem texto de mod "
-                        + "(.patch ou .js).", null, null);
+                        + "(.bpatch ou .js).", null, null);
     }
 
     // Monta a Detection de um tipo que instala como <id><ext>. Nome invalido
@@ -344,7 +369,7 @@ public final class ModContentDetector {
         return new Detection(kind, label, true, "", ext, id);
     }
 
-    // ".so" / ".patch" / ".js" viram id sem extensao. Nulo se nao sobrar
+    // ".so" / ".bpatch" / ".js" viram id sem extensao. Nulo se nao sobrar
     // nada utilizavel (o resto da deteccao explica o motivo).
     public static String baseId(String fileName) {
         if (fileName == null) return null;
@@ -353,7 +378,7 @@ public final class ModContentDetector {
         if (slash >= 0) name = name.substring(slash + 1);
         int dot = name.lastIndexOf('.');
         if (dot > 0) name = name.substring(0, dot);
-        // ".so", ".patch" ou oculto: nao sobra nome de mod, so extensao.
+        // ".so", ".bpatch" ou oculto: nao sobra nome de mod, so extensao.
         if (name.isEmpty() || name.startsWith(".")) return null;
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < name.length(); i++) {

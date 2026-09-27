@@ -3,11 +3,19 @@
 Na pasta do jogo (`/data/local/tmp/mods/<pkg>/`) ficam `meu_mod.js`,
 `frida-gadget.bin` e `frida-gadget.config` (modo `script-directory`
 apontando pra pasta). Este `u_frida.so` SÓ verifica os três e dá `dlopen` no
-binário (depois de esperar o il2cpp se houver — `libil2cpp.so` à vista em
-10s, como o sa2ammo). Sem frida-server, sem patch de APK.
+binário depois de aguardar até 10s pelo boot IL2CPP completo. O gadget carrega
+mesmo se não houver runtime; scripts que usam `Il2Cpp.*` podem não funcionar
+nesse caso. Sem frida-server, sem patch de APK.
 
-**Quem instala hoje: só `tools/deploy_frida.sh`** (PC + adb + su). O Manager
-(F5) ainda não tem código frida — instalar pelo celular, sem PC, é plano.
+**Quem instala hoje:** o Manager já instala o Frida pelo celular — o
+`LooseModInstaller` detecta o gadget e coloca `frida-gadget.bin` +
+`frida-gadget.config` (modo script) na pasta de mods, e o `.js` vai junto.
+Isso nunca foi testado pelo app no celular (experimental). O teste no
+celular foi pelo `tools/deploy_frida.sh` (PC + adb + su).
+
+**Status no celular (2026-09-27):** o frida-gadget 17.19.0 carregou mas
+crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. O projeto usa
+17.18.0, que carregou e rodou o script no POCO C75 + SA2 (experimental).
 
 - **Só modo script.** O config inteiro (até 4KB) tem que ser JSON válido com
   `interaction.type` = `script` ou `script-directory`
@@ -33,7 +41,18 @@ binário (depois de esperar o il2cpp se houver — `libil2cpp.so` à vista em
 - Binário SEM extensão `.so` de propósito: se terminasse em `.so`, o loader
   daria `dlopen` sozinho, sem config — e o gadget travaria o jogo no modo
   padrão (`listen`/`wait`).
-- **G1 — o que é isolado e o que não é.** Falha de CARGA é isolada: sem
+- **Versão do gadget: 17.18.0** (não 17.19.0, 2026-09-27). O 17.19.0 (released
+2026-09-25) crasha com SIGSEGV (null-pointer deref, fault 0x38) durante a própria
+inicialização — antes de qualquer script rodar, dentro do constructor do gadget
+chamado pelo dlopen do u_frida. Provado no POCO C75 + SA2 (Unity 6000.3.13f1):
+crash com script vazio E com console.log. O 17.18.0 (released 2026-09-09) carrega
+sem crash, roda o script e grava o arquivo de teste. O 16.7.19 também funciona,
+mas mantemos o 17.18.0 para preservar a API JS do 17.x (frida-il2cpp-bridge
+usa Module.getGlobalExportByName etc., que não existe no 16.x). Se uma versão
+futura corrigir o bug, o pin em `tools/deps.lock` pode ser atualizado com a
+mesma prova (trocar, testar no device, conferir sha256).
+
+**G1 — o que é isolado e o que não é.** Falha de CARGA é isolada: sem
   `.js`/`.bin`/config válido ou `dlopen` falhando, o u_frida loga e o jogo
   segue. SCRIPT que crasha NÃO é isolado: o `.js` roda dentro do processo do
   jogo, e crash nativo ali derruba o jogo (mesmo limite do loader —

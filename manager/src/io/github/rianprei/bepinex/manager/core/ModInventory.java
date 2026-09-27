@@ -30,8 +30,77 @@ public final class ModInventory {
     private static final String BEGIN = "bepinex-mods-begin";
     private static final String END = "bepinex-mods-end";
 
+    // As extensoes que o motor le, e o sufixo de "desligado". Os COMPRIMENTOS
+    // usados para cortar o nome sao SEMPRE destas strings — nunca um numero
+    // escrito a mao.
+    //
+    // ACHADO (revisao do Maestro em 800aba9): GameDetailActivity cortava o id
+    // com numeros soltos — "- 6" para ".bpatch" e "- 10" para ".bpatch.off" —
+    // e ".bpatch" tem 7 e ".bpatch.off" tem 11. "t1.bpatch" virava id "t1.", e
+    // o nome que o Manager montava de volta ("t1..bpatch") nao existia no
+    // aparelho. Efeito: TODO mod de regras na tela do jogo aparecia com o nome
+    // errado, nao achava o <id>.json nem o <id>.conf, e ligar/desligar/apagar
+    // miravam um arquivo inexistente. Era o MESMO bug que o loader tinha, e o
+    // MESMO motivo de passar: o gate nao executava aquele parse.
+    public static final String NATIVE_EXT = ".so";
+    public static final String OFF_SUFFIX = ".off";
+
+    /**
+     * Um arquivo de mod de /data/local/tmp/mods/&lt;pkg&gt;/ lido do NOME.
+     *
+     * @param id      nome do mod (sem extensao, sem .off)
+     * @param type    "native" (.so) ou "patch" (regras)
+     * @param enabled false quando o nome tem o sufixo .off
+     */
+    public record ModFile(String id, String type, boolean enabled) {
+        public boolean isRules() { return "patch".equals(type); }
+    }
+
+    /**
+     * Nome -> (id, type, enabled). É o INVERSO de {@link #modFileName}.
+     *
+     * Devolve null para o que não é arquivo de mod: .conf, .json, manifest e —
+     * importante — a extensão antiga ".patch", que o motor não lê mais. O
+     * chamador ignora o que não reconhece, em vez de inventar um id.
+     *
+     * A ordem é .off PRIMEIRO, e não por acaso: o corte do sufixo é o que
+     * sobra do nome, e o resto é a extensão. Testar a extensão antes deixaria
+     * "t1.bpatch.off" passar como se fosse um id com ponto.
+     */
+    public static ModFile parseModFileName(String name) {
+        if (name == null || name.isEmpty()) return null;
+        String rest = name;
+        boolean enabled = true;
+        if (rest.endsWith(OFF_SUFFIX) && rest.length() > OFF_SUFFIX.length()) {
+            enabled = false;
+            rest = rest.substring(0, rest.length() - OFF_SUFFIX.length());
+        }
+        String type;
+        String ext;
+        if (rest.endsWith(NATIVE_EXT)) {
+            type = "native";
+            ext = NATIVE_EXT;
+        } else if (rest.endsWith(ModContentDetector.RULES_EXT)) {
+            type = "patch";
+            ext = ModContentDetector.RULES_EXT;
+        } else {
+            return null;
+        }
+        String id = rest.substring(0, rest.length() - ext.length());
+        // ".bpatch" (ou ".so") sozinho não tem id: recusado, para não criar um
+        // mod sem nome.
+        if (id.isEmpty()) return null;
+        return new ModFile(id, type, enabled);
+    }
+
+    /** (id, type, enabled) -> nome. O par perfeito de {@link #parseModFileName}. */
+    public static String modFileName(String id, String type, boolean enabled) {
+        String ext = "native".equals(type) ? NATIVE_EXT : ModContentDetector.RULES_EXT;
+        return id + ext + (enabled ? "" : OFF_SUFFIX);
+    }
+
     public static final class Counts {
-        public final int total;    // .so/.patch, ligadas ou desligadas
+        public final int total;    // .so/.bpatch, ligadas ou desligadas
         public final int active;   // ligadas (sem o sufixo .off)
 
         Counts(int total, int active) {
@@ -63,7 +132,7 @@ public final class ModInventory {
         // Quatro globs explícitos em vez de "$d"* : nome com espaço continua
         // inteiro (o diretório está entre aspas e o globo é o sufixo), e
         // pasta vazia não vira o literal do padrão.
-        sb.append("for f in \"$d\"*.so \"$d\"*.patch \"$d\"*.so.off \"$d\"*.patch.off; do ");
+        sb.append("for f in \"$d\"*.so \"$d\"*.bpatch \"$d\"*.so.off \"$d\"*.bpatch.off; do ");
         sb.append("[ -f \"$f\" ] || continue; ");
         sb.append("case \"$f\" in *.off) t=$((t+1)) ;; *) t=$((t+1)); a=$((a+1)) ;; esac; ");
         sb.append("done; ");

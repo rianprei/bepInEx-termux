@@ -1,4 +1,4 @@
-// u_patch — motor declarativo (FASE F4): lê todo *.patch + <id>.conf de
+// u_patch — motor declarativo (FASE F4): lê todo *.bpatch + <id>.conf de
 // /data/local/tmp/mods/<pkg>/ e aplica as regras C4 (return/mul/static).
 // Regra que não resolve vira log e o jogo segue. Nada de offset fixo: tudo
 // sai da API il2cpp exportada. Log mínimo próprio (F2 dá mod_common.h e a
@@ -23,14 +23,20 @@
 #include "u_patch_arm64.h"
 #include "u_patch_dedupe.h"
 #include "u_patch_resolve.h"
+#include "u_patch_pkg.h"
 
 #define UP_TAG "u_patch"
+// A extensão do arquivo de regras mora em u_patch_parse.h (UP_PATCH_EXT), junto
+// das funções puras que decidem o que é regra e qual é o id. Ela saiu daqui
+// porque o scan é lógica de string e precisa de teste de host: com ela no .cpp,
+// o gate passava mesmo com o loader procurando a extensão antiga.
 #define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
 
-static char up_pkg[128];
-static char up_dir[320];
+static char up_pkg[UP_PACKAGE_CAP];
+static char up_dir[UP_MODS_DIR_CAP];
+static bool up_pkg_rejected;
 
 // Log C1: mod_common (SDK F2). up_log próprio saiu: ele rotacionava
 // log.txt->log.txt.1 a cada linha acima de 256KB enquanto o loader e o
@@ -50,6 +56,17 @@ static void up_log(const char *fmt, ...) {
     mod_log(UP_TAG, "%s", msg);
 }
 
+static bool up_set_pkg(const char *candidate) {
+    enum bc_process_status status = upatch_package_prepare(
+        candidate, up_pkg, sizeof(up_pkg), up_dir, sizeof(up_dir));
+    if (status != BC_PROCESS_READY) {
+        up_log("pacote recusado: %s", bc_process_status_name(status));
+        up_pkg_rejected = true;
+        return false;
+    }
+    return true;
+}
+
 // Pacote (C1): env do loader primeiro; fallback cmdline com RETRY real —
 // no constructor ainda é zygote64 (achado device), então o worker re-tenta
 // a cada 1s até o cmdline virar o do app. Sem pthread_once (o fallback
@@ -58,24 +75,15 @@ static void up_log(const char *fmt, ...) {
 static bool up_read_pkg() {
     const char *env = getenv("BEPINEX_PKG");
     if (env && env[0] && !up_is_zygote(env)) {
-        snprintf(up_pkg, sizeof(up_pkg), "%s", env);
-        snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
-        return true;
+        return up_set_pkg(env);
     }
     FILE *f = fopen("/proc/self/cmdline", "r");
     if (!f) return false;
-    char cmd[128] = {};
+    char cmd[BC_PROCESS_PACKAGE_CAP + 1] = {};
     size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
     fclose(f);
     if (n == 0 || up_is_zygote(cmd)) return false;
-    snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
-    snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
-    return true;
-}
-
-static bool up_ends_with(const char *name, const char *suf) {
-    size_t nl = strlen(name), sl = strlen(suf);
-    return nl >= sl && strcmp(name + nl - sl, suf) == 0;
+    return up_set_pkg(cmd);
 }
 
 // Lê arquivo inteiro (até 64KB). Retorna malloc'd, *len = tamanho.
@@ -83,7 +91,7 @@ static bool up_ends_with(const char *name, const char *suf) {
 
 // Lê o arquivo inteiro (até UP_FILE_MAX). Retorna malloc'd, *len = tamanho.
 // Se *truncated vier não-nulo, ganha 1 quando o arquivo era MAIOR que o teto:
-// sem esse aviso um .patch de 200KB entrava pela metade e o usuário via metade
+// sem esse aviso um .bpatch de 200KB entrava pela metade e o usuário via metade
 // das regras sem efeito e nenhum log (achado #5 do review).
 static char *up_read_file(const char *path, size_t *len, bool *truncated) {
     if (truncated) *truncated = false;
@@ -223,7 +231,7 @@ static void up_mark(const char *sig, uint8_t state) {
     if (!up_table_full_logged) {
         up_table_full_logged = true;
         up_log("tabela de %d regras cheia: regras novas NÃO são lembradas (não voltam a ser "
-               "aplicadas nem logadas a cada 2s). Reduza o .patch ou divida em mais arquivos.",
+               "aplicadas nem logadas a cada 2s). Reduza o .bpatch ou divida em mais arquivos.",
                UP_APPLIED_MAX);
     }
 }
@@ -573,7 +581,7 @@ static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, co
     return true;
 }
 
-// Corpo de UMA linha do .patch (chamado por up_foreach_line, que garante o
+// Corpo de UMA linha do .bpatch (chamado por up_foreach_line, que garante o
 // avanço — o loop infinito em linha vazia do review não tem mais onde
 // nascer, e o Caso 70 do harness conta as linhas visitadas).
 struct up_line_ctx {
@@ -642,7 +650,7 @@ static int up_line_apply(char *line, int lineno, void *vctx) {
     return 0;  // pr == 1 (vazia/comentário) só não entra no bloco acima
 }
 
-// Uma passada: lê todo *.patch (menos *.off) + <id>.conf, aplica regra nova.
+// Uma passada: lê todo *.bpatch (menos *.off) + <id>.conf, aplica regra nova.
 // Retorna quantas regras aplicou.
 static int up_scan_apply(const Il2Cpp &il) {
     int applied = 0;
@@ -651,21 +659,28 @@ static int up_scan_apply(const Il2Cpp &il) {
     if (n < 0) return 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
-        bool is_patch = up_ends_with(name, ".patch") && !up_ends_with(name, ".off");
-        if (!is_patch) { free(ents[i]); continue; }
+        if (!up_is_patch_file(name)) { free(ents[i]); continue; }
         char id[128] = {};
-        size_t baselen = strlen(name) - 6;  // tira ".patch"
-        if (baselen >= sizeof(id)) baselen = sizeof(id) - 1;
-        memcpy(id, name, baselen);
+        // O id vem do helper puro, e nao de `strlen(name) - N`: o N era o
+        // comprimento da extensao escrito a mao, e trocar a extensao sem o N
+        // deixava o id com um caractere a mais e o <id>.conf do mod sumia em
+        // silencio.
+        if (!up_patch_id_from_name(name, id, sizeof(id))) { free(ents[i]); continue; }
         char ppath[448], cpath[448];
-        snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
-        snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
+        int ppath_n = snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
+        int cpath_n = snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
+        if (ppath_n <= 0 || (size_t)ppath_n >= sizeof(ppath) ||
+            cpath_n <= 0 || (size_t)cpath_n >= sizeof(cpath)) {
+            up_log("%s: caminho do arquivo/config longo demais; ignorando", name);
+            free(ents[i]);
+            continue;
+        }
         bool trunc = false;
         char *pbuf = up_read_file(ppath, nullptr, &trunc);
         char *cbuf = up_read_file(cpath, nullptr, nullptr);  // .conf opcional
         if (!pbuf) { free(ents[i]); free(cbuf); continue; }
         if (trunc) {
-            // #5: sem este aviso, um .patch de 200KB entrava pela metade e o
+            // #5: sem este aviso, um .bpatch de 200KB entrava pela metade e o
             // usuário via metade das regras sem efeito nenhum.
             up_log("%s: arquivo maior que %d bytes — truncado em %d, as regras depois "
                    "desse byte NAO foram lidas", name, UP_FILE_MAX, UP_FILE_MAX);
@@ -730,23 +745,28 @@ static void up_reapply_statics(Il2Cpp &il) {
 static void *up_worker(void *) {
     // O constructor pode ter rodado ainda no zygote (sem env e com cmdline
     // inútil): RETRY REAL — re-tenta cmdline a cada 1s até sair de zygote*.
-    // Teto de 120s, mesmo orçamento do il2cpp_boot logo abaixo. O retry sem
-    // teto (achado #8 do review) deixava a thread viva para sempre num
-    // processo que nunca especializa, com 1 linha de log por minuto.
+    // Teto de 120s só para resolver o pacote; il2cpp_boot tem deadline
+    // separado. O retry sem teto (achado #8 do review) deixava a thread viva
+    // para sempre num processo que nunca especializa, com 1 linha de log por minuto.
     int waits = 0;
-    while (!up_pkg[0] && !up_read_pkg() && waits < 120) {
+    while (!up_pkg[0] && !up_pkg_rejected && waits < 120) {
+        if (up_read_pkg() || up_pkg_rejected) break;
         if (waits == 0) up_log("sem BEPINEX_PKG nem cmdline de app ainda, aguardando (teto 120s)");
         sleep(1);
         waits++;
     }
+    if (up_pkg_rejected) {
+        up_log("pacote/path não cabe ou é inválido; u_patch não aplica nada");
+        return nullptr;
+    }
     if (!up_pkg[0]) {
         up_log("pacote (C1) não resolveu em 120s — u_patch não aplica nada; "
-               "o jogo segue sem os mods deste .patch");
+               "o jogo segue sem os mods deste .bpatch");
         return nullptr;
     }
     up_log("carregado, esperando libil2cpp.so");
     Il2Cpp il;
-    if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo"); return nullptr; }
+    if (!il2cpp_boot(il)) { up_log("boot IL2CPP falhou; consulte o log do mod para o motivo"); return nullptr; }
     // Página RX pros thunks mul (código separado dos dados).
     up_thunk_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

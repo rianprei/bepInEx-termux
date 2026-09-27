@@ -17,6 +17,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include <unistd.h>
 #include "../mods/common/mod_common.h"
 
@@ -39,18 +40,38 @@ int main(int argc, char **argv) {
         check("pkg comum aceito", mod_pkg_from_cmdline("com.foo.bar", 12, out, sizeof(out)) && strcmp(out, "com.foo.bar") == 0);
         char multi[] = "com.foo\0--arg";
         check("cmdline para no 1º NUL", mod_pkg_from_cmdline(multi, sizeof(multi), out, sizeof(out)) && strcmp(out, "com.foo") == 0);
+        char process_name[] = "com.foo:unity";
+        check("sufixo de processo vira pacote base",
+              mod_pkg_from_cmdline(process_name, sizeof(process_name), out, sizeof(out)) &&
+              strcmp(out, "com.foo") == 0);
+        const std::string max_package(BC_PROCESS_PACKAGE_CAP - 1, 'x');
+        char full_out[BC_PROCESS_PACKAGE_CAP] = {};
+        check("fallback aceita nome no limite sem truncar",
+              mod_pkg_from_cmdline(max_package.c_str(), max_package.size(),
+                                   full_out, sizeof(full_out)) &&
+              max_package == full_out);
+        const std::string oversized(BC_PROCESS_PACKAGE_CAP, 'x');
+        check("fallback recusa nome acima do limite",
+              !mod_pkg_from_cmdline(oversized.c_str(), oversized.size(),
+                                    full_out, sizeof(full_out)));
     }
 
     printf("[mod_pkg] (C1: env BEPINEX_PKG, fallback cmdline)\n");
     {
         unsetenv("BEPINEX_PKG");
+        char expected[BC_PROCESS_PACKAGE_CAP] = {};
+        const bool argv_is_package =
+            bc_process_copy_from_nice_name(argv[0], expected, sizeof(expected)) == BC_PROCESS_READY;
         const char *fb = mod_pkg();
-        check("fallback cmdline = argv[0]", fb != nullptr && strcmp(fb, argv[0]) == 0);
+        check("fallback cmdline aceita só um nome de pacote",
+              argv_is_package ? fb != nullptr && strcmp(fb, expected) == 0 : fb == nullptr);
         check("fallback cacheado (mesmo ponteiro)", mod_pkg() == fb);
         setenv("BEPINEX_PKG", "com.env.pkg", 1);
         check("env BEPINEX_PKG vence", strcmp(mod_pkg(), "com.env.pkg") == 0);
         unsetenv("BEPINEX_PKG");
-        check("sem env volta pro cache (argv[0])", strcmp(mod_pkg(), argv[0]) == 0);
+        check("sem env volta ao resultado validado do cmdline",
+              argv_is_package ? mod_pkg() != nullptr && strcmp(mod_pkg(), expected) == 0
+                              : mod_pkg() == nullptr);
     }
 
     printf("[mod_dir] (C1)\n");

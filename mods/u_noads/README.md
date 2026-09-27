@@ -1,6 +1,6 @@
 # u_noads — supressão forçada de interstitial/app-open (F11b)
 
-Lê `*.patch`/`.conf`? Não: este é um mod autônomo. Ele hooka os `Show` de
+Lê `*.bpatch`/`.conf`? Não: este é um mod autônomo. Ele hooka os `Show` de
 interstitial/app-open de 6 SDKs e **dispara o mesmo fechamento que o SDK
 dispararia** ao fechar o anúncio. Rewarded fica de fora por escopo.
 

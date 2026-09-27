@@ -11,7 +11,7 @@ superfície não mata o jogo.
 
 | alvo | header real | entrada de usuário |
 |---|---|---|
-| `c4_line` | `mods/u_patch/jni/u_patch_parse.h` | linhas `.patch`/`.conf` do u_patch (contrato C4) |
+| `c4_line` | `mods/u_patch/jni/u_patch_parse.h` | linhas `.bpatch`/`.conf` do u_patch (contrato C4) |
 | `elf_preflight` | `jni/bc_elf_file.h` (+ `bc_elf_symtab.h`) | o `.so` do disco, antes do `dlopen`; inclui a guarda de SONAME do frida-gadget |
 | `frida_config` | `mods/u_frida/jni/u_frida_config.h` | o `frida-gadget.config`; `uf_config_is_script_mode` decide se o gadget entra (o default dele, `listen` + `on_load=wait`, **congela o jogo**) |
 | `selmix` | `jni/bc_mods_conf.h`, `bc_signal.h`, `bc_pattern_scan.h`, `bc_generic_allowlist.h`, `bc_crashguard.h`, `mods/common/dump_core.h`, `mods/u_patch/jni/u_patch_dedupe.h` | o resto da superfície de string que o `selftest_harness.cpp` já exercita com dado externo |

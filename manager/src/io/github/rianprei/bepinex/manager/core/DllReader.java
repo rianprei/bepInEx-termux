@@ -325,6 +325,9 @@ public final class DllReader {
             int paramRow = tableRow(8, paramRid);
             int sequence = u16(paramRow + 2);
             if (sequence == 0) {
+                // Param de sequência zero é metadado do RETORNO (ex.: [return:
+                // MarshalAs]) — pode existir sem ser argumento. Validado em
+                // separado e fora do binding de argumentos.
                 if (returnParameterSeen) {
                     throw error("sequência Param de retorno duplicada no método " + name);
                 }
@@ -732,6 +735,8 @@ public final class DllReader {
             String parentName = parentTypeName(parent);
             int nameOffset = row + codedSize("MemberRefParent");
             String constructorName = getString(readIndex(nameOffset, "strings"));
+            // Construtor MemberRef de assembly REFERENCIADO (HarmonyLib externo):
+            // o nome do atributo é o TIPO declarante — o ".ctor" do final não.
             return parentName.isEmpty() ? constructorName : parentName;
         }
         if (constructor.table == 6) {
