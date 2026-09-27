@@ -27,9 +27,13 @@ adb shell su -c true || { echo "su indisponível no device" >&2; exit 1; }
 
 mods=/data/local/tmp/mods
 stage=/data/local/tmp/.deploy.$id.$$
-adb shell su -c "mkdir -p $mods/$pkg && chmod 755 $mods $mods/$pkg"
+# ENTREGA VIA STDIN (padrão do device_test.sh): `adb shell su -c "A && B"`
+# re-divide os args no device — o su roda só "A" como root e o resto roda como
+# shell (chmod/rm/chcon com Permission denied; achado real no device nesta
+# rodada, POCO C75). Pelo stdin o comando chega inteiro.
+printf '%s\n' "mkdir -p $mods/$pkg && chmod 755 $mods $mods/$pkg" | adb shell su
 adb push "$so" "$stage"
-adb shell su -c "cp $stage $mods/$pkg/$id.so && rm -f $stage && chmod 644 $mods/$pkg/$id.so && chcon u:object_r:bepinex_mod_file:s0 $mods/$pkg/$id.so"
+printf '%s\n' "cp $stage $mods/$pkg/$id.so && rm -f $stage && chmod 644 $mods/$pkg/$id.so && chcon u:object_r:bepinex_mod_file:s0 $mods/$pkg/$id.so" | adb shell su
 
 # Reinicia o processo do jogo pra recarregar os mods.
 adb shell am force-stop "$pkg"
