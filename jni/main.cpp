@@ -52,6 +52,7 @@
 #include "bc_mod_graph.h"  // grafo de dependência entre mods (requires/conflicts, topo-sort determinístico)
 #include "bc_pattern_scan.h"  // AOB scan — resolve endereço por bytes, sobrevive recompile do jogo
 #include "bc_path_decide.h" // decide_path (F1): caminho do app por pasta de mods/allowlist, núcleo puro
+#include "bc_process.h" // pacote canônico + filtro de processo (host-testável)
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -1633,8 +1634,9 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
 // thread, espera a lib do jogo e instala o que precisa). Roda antes da
 // detecção de engine porque jogo Unity/IL2CPP não expõe Java_* (a detecção
 // cairia em dormant e o mod nunca carregaria).
-static void pkg_mods_dir(const char *pkg, char *dir, size_t size) {
-    snprintf(dir, size, "/data/local/tmp/mods/%s", pkg);
+static bool pkg_mods_dir(const char *pkg, char *dir, size_t size) {
+    int n = snprintf(dir, size, "/data/local/tmp/mods/%s", pkg);
+    return n > 0 && (size_t)n < size;
 }
 
 // Pacote com pasta de mods própria = mods autônomos cuidam de tudo: sem
@@ -1643,7 +1645,7 @@ static void pkg_mods_dir(const char *pkg, char *dir, size_t size) {
 // 3s depois de abrir).
 static bool has_pkg_mods_dir(const char *pkg) {
     char dir[320];
-    pkg_mods_dir(pkg, dir, sizeof(dir));
+    if (!pkg_mods_dir(pkg, dir, sizeof(dir))) return false;
     struct stat st;
     return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
 }
@@ -1661,13 +1663,14 @@ static bc_path_kind g_path_kind = BC_PATH_NONE;
 // --- F1d: crashguard ----------------------------------------------------------
 // State dir do jogo (contrato C1). Por pkg, porque o caminho BC tem pkg fixo e
 // o genérico tem o do jogo atual.
-static void state_dir_pkg(const char *pkg, char *out, size_t outsz) {
-    snprintf(out, outsz, "/data/data/%s/files/bepinex", pkg);
+static bool state_dir_pkg(const char *pkg, char *out, size_t outsz) {
+    int n = snprintf(out, outsz, "/data/data/%s/files/bepinex", pkg);
+    return n > 0 && (size_t)n < outsz;
 }
 
 static void state_dir_ensure(const char *pkg) {
     char dir[320];
-    state_dir_pkg(pkg, dir, sizeof(dir));
+    if (!state_dir_pkg(pkg, dir, sizeof(dir))) return;
     char *slash = strrchr(dir, '/');
     if (slash == nullptr) return;
     *slash = '\0';
@@ -1679,9 +1682,10 @@ static void state_dir_ensure(const char *pkg) {
 // Lê "<count> <ts>"; ausente/corrompido = 0 (fail-safe: não bloqueia).
 static void crashguard_read(const char *pkg, int *count, long long *ts) {
     char path[384];
-    snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
     *count = 0;
     *ts = 0;
+    int n = snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return;
     FILE *f = fopen(path, "r");
     if (f == nullptr) return;
     int c = 0;
@@ -1694,7 +1698,8 @@ static void crashguard_read(const char *pkg, int *count, long long *ts) {
 static void crashguard_write(const char *pkg, int count, long long ts) {
     state_dir_ensure(pkg);
     char path[384];
-    snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
+    int n = snprintf(path, sizeof(path), "/data/data/%s/files/bepinex/crashguard", pkg);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return;
     FILE *f = fopen(path, "w");
     if (f == nullptr) return;
     fprintf(f, "%d %lld\n", count, ts);
@@ -1703,7 +1708,7 @@ static void crashguard_write(const char *pkg, int count, long long ts) {
 
 // Zera o contador depois de sobreviver à janela: o jogo ficou de pé, a morte
 // anterior (ou a atual) não tem relação com mod.
-struct crashguard_clear_arg { char pkg[128]; };
+struct crashguard_clear_arg { char pkg[BC_PROCESS_PACKAGE_CAP]; };
 static void *crashguard_clear_thread(void *arg) {
     crashguard_clear_arg *a = (crashguard_clear_arg *)arg;
     sleep(BC_CRASHGUARD_WINDOW_S);
@@ -1722,7 +1727,8 @@ static bool crashguard_gate(const char *pkg, const char *tag) {
     if (bc_crashguard_blocks(count, ts, now)) {
         char mark[384];
         state_dir_ensure(pkg);
-        snprintf(mark, sizeof(mark), "/data/data/%s/files/bepinex/disabled_by_crashguard", pkg);
+        int n = snprintf(mark, sizeof(mark), "/data/data/%s/files/bepinex/disabled_by_crashguard", pkg);
+        if (n <= 0 || (size_t)n >= sizeof(mark)) return true;
         FILE *m = fopen(mark, "w");
         if (m != nullptr) fclose(m);
         char msg[256];
@@ -1735,7 +1741,10 @@ static bool crashguard_gate(const char *pkg, const char *tag) {
     crashguard_write(pkg, bc_crashguard_next_count(count, ts, now), now);
     crashguard_clear_arg *a = (crashguard_clear_arg *)malloc(sizeof(*a));
     if (a != nullptr) {
-        snprintf(a->pkg, sizeof(a->pkg), "%s", pkg);
+        if (!bc_process_copy_package(pkg, strlen(pkg), a->pkg, sizeof(a->pkg))) {
+            free(a);
+            return false;
+        }
         pthread_t t;
         if (pthread_create(&t, nullptr, crashguard_clear_thread, a) == 0) pthread_detach(t);
         else free(a);
@@ -1766,19 +1775,31 @@ static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...)
     // o mkdir do filho falha com ENOENT e o log some inteiro. 0771 é a
     // permissão que o próprio Android dá pro files dir do app.
     char files_dir[320];
-    snprintf(files_dir, sizeof(files_dir), "/data/data/%s/files", pkg);
+    int n = snprintf(files_dir, sizeof(files_dir), "/data/data/%s/files", pkg);
+    if (n <= 0 || (size_t)n >= sizeof(files_dir)) {
+        pkg_log_broken(pkg, files_dir, ENAMETOOLONG);
+        return;
+    }
     if (mkdir(files_dir, 0771) != 0 && errno != EEXIST) {
         pkg_log_broken(pkg, files_dir, errno);
         return;
     }
     char dir[336];
-    snprintf(dir, sizeof(dir), "%s/bepinex", files_dir);
+    n = snprintf(dir, sizeof(dir), "%s/bepinex", files_dir);
+    if (n <= 0 || (size_t)n >= sizeof(dir)) {
+        pkg_log_broken(pkg, files_dir, ENAMETOOLONG);
+        return;
+    }
     if (mkdir(dir, 0700) != 0 && errno != EEXIST) {
         pkg_log_broken(pkg, dir, errno);
         return;
     }
     char path[352];
-    snprintf(path, sizeof(path), "%s/log.txt", dir);
+    n = snprintf(path, sizeof(path), "%s/log.txt", dir);
+    if (n <= 0 || (size_t)n >= sizeof(path)) {
+        pkg_log_broken(pkg, dir, ENAMETOOLONG);
+        return;
+    }
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0) {
         pkg_log_broken(pkg, path, errno);
@@ -1794,7 +1815,7 @@ static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(body, sizeof(body), fmt, ap);
     va_end(ap);
-    int n = snprintf(line, sizeof(line), "%s [%s] %s\n", stamp, tag, body);
+    n = snprintf(line, sizeof(line), "%s [%s] %s\n", stamp, tag, body);
     if (n > 0) write(fd, line, (size_t)n);
     close(fd);
 }
@@ -1802,7 +1823,10 @@ static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...)
 // Retorna quantos mods carregaram.
 static int load_generic_pkg_mods(const char *pkg) {
     char dir[320];
-    pkg_mods_dir(pkg, dir, sizeof(dir));
+    if (!pkg_mods_dir(pkg, dir, sizeof(dir))) {
+        LOGE("%s: caminho da pasta de mods longo demais; mods recusados", pkg);
+        return 0;
+    }
     // Ordem alfabética (igual BC_MODS_DIR): readdir sozinho não garante
     // ordem, e mod que depende de outro precisa de carga determinística.
     struct dirent **ents = nullptr;
@@ -1828,7 +1852,12 @@ static int load_generic_pkg_mods(const char *pkg) {
             char tag[64];
             snprintf(tag, sizeof(tag), "%.*s", (int)(strlen(name) - 3), name);
             char path[640];
-            snprintf(path, sizeof(path), "%s/%s", dir, name);
+            int path_len = snprintf(path, sizeof(path), "%s/%s", dir, name);
+            if (path_len <= 0 || (size_t)path_len >= sizeof(path)) {
+                LOGE("%s: caminho do mod %s longo demais; recusado", pkg, name);
+                free(ents[i]);
+                continue;
+            }
             char soname[128];
             bc_elf_file_probe soname_probe =
                 bc_elf_file_read_soname(path, soname, sizeof(soname));
@@ -1917,12 +1946,29 @@ public:
             api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
-        const char *pkg = env->GetStringUTFChars(args->nice_name, nullptr);
-        if (pkg == nullptr) {
+        const char *nice_name = env->GetStringUTFChars(args->nice_name, nullptr);
+        if (nice_name == nullptr) {
             api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
-        be_bc = bc_path_is_bc(pkg);
+        const char *app_data_dir = nullptr;
+        if (args->app_data_dir != nullptr)
+            app_data_dir = env->GetStringUTFChars(args->app_data_dir, nullptr);
+        char pkg_copy[BC_PROCESS_PACKAGE_CAP] = {};
+        enum bc_process_status process_status = bc_process_select(
+            (int)args->uid,
+            args->is_child_zygote != nullptr && *args->is_child_zygote != JNI_FALSE,
+            nice_name, app_data_dir, pkg_copy, sizeof(pkg_copy));
+        if (app_data_dir != nullptr)
+            env->ReleaseStringUTFChars(args->app_data_dir, app_data_dir);
+        if (process_status != BC_PROCESS_READY) {
+            LOGI("processo %s ignorado: %s", nice_name, bc_process_status_name(process_status));
+            env->ReleaseStringUTFChars(args->nice_name, nice_name);
+            api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+        be_bc = bc_path_is_bc(pkg_copy);
+        env->ReleaseStringUTFChars(args->nice_name, nice_name);
         if (!be_bc) {
             // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
             // entrar no caminho de mods autônomos — nada de allowlist, nada de
@@ -1938,9 +1984,6 @@ public:
             // estágio). Só marca o candidato pela allowlist; a detecção de
             // verdade (com poll+timeout, já que não sabemos o nome da lib
             // como no caminho Battle Cats) acontece em postAppSpecialize.
-            char pkg_copy[256];
-            snprintf(pkg_copy, sizeof(pkg_copy), "%s", pkg);
-            env->ReleaseStringUTFChars(args->nice_name, pkg);
             // F1 (zero-config): 1 stat decide. A allowlist só é lida quando
             // não há pasta — ela continua servindo ao experimento Cocos2d-x
             // legado, não é mais pré-requisito de nada. Decisão pura em
@@ -1950,7 +1993,13 @@ public:
                                          !dir_exists && bc_generic_allowlist_contains(pkg_copy));
             be_generic_candidate = g_path_kind != BC_PATH_NONE;
             if (be_generic_candidate) {
-                snprintf(be_generic_pkg, sizeof(be_generic_pkg), "%s", pkg_copy);
+                if (!bc_process_copy_package(pkg_copy, strlen(pkg_copy),
+                                             be_generic_pkg, sizeof(be_generic_pkg))) {
+                    LOGE("%s: nome de pacote não cabe no loader; mods recusados", pkg_copy);
+                    be_generic_candidate = false;
+                    api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
+                    return;
+                }
                 // BUG REAL achado por revisão (hermes): sem isso, publish_log()
                 // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
                 // g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
@@ -1974,7 +2023,6 @@ public:
             }
             return;
         }
-        env->ReleaseStringUTFChars(args->nice_name, pkg);
         LOGI("preAppSpecialize de jp.co.ponos.battlecatsen — entrando");
         // (throttle migrado pra bc_mods.conf tipado — throttle_every=N;
         //  a leitura agora é feita em load_mods_config() no postAppSpecialize.
@@ -2043,7 +2091,7 @@ private:
     JNIEnv *env = nullptr;
     bool be_bc = false;
     bool be_generic_candidate = false;
-    char be_generic_pkg[256] = {};
+    char be_generic_pkg[BC_PROCESS_PACKAGE_CAP] = {};
 };
 
 REGISTER_ZYGISK_MODULE(BCModule)

@@ -23,6 +23,7 @@
 #include "u_patch_arm64.h"
 #include "u_patch_dedupe.h"
 #include "u_patch_resolve.h"
+#include "u_patch_pkg.h"
 
 #define UP_TAG "u_patch"
 // A extensão do arquivo de regras mora em u_patch_parse.h (UP_PATCH_EXT), junto
@@ -33,8 +34,9 @@
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
 
-static char up_pkg[128];
-static char up_dir[320];
+static char up_pkg[UP_PACKAGE_CAP];
+static char up_dir[UP_MODS_DIR_CAP];
+static bool up_pkg_rejected;
 
 // Log C1: mod_common (SDK F2). up_log próprio saiu: ele rotacionava
 // log.txt->log.txt.1 a cada linha acima de 256KB enquanto o loader e o
@@ -54,6 +56,17 @@ static void up_log(const char *fmt, ...) {
     mod_log(UP_TAG, "%s", msg);
 }
 
+static bool up_set_pkg(const char *candidate) {
+    enum bc_process_status status = upatch_package_prepare(
+        candidate, up_pkg, sizeof(up_pkg), up_dir, sizeof(up_dir));
+    if (status != BC_PROCESS_READY) {
+        up_log("pacote recusado: %s", bc_process_status_name(status));
+        up_pkg_rejected = true;
+        return false;
+    }
+    return true;
+}
+
 // Pacote (C1): env do loader primeiro; fallback cmdline com RETRY real —
 // no constructor ainda é zygote64 (achado device), então o worker re-tenta
 // a cada 1s até o cmdline virar o do app. Sem pthread_once (o fallback
@@ -62,19 +75,15 @@ static void up_log(const char *fmt, ...) {
 static bool up_read_pkg() {
     const char *env = getenv("BEPINEX_PKG");
     if (env && env[0] && !up_is_zygote(env)) {
-        snprintf(up_pkg, sizeof(up_pkg), "%s", env);
-        snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
-        return true;
+        return up_set_pkg(env);
     }
     FILE *f = fopen("/proc/self/cmdline", "r");
     if (!f) return false;
-    char cmd[128] = {};
+    char cmd[BC_PROCESS_PACKAGE_CAP + 1] = {};
     size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
     fclose(f);
     if (n == 0 || up_is_zygote(cmd)) return false;
-    snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
-    snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
-    return true;
+    return up_set_pkg(cmd);
 }
 
 // Lê arquivo inteiro (até 64KB). Retorna malloc'd, *len = tamanho.
@@ -658,8 +667,14 @@ static int up_scan_apply(const Il2Cpp &il) {
         // silencio.
         if (!up_patch_id_from_name(name, id, sizeof(id))) { free(ents[i]); continue; }
         char ppath[448], cpath[448];
-        snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
-        snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
+        int ppath_n = snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
+        int cpath_n = snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
+        if (ppath_n <= 0 || (size_t)ppath_n >= sizeof(ppath) ||
+            cpath_n <= 0 || (size_t)cpath_n >= sizeof(cpath)) {
+            up_log("%s: caminho do arquivo/config longo demais; ignorando", name);
+            free(ents[i]);
+            continue;
+        }
         bool trunc = false;
         char *pbuf = up_read_file(ppath, nullptr, &trunc);
         char *cbuf = up_read_file(cpath, nullptr, nullptr);  // .conf opcional
@@ -734,10 +749,15 @@ static void *up_worker(void *) {
     // teto (achado #8 do review) deixava a thread viva para sempre num
     // processo que nunca especializa, com 1 linha de log por minuto.
     int waits = 0;
-    while (!up_pkg[0] && !up_read_pkg() && waits < 120) {
+    while (!up_pkg[0] && !up_pkg_rejected && waits < 120) {
+        if (up_read_pkg() || up_pkg_rejected) break;
         if (waits == 0) up_log("sem BEPINEX_PKG nem cmdline de app ainda, aguardando (teto 120s)");
         sleep(1);
         waits++;
+    }
+    if (up_pkg_rejected) {
+        up_log("pacote/path não cabe ou é inválido; u_patch não aplica nada");
+        return nullptr;
     }
     if (!up_pkg[0]) {
         up_log("pacote (C1) não resolveu em 120s — u_patch não aplica nada; "
