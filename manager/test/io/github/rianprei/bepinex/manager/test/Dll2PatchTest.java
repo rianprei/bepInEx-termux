@@ -42,6 +42,18 @@ public final class Dll2PatchTest {
 
     private static void testTranslation(byte[] dll, DllReader reader) throws Exception {
         HarmonyTranslator.TranslationResult result = HarmonyTranslator.translate(dll);
+        // A saída REAL do tradutor vira artefato de gate: este teste grava o
+        // patchText() de verdade em test/fixtures/dll2patch/translator_output.patch
+        // e o harness C++ do u_patch ([Caso 78] do upatch_harness.cpp) repassa cada
+        // linha pelas funções REAIS de u_patch_parse.h. Nenhuma réplica Java no meio
+        // do caminho: a gravação vem ANTES das checagens para que o gate C++ julgue
+        // o que o tradutor emitir, mesmo quando alguma checagem daqui falha.
+        Path deviceGatePatch = findPath("test/fixtures/dll2patch/opcodes_table.csv").getParent()
+                .resolve("translator_output.patch");
+        byte[] patchBytes = result.patchText().getBytes(StandardCharsets.UTF_8);
+        Files.write(deviceGatePatch, patchBytes);
+        check("saída real do tradutor gravada para o gate C++ (translator_output.patch)",
+                Arrays.equals(Files.readAllBytes(deviceGatePatch), patchBytes));
         String expected = "# traduzido de Harmony para C4\n"
                 + "return Dll2PatchFixture.GameClass GetHealth 0 int 100\n"
                 + "return Dll2PatchFixture.GameClass GetMana 0 int 50\n"
