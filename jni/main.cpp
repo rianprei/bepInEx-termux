@@ -40,6 +40,7 @@
 #include "dobby.h"
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
 #include "bc_mods_fd.h" // entrega do .so por FD (SCM_RIGHTS), do companion
+#include "bc_stream_guard.h" // caminho quente do socket compartilhado (try_lock)
 
 // Declaracoes antecipadas: as implementacoes ficam mais abaixo (depois do
 // registro de hooks), e sao usadas por codigo que vem antes delas.
@@ -74,9 +75,25 @@ static inline const char *bc_app_state_dir(char *out, size_t cap) {
 // Alternativa seria um connectCompanion() por pedido (conexao exclusiva), que
 // elimina a classe inteira sem mutex — mas paga um handshake por pedido e um
 // socket novo por carga de mod. O mutex e o mais simples que e correto.
+// O send() cru, isolado em uma funcao para poder ser injetado no
+// bc_stream_try_send: e o que permite testar o caminho quente no host, sem
+// socket e sem hook.
+static int stream_send_raw(void *ctx, const void *data, size_t len) {
+    struct stream_ctx { int fd; };
+    int fd = ((struct stream_ctx *)ctx)->fd;
+    ssize_t r = send(fd, data, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        // canal morto (EPIPE/ECONNRESET etc.) — desliga streaming, não spamma.
+        g_stream_fd.store(-1, std::memory_order_relaxed);
+        return -1;
+    }
+    // EAGAIN/EWOULDBLOCK = buffer cheio → linha descartada. OK, não bloqueia.
+    return (r >= 0) ? 0 : -1;
+}
+
 static pthread_mutex_t g_companion_io = PTHREAD_MUTEX_INITIALIZER;
 // Quantos eventos de streaming o trylock descartou por um pedido em curso.
-static std::atomic<int> g_stream_dropped{0};
+static std::atomic<unsigned> g_stream_dropped{0};
 
 // ============================================================================
 // Entrega por FD: o companion (root) abre, o JOGO recebe o descritor
@@ -764,8 +781,6 @@ static void stream_send_prefixed(const char *level, const char *source,
     if (len < 0) return;
     if (len > (int)sizeof(line) - 1) len = (int)sizeof(line) - 1;
     log_file_write(line, len);  // grava SEMPRE, mesmo sem cliente stream conectado
-    int fd = g_stream_fd.load(std::memory_order_relaxed);
-    if (fd < 0) return;
     // Risco (A): esta funcao roda na THREAD DO JOGO (um hook disparou). Com
     // pthread_mutex_lock ela ficaria ate 5s esperando um pedido em curso — e
     // 5s de jogo travado, que e pior que o mod nao carregar. Entao aqui e
@@ -776,24 +791,22 @@ static void stream_send_prefixed(const char *level, const char *source,
     // O motivo continua sendo o mesmo: enquanto um pedido do loader esta lendo
     // a resposta, uma linha de evento aqui seria lida como se fosse a
     // resposta.
-    if (pthread_mutex_trylock(&g_companion_io) != 0) {
-        int d = g_stream_dropped.fetch_add(1, std::memory_order_relaxed);
-        // Loga uma vez a cada 64, para nao logar por descarte (a linha de log
-        // que registraria o descarte precisa do mesmo socket).
-        if (d % 64 == 0)
-            LOGI("streaming: %d evento(s) descartado(s) — pedido do companion em curso",
-                 d + 1);
+    int fd = g_stream_fd.load(std::memory_order_relaxed);
+    if (fd < 0) return;
+    struct stream_ctx { int fd; } ctx = { fd };
+    if (bc_stream_try_send(&g_companion_io, &g_stream_dropped, stream_send_raw, &ctx,
+                           line, (size_t)len) != 0) {
+        // Mandou. O canal morto (EPIPE/ECONNRESET) e detectado por
+        // stream_send_raw, que ja desligou o socket.
         return;
     }
-    // MSG_DONTWAIT: não bloqueia o jogo. MSG_NOSIGNAL: evita SIGPIPE
-    // (matar o jogo) se o companion morreu/fechou o socket por baixo.
-    ssize_t r = send(fd, line, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL);
-    pthread_mutex_unlock(&g_companion_io);
-    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-        // canal morto (EPIPE/ECONNRESET etc.) — desliga streaming, não spamma.
-        g_stream_fd.store(-1, std::memory_order_relaxed);
-    }
-    // EAGAIN/EWOULDBLOCK = buffer cheio → linha descartada. OK, não bloqueia.
+    // Perdeu a linha: um pedido do loader esta em curso, ou o socket morreu.
+    // NUNCA espera — esta e a thread do jogo. Loga uma vez a cada 64 (a linha
+    // que registraria o descarte precisa do mesmo socket).
+    unsigned d = g_stream_dropped.load(std::memory_order_relaxed);
+    if (d % 64 == 0)
+        LOGI("streaming: %u evento(s) descartado(s) — pedido do companion em curso",
+             d);
 }
 
 // Unifica no MESMO pipeline (stream+disco) o log NATIVO do próprio processo

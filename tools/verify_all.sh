@@ -419,6 +419,21 @@ else
     echo "test/symbols/scm_rights_test.cpp ausente: o fd do mod nao e testado"
 fi
 
+# O caminho quente do socket compartilhado: a thread do JOGO nao pode esperar
+# o pedido do companion (ate 5s = 5s de jogo travado). O teste tem alarm(2),
+# entao a regressao "trylock virou lock" FALHA em vez de pendurar o gate.
+if [ -f "$ROOT/test/symbols/stream_guard_test.cpp" ]; then
+    run_step "streaming do companion nao espera (trylock)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" -pthread \
+            "$1/test/symbols/stream_guard_test.cpp" -o "$2/stream_guard_test" || exit 1
+        "$2/stream_guard_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "streaming do companion nao espera (teste ausente)" FAIL 0 1
+    echo "test/symbols/stream_guard_test.cpp ausente: o caminho quente pode voltar a esperar"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"
