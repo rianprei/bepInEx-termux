@@ -22,6 +22,7 @@
 #include "u_patch_parse.h"
 #include "u_patch_arm64.h"
 #include "u_patch_dedupe.h"
+#include "u_patch_resolve.h"
 
 #define UP_TAG "u_patch"
 #define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
@@ -269,9 +270,12 @@ static bool up_apply_return(const Il2Cpp &il, void *klass, const up_rule_t *r,
     // expõe method_get_return_type + type_get_name.
     if (r->type == UP_FLOAT && il.method_get_return_type && il.class_from_type && il.type_get_name) {
         void *rt = (void *)il.method_get_return_type(m);
+        // type_get_name recebe o TYPE (rt), não a classe — o mesmo type
+        // confusion que derrubou o jogo no caminho de `field`
+        // (ver up_field_type_name). rk é só a prova de que o tipo resolve.
         void *rk = rt ? il.class_from_type(rt) : nullptr;
         if (rk) {
-            char *rn = il.type_get_name(rk);
+            char *rn = il.type_get_name(rt);
             if (rn) {
                 if (strcmp(rn, "System.Double") == 0) {
                     up_log_first(sig, "método %s::%s devolve System.Double (64 bits) e a regra "
@@ -364,31 +368,29 @@ static bool up_apply_mul(const Il2Cpp &il, void *klass, const up_rule_t *r,
     return true;
 }
 
-// Tipo real do campo, por nome (System.Boolean / Int32 / Single). nullptr
-// quando a lib não expõe a API — aí o chamador mantém o comportamento antigo
-// e diz isso no log.
-static const char *up_field_type_name(const Il2Cpp &il, void *field) {
-    if (!il.field_get_type || !il.class_from_type || !il.type_get_name) return nullptr;
-    const void *t = il.field_get_type(field);
-    void *k = t ? il.class_from_type((void *)t) : nullptr;
-    if (!k) return nullptr;
-    char *n = il.type_get_name(k);
-    if (!n) return nullptr;
-    static char buf[128];   // só para comparação imediata com up_value_type_check
-    snprintf(buf, sizeof(buf), "%s", n);
-    if (il.free) il.free(n);
-    else free(n);
-    return buf;
-}
-
 // Recusa ANTES de hookar quando o tamanho do tipo real não bate com o da
 // regra (achado #2): escrever 4 bytes num campo de 1 byte suja os vizinhos do
 // objeto, e o static reescreve isso a cada 2s.
+//
+// `why` (se não-nulo) recebe a frase de recusa completa, com o motivo do elo
+// que falhou na resolução do tipo — para o log.txt dizer se o campo não
+// existe, se é genérico, ou se a API de tipo não está neste il2cpp.
 static bool up_type_guard(const Il2Cpp &il, void *klass, void *field, size_t want,
-                          bool is_instance, const char *sig) {
-    char why[320];
+                          bool is_instance, const char *sig, const char *cls,
+                          const char *member) {
+    char name[128];
+    up_resolve_status st = up_resolve_field_type(&il, field, name, sizeof(name));
+    char why[384];
+    if (st != UP_RS_OK) {
+        // Motivo do elo que falhou. UP_RS_NO_API não é erro: o il2cpp é velho
+        // e não expõe a API de tipo — aí o comportamento antigo (escrever sem
+        // checar tamanho) é mantido, e o log diz isso explicitamente.
+        up_resolve_log_line(st, cls, member, why, sizeof(why));
+        up_log_first(sig, "%s: %s", is_instance ? "field recusado" : "static recusado", why);
+        return false;
+    }
     if (up_value_type_check(il.class_is_valuetype && il.class_is_valuetype(klass),
-                            up_field_type_name(il, field), want, why, sizeof(why)) != 0) {
+                            name, want, why, sizeof(why)) != 0) {
         up_log_first(sig, "%s: %s", is_instance ? "field recusado" : "static recusado", why);
         return false;
     }
@@ -409,7 +411,7 @@ static bool up_apply_static(const Il2Cpp &il, void *klass, const up_rule_t *r,
     {   // static: o valor da regra decide o size logo abaixo; para descobrir o
         // size esperado, reparseia o tipo da regra (bool=1, int/float=4).
         size_t want = (r->type == UP_BOOL) ? 1 : 4;
-        if (!up_type_guard(il, klass, f, want, false, sig)) return false;
+        if (!up_type_guard(il, klass, f, want, false, sig, r->cls, r->member)) return false;
     }
     uint8_t bytes[8] = {};
     size_t size = 0;
@@ -520,7 +522,7 @@ static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, co
     // #2 e #3) — ANTES de hookar qualquer método, porque depois do hook a
     // escrita acontece a cada chamada, com this do jogo.
     {   size_t want = (r->type == UP_BOOL) ? 1 : 4;
-        if (!up_type_guard(il, klass, f, want, true, sig)) return false; }
+        if (!up_type_guard(il, klass, f, want, true, sig, r->cls, r->member)) return false; }
     // Método explícito: valida e hooka um só.
     if (r->fmethod[0]) {
         if (!il.method_get_flags) {
@@ -601,11 +603,27 @@ static int up_line_apply(char *line, int lineno, void *vctx) {
                 void *klass = nullptr;
                 if (up_split_class(r.cls, nspace, sizeof(nspace), cname, sizeof(cname)))
                     klass = il.find_class(nspace, cname);
-                bool ok = false;
                 if (!klass) {
                     if (seen < 0) up_log("%s:%d: classe %s não encontrada", id, lineno, r.cls);
                     else up_mark(sig, UP_ST_SEEN);
-                } else if (r.kind == UP_RETURN) {
+                    return 0;
+                }
+                // Rastro ANTES de qualquer passo arriscado.
+                //
+                // ACHADO REAL (device): na hora do crash o log.txt estava SEM
+                // nenhuma linha [u_patch] — a primeira linha de log saía
+                // DEPOIS da resolução (up_log_first só dispara no fim), então
+                // o crash apagava o caminho inteiro e sobrava um tombstone sem
+                // dizer qual regra estava em jogo. Agora o log.txt diz.
+                //
+                // Gate em `seen < 0` (regra nunca processada) e NÃO no
+                // up_log_first: consumir o slot de dedupe aqui faria a linha
+                // de falha ("campo X não encontrado") ser suprimida — e é
+                // justamente ela que o usuário precisa ver. Uma vez por
+                // regra, sem inundar o log a cada 2s.
+                if (seen < 0) up_log("u_patch: resolvendo %s", sig);
+                bool ok = false;
+                if (r.kind == UP_RETURN) {
                     ok = up_apply_return(il, klass, &r, valstr, sig);
                 } else if (r.kind == UP_MUL) {
                     ok = up_apply_mul(il, klass, &r, valstr, sig);
