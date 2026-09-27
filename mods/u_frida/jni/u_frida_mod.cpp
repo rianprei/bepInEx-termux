@@ -19,7 +19,6 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <link.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,14 +52,6 @@ static ssize_t uf_read_config(const char *path, char *buf, size_t size) {
     }
     close(fd);
     return (ssize_t)got;
-}
-
-static int uf_has_il2cpp_cb(struct dl_phdr_info *info, size_t, void *out) {
-    if (info->dlpi_name && strstr(info->dlpi_name, "/libil2cpp.so")) {
-        *(int *)out = 1;
-        return 1;
-    }
-    return 0;
 }
 
 static void *uf_worker(void *) {
@@ -106,21 +97,16 @@ static void *uf_worker(void *) {
         return nullptr;
     }
 
-    // Espera o il2cpp antes do dlopen (revisão kilo-14, como o sa2ammo):
-    // script Il2Cpp.* carregado antes do init falha. Jogo não-Unity não
-    // tem libil2cpp — espera curta (10s) e segue sem a espera, em vez de
-    // travar o mod por 4 minutos.
-    int seen = 0;
-    for (int i = 0; i < 50 && !seen; i++) {
-        dl_iterate_phdr(uf_has_il2cpp_cb, &seen);
-        if (!seen) usleep(200 * 1000);
-    }
-    if (seen) {
-        Il2Cpp il;
-        if (il2cpp_boot(il)) mod_log(UF_TAG, "il2cpp ok, carregando gadget");
-        else mod_log(UF_TAG, "il2cpp não subiu, carregando gadget mesmo assim");
+    // O gadget também pode rodar scripts em jogos sem IL2CPP; mantém 10s de
+    // orçamento total para não atrasar esse caso. Scripts que usam Il2Cpp.*
+    // só são compatíveis se o boot comum terminar dentro dessa janela.
+    static const mod_il2cpp_wait_policy frida_wait = mod_il2cpp_frida_wait_policy();
+    Il2Cpp il;
+    if (il2cpp_boot(il, &frida_wait)) {
+        mod_log(UF_TAG, "IL2CPP pronto em até 10s; carregando gadget");
     } else {
-        mod_log(UF_TAG, "sem libil2cpp em 10s (jogo não-Unity?), gadget sem espera IL2CPP");
+        mod_log(UF_TAG, "gadget será carregado sem IL2CPP após 10s; scripts Il2Cpp.* "
+                        "não terão runtime pronto");
     }
     // stdout do jogo vai pra /dev/null: console.log do script não aparece
     // no logcat. Script de teste tem que fazer efeito observável (escrever
