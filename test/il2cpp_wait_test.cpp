@@ -78,7 +78,7 @@ static void *try_fallback_open(void *ctx) {
 }
 
 int main() {
-    printf("[Caso 79] IL2CPP wait: prazo total, intervalo e logs comuns\n");
+    printf("[Caso 82] IL2CPP wait: prazo total, intervalo e logs comuns\n");
     {
         const mod_il2cpp_wait_policy normal = mod_il2cpp_default_wait_policy();
         const mod_il2cpp_wait_policy frida = mod_il2cpp_frida_wait_policy();
@@ -174,6 +174,8 @@ int main() {
           mod_il2cpp_name_matches("/data/app/base.apk!/lib/arm64-v8a/libil2cpp.so"));
     check("split_config.arm64_v8a.apk!/lib/.../libil2cpp.so casa",
           mod_il2cpp_name_matches("/data/app/split_config.arm64_v8a.apk!/lib/arm64-v8a/libil2cpp.so"));
+    check("caminho com libil2cpp.so duplicado termina no nome correto",
+          mod_il2cpp_name_matches("/data/libil2cpp.so/container/libil2cpp.so"));
     check("libil2cpp.so com sufixo extra não casa",
           !mod_il2cpp_name_matches("/data/app/base.apk!/lib/arm64-v8a/libil2cpp.so.backup"));
     check("nome nulo não casa", !mod_il2cpp_name_matches(nullptr));

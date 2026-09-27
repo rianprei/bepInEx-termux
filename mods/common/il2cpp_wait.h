@@ -119,8 +119,10 @@ static inline int mod_il2cpp_wait_format(char *out, size_t cap,
 static inline bool mod_il2cpp_name_matches(const char *name) {
     static const char suffix[] = "/libil2cpp.so";
     if (!name) return false;
-    const char *match = strstr(name, suffix);
-    return match && match[strlen(suffix)] == '\0';
+    const size_t name_len = strlen(name);
+    const size_t suffix_len = sizeof(suffix) - 1;
+    return name_len >= suffix_len &&
+           strcmp(name + name_len - suffix_len, suffix) == 0;
 }
 
 static inline void *mod_il2cpp_open_with(
