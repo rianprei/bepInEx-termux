@@ -19,3 +19,8 @@ mods/u_frida/gadget/
 *.pfx
 *.idsig
 *.apk
+
+# Fixtures do corpus de tipos (ModTypeMatrixTest): sao zips/apk FALSOS de
+# poucos bytes, gerados pelo generate.py da propria pasta, deterministico.
+!test/fixtures/modtypes/*.zip
+!test/fixtures/modtypes/*.apk

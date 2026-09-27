@@ -1,0 +1,6 @@
+appInit=off
+appUpdateDraw=off
+appTouch=off
+appKey=off
+throttle_every=30
+stream_source=companion

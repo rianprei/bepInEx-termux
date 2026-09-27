@@ -31,6 +31,10 @@ import android.widget.Toast;
 import io.github.rianprei.bepinex.manager.core.BmodInstaller;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
+import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
+import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
+import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.GameInfo;
@@ -45,7 +49,7 @@ import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
-    private static final int REQUEST_PICK_BMOD = 1001;
+    private static final int REQUEST_PICK_FILE = 1001;
 
     private TextView mTvStatusRoot;
     private TextView mTvStatusModule;
@@ -62,6 +66,8 @@ public class MainActivity extends Activity {
     private final List<GameInfo> mFilteredGames = new ArrayList<>();
     private GameAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private Uri mPendingIncomingUri;
+    private File mPendingImportFile;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -108,7 +114,7 @@ public class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
-            startActivityForResult(intent, REQUEST_PICK_BMOD);
+            startActivityForResult(intent, REQUEST_PICK_FILE);
         });
 
         handleIncomingIntent(getIntent());
@@ -128,22 +134,44 @@ public class MainActivity extends Activity {
     }
 
     private void handleIncomingIntent(Intent intent) {
-        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction())) {
-            Uri uri = intent.getData();
-            if (uri != null) {
-                processBmodUri(uri);
+        if (intent == null) return;
+        Uri uri = null;
+        if (Intent.ACTION_VIEW.equals(intent.getAction())) {
+            uri = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                uri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+            } else {
+                //noinspection deprecation
+                uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
             }
+            if (uri == null && intent.getClipData() != null
+                    && intent.getClipData().getItemCount() > 0) {
+                uri = intent.getClipData().getItemAt(0).getUri();
+            }
+        }
+        if (uri != null) {
+            if (mAllGames.isEmpty()) mPendingIncomingUri = uri;
+            else processSelectedUri(uri);
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_PICK_BMOD && resultCode == RESULT_OK && data != null) {
+        if (requestCode == REQUEST_PICK_FILE && resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                processBmodUri(uri);
+                processSelectedUri(uri);
+                return;
             }
+        } else if (requestCode == REQUEST_PICK_FILE && resultCode == RESULT_CANCELED) {
+            new AlertDialog.Builder(this)
+                    .setMessage("O seletor de arquivos deste celular não devolveu o arquivo. Quer escolher direto da pasta Download?")
+                    .setPositiveButton("Escolher da pasta Download",
+                            (dialog, which) -> DownloadFileDialog.show(this, this::processSelectedFile))
+                    .setNegativeButton("Cancelar", null)
+                    .show();
         }
     }
 
@@ -232,6 +260,15 @@ public class MainActivity extends Activity {
                 mAllGames.clear();
                 mAllGames.addAll(loaded);
                 applyFilter();
+                if (mPendingIncomingUri != null) {
+                    Uri pending = mPendingIncomingUri;
+                    mPendingIncomingUri = null;
+                    processSelectedUri(pending);
+                } else if (mPendingImportFile != null) {
+                    File pending = mPendingImportFile;
+                    mPendingImportFile = null;
+                    processSelectedFile(pending);
+                }
             });
         }).start();
     }
@@ -244,7 +281,7 @@ public class MainActivity extends Activity {
         for (GameInfo g : mAllGames) {
             if (filterGamesOnly) {
                 boolean isCompatible = g.isGame ||
-                        !EngineDetector.ENGINE_JAVA.equals(g.engine) ||
+                        EngineDetector.isGameEngine(g.engine) ||
                         g.installedModsCount > 0;
                 if (!isCompatible) continue;
             }
@@ -262,72 +299,133 @@ public class MainActivity extends Activity {
         mTvEmpty.setVisibility(mFilteredGames.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
-    private void processBmodUri(Uri uri) {
+    private void processSelectedUri(Uri uri) {
+        String displayName = resolveDisplayName(uri);
+        File tmp = null;
         try {
-            File tmp = new File(getCacheDir(), "imported_" + System.currentTimeMillis() + ".bmod");
+            tmp = SelectedFileStager.create(getCacheDir(), displayName);
             try (InputStream in = getContentResolver().openInputStream(uri);
                  FileOutputStream out = new FileOutputStream(tmp)) {
+                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
                 byte[] buf = new byte[4096];
                 int n;
                 while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
             }
-
-            ModManifest manifest = BmodInstaller.inspect(tmp);
-
-            if (manifest.isUniversalGame()) {
-                // Mod universal: pergunta ao usuario para qual jogo instalar
-                showSelectGameDialogForBmod(tmp, manifest);
+            if (mAllGames.isEmpty()) {
+                mPendingImportFile = tmp;
             } else {
-                new AlertDialog.Builder(this)
-                        .setTitle("Instalar Mod (.bmod)")
-                        .setMessage("Deseja instalar o mod '" + manifest.name + "' (" + manifest.id + ") para o jogo:\n\n" +
-                                manifest.game + "\n\nEngine: " + manifest.engine)
-                        .setPositiveButton("Instalar", (dialog, which) -> {
-                            BmodInstaller.InstallResult res = BmodInstaller.install(tmp, manifest.game, null);
-                            new AlertDialog.Builder(MainActivity.this)
-                                    .setTitle(res.success ? "Sucesso" : "Falha na Instalação")
-                                    .setMessage(res.message)
-                                    .setPositiveButton("OK", null)
-                                    .show();
-                            loadStatusAndApps();
-                        })
-                        .setNegativeButton("Cancelar", null)
-                        .show();
+                processSelectedFile(tmp);
             }
         } catch (Exception e) {
+            SelectedFileStager.delete(tmp);
             new AlertDialog.Builder(this)
-                    .setTitle("Erro ao abrir .bmod")
-                    .setMessage("Não foi possível ler o pacote .bmod:\n" + e.getMessage())
+                    .setTitle("Não foi possível abrir o arquivo")
+                    .setMessage("Erro ao ler o arquivo escolhido:\n" + e.getMessage())
                     .setPositiveButton("OK", null)
                     .show();
         }
     }
 
-    private void showSelectGameDialogForBmod(File bmodFile, ModManifest manifest) {
+    private String resolveDisplayName(Uri uri) {
+        String name = null;
+        try (android.database.Cursor c = getContentResolver()
+                .query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME},
+                        null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) name = c.getString(idx);
+            }
+        } catch (Exception ignored) {}
+        if (name == null || name.trim().isEmpty()) {
+            String last = uri.getLastPathSegment();
+            name = (last != null) ? last : "mod.bin";
+        }
+        return name;
+    }
+
+    private void processSelectedFile(File file) {
+        if (mAllGames.isEmpty()) {
+            mPendingImportFile = file;
+            return;
+        }
+        try {
+            ModContentDetector.Detection detection = ModContentDetector.detect(
+                    LooseModInstaller.probe(file), true);
+            ModManifest manifest = detection.kind == ModContentDetector.Kind.BMOD
+                    ? BmodInstaller.inspect(file) : null;
+            SelectedFileRouter.Decision decision = SelectedFileRouter.decide(detection, manifest);
+            if (decision.action == SelectedFileRouter.Action.REJECT) {
+                showImportMessage("Arquivo não aceito", decision.message);
+                SelectedFileStager.delete(file);
+            } else if (decision.action == SelectedFileRouter.Action.INSTALL_DECLARED_GAME) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Instalar mod")
+                        .setMessage("Este pacote foi feito para o jogo " + decision.packageName
+                                + ". Deseja continuar?")
+                        .setPositiveButton("Instalar", (dialog, which) -> {
+                            GameInfo target = findGame(decision.packageName);
+                            installSelectedFile(file, decision.packageName,
+                                    target != null ? target.engine : null);
+                        })
+                        .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
+                        .show();
+            } else {
+                showSelectGameDialogForFile(file, manifest);
+            }
+        } catch (Exception e) {
+            SelectedFileStager.delete(file);
+            showImportMessage("Não foi possível abrir o arquivo",
+                    "O arquivo não pôde ser identificado: " + e.getMessage());
+        }
+    }
+
+    private void showSelectGameDialogForFile(File file, ModManifest manifest) {
         final List<GameInfo> candidates = new ArrayList<>();
-        for (GameInfo g : mAllGames) {
-            if (manifest.matchesEngine(g.engine)) candidates.add(g);
+        if (manifest != null) {
+            for (GameInfo g : mAllGames) {
+                if (manifest.matchesEngine(g.engine)) candidates.add(g);
+            }
         }
         if (candidates.isEmpty()) candidates.addAll(mAllGames);
-
+        if (candidates.isEmpty()) {
+            SelectedFileStager.delete(file);
+            showImportMessage("Nenhum jogo disponível", "Não há jogos na lista para instalar este arquivo.");
+            return;
+        }
         String[] names = new String[candidates.size()];
         for (int i = 0; i < candidates.size(); i++) {
             names[i] = candidates.get(i).appName + " (" + candidates.get(i).packageName + ")";
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Escolha o jogo para o mod universal")
+                .setTitle("Escolha o jogo para instalar o arquivo")
                 .setItems(names, (dialog, which) -> {
                     GameInfo selected = candidates.get(which);
-                    BmodInstaller.InstallResult res = BmodInstaller.install(bmodFile, selected.packageName, selected.engine);
-                    new AlertDialog.Builder(MainActivity.this)
-                            .setTitle(res.success ? "Sucesso" : "Erro")
-                            .setMessage(res.message)
-                            .setPositiveButton("OK", null)
-                            .show();
-                    loadStatusAndApps();
+                    installSelectedFile(file, selected.packageName, selected.engine);
                 })
-                .setNegativeButton("Cancelar", null)
+                .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
+                .show();
+    }
+
+    private GameInfo findGame(String packageName) {
+        for (GameInfo game : mAllGames) {
+            if (packageName.equals(game.packageName)) return game;
+        }
+        return null;
+    }
+
+    private void installSelectedFile(File file, String packageName, String engine) {
+        LooseModInstaller.Result result = LooseModInstaller.installFromFile(file, packageName, engine);
+        SelectedFileStager.delete(file);
+        showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
+        loadStatusAndApps();
+    }
+
+    private void showImportMessage(String title, String message) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("OK", null)
                 .show();
     }
 

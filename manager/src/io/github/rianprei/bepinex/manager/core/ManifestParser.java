@@ -19,8 +19,7 @@ public final class ManifestParser {
     public static ModManifest parse(String json) {
         if (json == null || json.trim().isEmpty()) {
             throw new IllegalArgumentException("Manifest vazio");
-        }
-        Map<String, Object> map = MiniJson.parseObject(json);
+        }        Map<String, Object> map = MiniJson.parseObject(json);
 
         ModManifest manifest = new ModManifest();
 
@@ -31,17 +30,17 @@ public final class ManifestParser {
             throw new IllegalArgumentException("Campo 'format' ausente ou invalido");
         }
         if (manifest.format != 1) {
-            throw new IllegalArgumentException("Versao de formato nao suportada: " + manifest.format);
+            throw new IllegalArgumentException("Versão de formato não suportada: " + manifest.format);
         }
 
         manifest.id = (String) map.get("id");
         if (manifest.id == null || !ID_PATTERN.matcher(manifest.id).matches()) {
-            throw new IllegalArgumentException("ID invalido (deve ter 3-48 caracteres [a-z0-9-]): " + manifest.id);
+            throw new IllegalArgumentException("ID inválido (deve ter 3 a 48 caracteres entre a-z, 0-9 e hífen): " + manifest.id);
         }
 
         manifest.name = (String) map.get("name");
         if (manifest.name == null || manifest.name.trim().isEmpty()) {
-            throw new IllegalArgumentException("Campo 'name' obrigatorio");
+            throw new IllegalArgumentException("Campo 'name' obrigatório");
         }
 
         manifest.version = map.containsKey("version") ? String.valueOf(map.get("version")) : "1.0";
@@ -50,7 +49,7 @@ public final class ManifestParser {
 
         manifest.game = (String) map.get("game");
         if (manifest.game == null || manifest.game.trim().isEmpty()) {
-            throw new IllegalArgumentException("Campo 'game' obrigatorio (pacote ou '*')");
+            throw new IllegalArgumentException("Campo 'game' obrigatório (pacote do jogo ou '*')");
         }
 
         manifest.engine = (String) map.get("engine");

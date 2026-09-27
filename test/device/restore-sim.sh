@@ -44,6 +44,7 @@ new_device() {
     printf 'mod do usuario\n' > "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so"
     printf '11:00:00 [loader] mod carregado\n' > "$DEV/data/data/$PKG/files/bepinex/log.txt"
     printf 'lib do usuario\n' > "$DEV/data/data/$PKG/files/bepinex/libu_noads.so"
+    printf '0 0\n' > "$DEV/data/data/$PKG/files/bepinex/crashguard"
     touch "$DEV/data/local/tmp/mods/$PKG/u_patch.so"
     export FAKE_LOGCAT="$ROOT/logcat-$$.txt"; : > "$FAKE_LOGCAT"
     export FAKE_PID=4242
@@ -63,21 +64,8 @@ EOF
     chmod 755 "$BINDIR/su"
 }
 write_base_su
-# chown/chmod falsos: no device o su é root; aqui não, e o kit tolera a falha
-# mas o push do staging (que exige o dir criado) precisa passar.
-printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chown"
-printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chmod"
-# RELÓGIO FALSO: o kit espera o jogo com "sleep 3" em cada poll (launch e
-# loop de expectativas). No SIM o tempo é simulado pelo próprio contador de
-# iterações do kit (ELAPSED += 3, launch 1..5), então o sleep real não
-# carrega prova nenhuma: nenhum cenário depende de espera de parede —
-# os locks usam ts de date com idades plantadas (now / now-1000), e a
-# interrupção do (5) dispara pelo gancho T1_SIM_EXIT na MESMA iteração
-# lógica. Sem isso o sim cresce em segundos REAIS a cada cenário com run
-# completo (69s com load) e o gate vira flaky por carga. sleep => instantâneo.
-printf '#!/bin/sh\n# relógio falso do sim: espera do kit vira tempo simulado\nexit 0\n' > "$BINDIR/sleep"
-# adb: shell su (stdin) / push / get-state / logcat / am / monkey / pidof.
-cat > "$BINDIR/adb" <<'EOF'
+write_base_adb() {
+    cat > "$BINDIR/adb" <<'EOF'
 #!/bin/sh
 case "$1" in
   get-state) echo device ;;
@@ -94,7 +82,24 @@ case "$1" in
   *) : ;;
 esac
 EOF
-chmod 755 "$BINDIR/su" "$BINDIR/adb" "$BINDIR/chown" "$BINDIR/chmod" "$BINDIR/sleep"
+    chmod 755 "$BINDIR/adb"
+}
+# chown/chmod falsos: no device o su é root; aqui não, e o kit tolera a falha
+# mas o push do staging (que exige o dir criado) precisa passar.
+printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chown"
+printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chmod"
+# RELÓGIO FALSO: o kit espera o jogo com "sleep 3" em cada poll (launch e
+# loop de expectativas). No SIM o tempo é simulado pelo próprio contador de
+# iterações do kit (ELAPSED += 3, launch 1..5), então o sleep real não
+# carrega prova nenhuma: nenhum cenário depende de espera de parede —
+# os locks usam ts de date com idades plantadas (now / now-1000), e a
+# interrupção do (5) dispara pelo gancho T1_SIM_EXIT na MESMA iteração
+# lógica. Sem isso o sim cresce em segundos REAIS a cada cenário com run
+# completo (69s com load) e o gate vira flaky por carga. sleep => instantâneo.
+printf '#!/bin/sh\n# relógio falso do sim: espera do kit vira tempo simulado\nexit 0\n' > "$BINDIR/sleep"
+# adb: shell su (stdin) / push / get-state / logcat / am / monkey / pidof.
+write_base_adb
+chmod 755 "$BINDIR/su" "$BINDIR/chown" "$BINDIR/chmod" "$BINDIR/sleep"
 
 # --- BLINDAGEM: tem celular REAL neste host — NADA pode alcançar adb/su reais.
 # Três camadas independentes:
@@ -265,6 +270,185 @@ new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
 echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
 
+scen "(log) linhas escritas pelo jogo antes do crash sao removidas byte a byte"
+new_device log
+LOG_CASE="$ROOT/log-crash-case"
+mkdir -p "$LOG_CASE"
+printf 'fake game wrote a new log line\n' > "$LOG_CASE/expect.txt"
+cp "$DEV/data/data/$PKG/files/bepinex/log.txt" "$ROOT/log-before.txt"
+cp "$DEV/data/data/$PKG/files/bepinex/crashguard" "$ROOT/crashguard-before.txt"
+export FAKE_PKG="$PKG" FAKE_PID_CALLS="$ROOT/log-pid-calls-$$"
+: > "$FAKE_PID_CALLS"
+cat > "$BINDIR/adb" <<'EOF'
+#!/bin/sh
+case "$1" in
+  get-state) echo device ;;
+  logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
+  shell) shift; case "$1" in
+      su) su ;;
+      am) shift 2 >/dev/null; : ;;
+      monkey)
+          printf '1 1\n' > "$DEV/data/data/$FAKE_PKG/files/bepinex/crashguard"
+          printf '11:00:01 [fake-game] fake game wrote a new log line\n' \
+              >> "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt" ;;
+      pidof)
+          _n=$(cat "$FAKE_PID_CALLS" 2>/dev/null || echo 0)
+          _n=$((_n + 1))
+          echo "$_n" > "$FAKE_PID_CALLS"
+          [ "$_n" = 1 ] && echo "$FAKE_PID" ;;
+      *) : ;;
+    esac ;;
+  *) : ;;
+esac
+EOF
+chmod 755 "$BINDIR/adb"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$LOG_CASE" 6 2>&1) || RC=$?
+[ "$RC" = 1 ] && ok "jogo fake gravou log e morreu (exit $RC)" || bad "jogo fake gravou log e morreu (exit $RC)"
+echo "$OUT" | grep -q "CRASH: processo do jogo morreu" && ok "kit detectou o crash fake" || bad "kit detectou o crash fake"
+cmp -s "$ROOT/log-before.txt" "$DEV/data/data/$PKG/files/bepinex/log.txt" \
+    && ok "log restaurado byte a byte depois do crash" || bad "log restaurado byte a byte depois do crash"
+cmp -s "$ROOT/crashguard-before.txt" "$DEV/data/data/$PKG/files/bepinex/crashguard" \
+    && ok "crashguard restaurado byte a byte depois do crash" || bad "crashguard restaurado byte a byte depois do crash"
+echo "$OUT" | grep -q "device restaurado" && ok "restore conferido no crash fake" || bad "restore conferido no crash fake"
+unset FAKE_PID_CALLS
+
+scen "(log-hash) hash individual silenciosamente ausente nao pode validar restore"
+new_device loghash
+cp "$DEV/data/data/$PKG/files/bepinex/log.txt" "$ROOT/loghash-before.txt"
+LOG_CASE="$ROOT/log-hash-crash-case"
+mkdir -p "$LOG_CASE"
+printf 'fake game wrote a new log line\n' > "$LOG_CASE/expect.txt"
+export FAKE_PID_CALLS="$ROOT/loghash-pid-calls-$$"
+: > "$FAKE_PID_CALLS"
+REAL_SHA256SUM=$(command -v sha256sum)
+export REAL_SHA256SUM
+cat > "$BINDIR/sha256sum" <<'EOF'
+#!/bin/sh
+for _arg do
+    case "$_arg" in */log.txt) exit 0;; esac
+done
+exec "$REAL_SHA256SUM" "$@"
+EOF
+/bin/chmod 755 "$BINDIR/sha256sum"
+cat > "$BINDIR/su" <<'EOF'
+#!/bin/sh
+CMD=$(cat)
+printf '%s\n' "$CMD" | sed "s#/data/#${DEV:?}/data/#g" | sh
+_rc=$?
+case "$CMD" in
+  *"cp -a /data/local/tmp/t1-bak-out-$FAKE_PKG /data/data/$FAKE_PKG/files/bepinex"*)
+      sed -i 's/mod carregado/mod alterado!/' \
+          "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt" ;;
+esac
+exit "$_rc"
+EOF
+chmod 755 "$BINDIR/su"
+cat > "$BINDIR/adb" <<'EOF'
+#!/bin/sh
+case "$1" in
+  get-state) echo device ;;
+  logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
+  shell) shift; case "$1" in
+      su) su ;;
+      am) shift 2 >/dev/null; : ;;
+      monkey)
+          printf '11:00:01 [fake-game] fake game wrote a new log line\n' \
+              >> "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt" ;;
+      pidof)
+          _n=$(cat "$FAKE_PID_CALLS" 2>/dev/null || echo 0)
+          _n=$((_n + 1))
+          echo "$_n" > "$FAKE_PID_CALLS"
+          [ "$_n" = 1 ] && echo "$FAKE_PID" ;;
+      *) : ;;
+    esac ;;
+  *) : ;;
+esac
+EOF
+chmod 755 "$BINDIR/adb"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$LOG_CASE" 6 2>&1) || RC=$?
+if echo "$OUT" | grep -q "FAIL: snapshot inicial incompleto" \
+        && [ "$RC" != 0 ] \
+        && cmp -s "$ROOT/loghash-before.txt" "$DEV/data/data/$PKG/files/bepinex/log.txt" \
+        && ! echo "$OUT" | grep -q "device restaurado"; then
+    ok "snapshot sem hash recusado antes de alterar o device"
+else
+    bad "snapshot sem hash deve falhar fechado antes de alterar o device (exit $RC)"
+    echo "$OUT" | grep -E 'device restaurado|RESTAURACAO FALHOU|snapshot inicial' | tail -3
+    echo "  log depois: $(cat "$DEV/data/data/$PKG/files/bepinex/log.txt")"
+fi
+write_base_su
+unset FAKE_PKG FAKE_PID_CALLS REAL_SHA256SUM
+rm -f "$BINDIR/sha256sum"
+write_base_adb
+
+scen "(log-diff) toda divergencia e listada por arquivo e falha"
+new_device logdiff
+LOG_CASE="$ROOT/log-diff-crash-case"
+mkdir -p "$LOG_CASE"
+printf 'fake game wrote a new log line\n' > "$LOG_CASE/expect.txt"
+export FAKE_PKG="$PKG" FAKE_PID_CALLS="$ROOT/logdiff-pid-calls-$$"
+: > "$FAKE_PID_CALLS"
+cat > "$BINDIR/su" <<'EOF'
+#!/bin/sh
+CMD=$(cat)
+printf '%s\n' "$CMD" | sed "s#/data/#${DEV:?}/data/#g" | sh
+_rc=$?
+case "$CMD" in
+  *"cp -a /data/local/tmp/t1-bak-out-$FAKE_PKG /data/data/$FAKE_PKG/files/bepinex"*)
+      sed -i 's/mod carregado/mod alterado!/' \
+          "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt"
+      printf '1 1\n' > "$DEV/data/data/$FAKE_PKG/files/bepinex/crashguard" ;;
+esac
+exit "$_rc"
+EOF
+chmod 755 "$BINDIR/su"
+cat > "$BINDIR/adb" <<'EOF'
+#!/bin/sh
+case "$1" in
+  get-state) echo device ;;
+  logcat) [ "$2" = "-c" ] && exit 0; cat "$FAKE_LOGCAT" 2>/dev/null ;;
+  push) _dst=$(printf '%s' "$3" | sed "s#^/data/#$DEV/data/#"); cp "$2" "$_dst" ;;
+  shell) shift; case "$1" in
+      su) su ;;
+      am) shift 2 >/dev/null; : ;;
+      monkey)
+          printf '1 1\n' > "$DEV/data/data/$FAKE_PKG/files/bepinex/crashguard"
+          printf '11:00:01 [fake-game] fake game wrote a new log line\n' \
+              >> "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt" ;;
+      pidof)
+          _n=$(cat "$FAKE_PID_CALLS" 2>/dev/null || echo 0)
+          _n=$((_n + 1))
+          echo "$_n" > "$FAKE_PID_CALLS"
+          [ "$_n" = 1 ] && echo "$FAKE_PID" ;;
+      *) : ;;
+    esac ;;
+  *) : ;;
+esac
+EOF
+chmod 755 "$BINDIR/adb"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$LOG_CASE" 6 2>&1) || RC=$?
+case "$OUT" in *"/files/bepinex/log.txt"*) HAS_LOG_DIFF=1;; *) HAS_LOG_DIFF=0;; esac
+case "$OUT" in *"/files/bepinex/crashguard"*) HAS_CRASHGUARD_DIFF=1;; *) HAS_CRASHGUARD_DIFF=0;; esac
+case "$OUT" in *"RESTAURACAO FALHOU (estado difere do inicial;"*) HAS_RESTORE_FAILURE=1;; *) HAS_RESTORE_FAILURE=0;; esac
+if [ "$RC" = 2 ] \
+        && [ "$HAS_RESTORE_FAILURE" = 1 ] \
+        && [ "$HAS_LOG_DIFF" = 1 ] \
+        && [ "$HAS_CRASHGUARD_DIFF" = 1 ]; then
+    ok "exit 2 e lista incluem log.txt e crashguard divergentes"
+else
+    bad "divergencias devem falhar com exit 2 e listar os dois arquivos (exit $RC)"
+    echo "  arquivo flags: restore=$HAS_RESTORE_FAILURE log=$HAS_LOG_DIFF crashguard=$HAS_CRASHGUARD_DIFF"
+    echo "$OUT" | tail -15
+fi
+write_base_su
+write_base_adb
+unset FAKE_PKG FAKE_PID_CALLS
+
 # --- (r1) hash inicial de mods EXISTENTE falha (transiente): recusa, nada apagado
 # O bug antigo: saída vazia virava "AUSENTE" e o restore apagava a pasta sem
 # repor do backup. O su falo devolve vazio SÓ na 1ª leitura de hash de mods.
@@ -274,7 +458,7 @@ cat > "$BINDIR/su" <<'EOF'
 #!/bin/sh
 CMD=$(cat)
 case "$CMD" in
-  *"mods/$FAKE_PKG' && {"*)
+  *"t1-tree-hash-"*"$FAKE_PKG"*)
     _n=$(cat "${MODS_HASH_STATE:?}" 2>/dev/null || echo 0)
     _n=$((_n + 1))
     echo "$_n" > "${MODS_HASH_STATE:?}"
