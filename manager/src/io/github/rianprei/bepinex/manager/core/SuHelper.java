@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -228,6 +229,35 @@ public final class SuHelper {
         return list;
     }
 
+    /**
+     * Inventário de mods de TODOS os apps: UMA chamada root (o laço por app
+     * acontecia dentro do shell do device). Existe por causa do travamento de
+     * 2026-09-27 — ver ModInventory.
+     */
+    public static String listAllModsInventory() {
+        return exec(ModInventory.command()).stdout;
+    }
+
+    /**
+     * Conteúdo de vários arquivos do device em UMA chamada, com separador
+     * (mesma economia: um `su` por item de lista é o que estourou memória).
+     * Devolve null em falha.
+     */
+    public static String readTextFiles(String dir, Collection<String> names) {
+        if (dir == null || names == null || names.isEmpty()) return "";
+        if (dir == null || names == null || names.isEmpty()) return "";
+        StringBuilder cmd = new StringBuilder();
+        for (String n : names) {
+            requireFileName(n);
+            cmd.append("echo '").append(BUNDLE_SEP).append(n).append("' >/dev/null; ")
+               .append("cat '").append(dir).append("/").append(n).append("' 2>/dev/null; ");
+        }
+        return exec(cmd.toString()).stdout;
+    }
+
+    /** Separador da resposta de readTextFiles (linha inteira, nome do arquivo). */
+    public static final String BUNDLE_SEP = "@@@FILE:";
+
     public static String readTextFile(String filePath) {
         try {
             requirePath(filePath, "file");
@@ -404,14 +434,26 @@ public final class SuHelper {
         return r.success && r.stdout.contains("yes");
     }
 
+    /**
+     * Contador + marcador do crashguard em UMA chamada root (eram duas: um cat
+     * e um test -f). Mesmo orçamento do resto: chamada por tela, nunca por item.
+     */
     public static CrashGuardState.State readCrashGuard(String pkg) {
         try {
             requirePkg(pkg);
         } catch (IllegalArgumentException e) {
             return CrashGuardState.parse(null, false);
         }
-        String counter = readTextFile(CrashGuardState.counterPath(pkg));
-        return CrashGuardState.parse(counter, hasCrashGuardMarker(pkg));
+        String marker = CrashGuardState.modsMarkerPath(pkg);
+        Result r = exec("{ cat '" + CrashGuardState.counterPath(pkg) + "' 2>/dev/null; echo; "
+                + "if [ -f '" + CrashGuardState.markerPath(pkg) + "' ] || [ -f '" + marker + "' ]; "
+                + "then echo bep-marker; fi; }");
+        if (!r.success) return CrashGuardState.parse(null, false);
+        String raw = r.stdout == null ? "" : r.stdout;
+        int nl = raw.lastIndexOf('\n');
+        String counter = (nl > 0) ? raw.substring(0, nl) : "";
+        boolean hasMarker = raw.contains("bep-marker");
+        return CrashGuardState.parse(counter, hasMarker);
     }
 
     // "Reativar": apaga o marcador e zera o contador. Sem zerar, o aviso

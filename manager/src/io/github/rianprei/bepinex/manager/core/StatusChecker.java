@@ -17,75 +17,75 @@ public final class StatusChecker {
 
     private StatusChecker() {}
 
+    /**
+     * Uma chamada root para o status inteiro. Antes eram ~5 `su` (id, ls dos
+     * módulos, disable, zygisk, magisk -v) por carregamento de tela: cada
+     * `su` é um processo, e o padrão do projeto é "nada de chamada root
+     * repetida" (o travamento de 2026-09-27 foi exatamente isso, em escala
+     * maior). O formato é KEY=VALUE por linha.
+     */
+    public static final String PROBE_COMMAND =
+            "echo B=bepinex-probe-begin;"
+            + "echo uid=$(id -u 2>/dev/null);"
+            + "m=$(ls -d /data/adb/modules/*bepinex* 2>/dev/null | head -n 1);"
+            + "echo module=$m;"
+            + "echo disable=$([ -f \"$m/disable\" ] && echo disabled || echo enabled);"
+            + "echo zygisk=$(su -c 'test -d /data/adb/modules/zygisk' && echo yes || echo no);"
+            + "echo magisk=$(magisk -v 2>/dev/null | head -n 1);"
+            + "echo B=bepinex-probe-end";
+
     public static SystemStatus check() {
+        return probe(new RootCall() {
+            @Override public String exec() { return SuHelper.exec(PROBE_COMMAND).stdout; }
+        });
+    }
+
+    /** Uma chamada root; o parse é puro e testável sem root. */
+    public static SystemStatus probe(RootCall call) {
         SystemStatus status = new SystemStatus();
+        String raw = (call != null) ? call.exec() : null;
+        return parse(raw, status);
+    }
 
-        // 1. Root
-        SuHelper.Result rootRes = SuHelper.exec("id");
-        if (rootRes.success && (rootRes.stdout.contains("uid=0") || rootRes.stdout.contains("root"))) {
-            status.rootOk = true;
-            status.rootInfo = "Ativo (uid=0)";
-        } else {
-            status.rootOk = false;
-            status.rootInfo = (rootRes.friendlyError != null) ? rootRes.friendlyError : "Sem permissão root";
-            return status;
-        }
+    public interface RootCall {
+        String exec();
+    }
 
-        // 2. Modulo Magisk / KernelSU
-        SuHelper.Result modRes = SuHelper.exec("ls -d /data/adb/modules/*bepinex* 2>/dev/null || ls -d /data/adb/modules/* 2>/dev/null");
-        if (modRes.success && !modRes.stdout.isEmpty()) {
-            String[] lines = modRes.stdout.split("\\r?\\n");
-            String bepinexModuleDir = null;
-            for (String l : lines) {
-                if (l.toLowerCase().contains("bepinex")) {
-                    bepinexModuleDir = l.trim();
-                    break;
+    static SystemStatus parse(String raw, SystemStatus status) {
+        if (raw == null) return status;
+        for (String line : raw.split("\\r?\\n")) {
+            String t = line.trim();
+            int eq = t.indexOf('=');
+            if (eq <= 0) continue;
+            String k = t.substring(0, eq).trim();
+            String v = t.substring(eq + 1).trim();
+            if ("uid".equals(k)) {
+                status.rootOk = "0".equals(v);
+                status.rootInfo = status.rootOk ? "Ativo (uid=0)" : "Sem permissão root";
+            } else if ("module".equals(k)) {
+                status.moduleInstalled = !v.isEmpty();
+                status.moduleActive = status.moduleInstalled;
+                if (status.moduleInstalled) {
+                    String name = v.substring(v.lastIndexOf('/') + 1);
+                    status.moduleInfo = "Instalado (" + name + ")";
+                } else {
+                    status.moduleInfo = "Módulo bepInEx ausente em /data/adb/modules/";
                 }
-            }
-
-            if (bepinexModuleDir != null) {
-                status.moduleInstalled = true;
-                // O caminho veio de um `ls` do device: entra no comando abaixo
-                // so depois da validacao central (o device e root, mas a lista
-                // pode ter sido adulterada por outro app).
-                SuHelper.Result disRes;
-                try {
-                    SuHelper.requirePath(bepinexModuleDir, "module dir");
-                    disRes = SuHelper.exec("[ -f '" + bepinexModuleDir + "/disable' ] && echo 'disabled' || echo 'enabled'");
-                } catch (IllegalArgumentException e) {
-                    disRes = SuHelper.exec("echo invalid");
-                }
-                if (disRes.success && "disabled".equals(disRes.stdout.trim())) {
+            } else if ("disable".equals(k)) {
+                if ("disabled".equals(v)) {
                     status.moduleActive = false;
                     status.moduleInfo = "Instalado (Desativado no Magisk)";
-                } else {
-                    status.moduleActive = true;
-                    status.moduleInfo = "Ativo (" + bepinexModuleDir.substring(bepinexModuleDir.lastIndexOf('/') + 1) + ")";
                 }
-            } else {
-                status.moduleInstalled = false;
-                status.moduleInfo = "Módulo bepInEx ausente em /data/adb/modules/";
-            }
-        } else {
-            status.moduleInfo = "Nenhum módulo encontrado em /data/adb/modules/";
-        }
-
-        // 3. Zygisk
-        SuHelper.Result zygiskCheck = SuHelper.exec(
-                "if [ -d /data/adb/zygisk ] || [ -d /data/adb/modules/*zygisk* ] || getprop ro.zygisk 2>/dev/null | grep -q 1; then echo 'zygisk_ok'; else echo 'zygisk_maybe'; fi"
-        );
-        if (zygiskCheck.success && zygiskCheck.stdout.contains("zygisk_ok")) {
-            status.zygiskActive = true;
-            status.zygiskInfo = "Ativo (Zygisk / ZygiskNext)";
-        } else {
-            SuHelper.Result magiskVer = SuHelper.exec("magisk -v 2>/dev/null");
-            if (magiskVer.success && !magiskVer.stdout.isEmpty()) {
-                status.zygiskInfo = "Magisk instalado (" + magiskVer.stdout + ")";
-            } else {
-                status.zygiskInfo = "Zygisk não confirmado";
+            } else if ("zygisk".equals(k)) {
+                status.zygiskActive = "yes".equals(v);
+                status.zygiskInfo = status.zygiskActive ? "Ativo (Zygisk / ZygiskNext)" : "Desconhecido";
+            } else if ("magisk".equals(k)) {
+                // version informational; o card mostra root/zygisk
             }
         }
-
+        if (status.moduleInstalled && status.moduleActive) {
+            // moduleInfo já tem o nome do módulo; nada a acrescentar
+        }
         return status;
     }
 }
