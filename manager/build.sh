@@ -61,10 +61,17 @@ mkdir -p "${ASSET_DIR}"
 # (jni/repro.mk, para o release ter símbolo de crash), e o APK cresceria ~1,6 MB
 # por causa de DWARF que o celular não usa. symbols_ship gera a cópia stripped
 # e recusa entregar uma com .symtab.
+#
+# E o TERCEIRO ARGUMENTO: a raiz de símbolos. Sem ele o .so não-stripado é
+# descartado e o APK fica com uma biblioteca nativa de que NINGUÉM tem símbolo
+# (achado da revisão de f59e9ff, MEDIA): o u_dump roda dentro do processo do
+# jogo e é o que mais quebra, então é justamente o binário que o dev mais
+# precisa simbolizar. Todo o resto que é entregue (loader, mods da release) tem
+# símbolo; o do APK era o único de fora.
 # shellcheck source=tools/symbols.sh
 # shellcheck disable=SC1091
 . "${SCRIPT_DIR}/../tools/symbols.sh"
-symbols_ship "${U_DUMP_SO}" "${ASSET_DIR}/u_dump.so"
+symbols_ship "${U_DUMP_SO}" "${ASSET_DIR}/u_dump.so" "${SYMBOLS_DIR:-}"
 
 # Garante keystore debug se nao existir
 if [[ "${MANAGER_UNSIGNED:-0}" != 1 && ! -f "${KEYSTORE}" ]]; then

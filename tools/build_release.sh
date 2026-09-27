@@ -74,6 +74,7 @@ cp "$WORK/module/bepinex-termux-$VERSION.zip" "$RELEASE_DIR/bepinex-termux-$VERS
 
 MANAGER_OUTPUT_APK="$WORK/manager/bepinex-manager-$VERSION.apk" \
 MANAGER_BUILD_DIR="$WORK/manager/build" \
+SYMBOLS_DIR="$RELEASE_DIR/symbols" \
 MANAGER_GEN_DIR="$WORK/manager/gen" \
 MANAGER_UNSIGNED="$MANAGER_UNSIGNED" \
 MANAGER_KEYSTORE="${MANAGER_KEYSTORE:-}" \

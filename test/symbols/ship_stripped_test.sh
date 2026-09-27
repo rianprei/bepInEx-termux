@@ -152,6 +152,58 @@ else
     fail=1
 fi
 
+# --- 4b. TODO .so entregue tem símbolo guardado, com o MESMO build-id ------
+#
+# ACHADO DA REVISÃO (f59e9ff, MEDIA): manager/build.sh chamava o symbols_ship
+# com DOIS argumentos, sem raiz de símbolos. O u_dump.so saía stripped (certo)
+# e o não-stripado era DESCARTADO — então o APK entregava uma biblioteca nativa
+# de que ninguém tinha símbolo, e é justamente a que roda dentro do processo do
+# jogo. Todo o resto que é entregue tinha símbolo; o do APK era o único de fora.
+#
+# Este check é GENÉRICO de propósito: ele varre TODOS os .so entregues que
+# existem no disco e exige, para cada um, um símbolo guardado com o mesmo
+# build-id. Não é um teste só pro u_dump — se amanhã entrar mais um .so no APK
+# ou na release sem passar por symbols_ship, ele aparece aqui sozinho.
+#
+# Cobre: .so dentro do .bmod, o do stage do deploy, o dos assets do APK, e o da
+# release (mods/). A lista vem do que existe, não do que o teste conhece.
+echo "ship-stripped: (4b) todo .so entregue tem símbolo com o MESMO build-id"
+ENTREGUES=0
+FALTA=0
+while IFS= read -r entregue; do
+    [ -f "$entregue" ] || continue
+    ENTREGUES=$((ENTREGUES + 1))
+    bid="$(symbols_build_id "$entregue")"
+    rel="$entregue"
+    case "$entregue" in
+        "$WORK"/*) rel="(stage do deploy) ${entregue#$WORK/}" ;;
+        "$ROOT"/*) rel="${entregue#$ROOT/}" ;;
+    esac
+    if [ -z "$bid" ] || [ "$bid" = "0" ]; then
+        printf '  [FAIL] %s sem NT_GNU_BUILD_ID: nao da para casar simbolo\n' "$rel"
+        FALTA=$((FALTA + 1))
+        continue
+    fi
+    if [ ! -d "$WORK/symbols/$bid" ] || [ -z "$(find "$WORK/symbols/$bid" -name '*.so' -print -quit 2>/dev/null)" ]; then
+        printf '  [FAIL] %s (build-id %s) NAO tem simbolo guardado\n' "$rel" "$(printf '%.12s' "$bid")"
+        FALTA=$((FALTA + 1))
+        continue
+    fi
+    sym="$(find "$WORK/symbols/$bid" -name '*.so' -print -quit)"
+    "$BINDIR/llvm-readelf" -S "$sym" >"$WORK/sym.sec" 2>/dev/null || true
+    if ! grep -q '\.symtab' "$WORK/sym.sec"; then
+        printf '  [FAIL] %s: o simbolo guardado para %s esta SEM .symtab\n' "$rel" "$(printf '%.12s' "$bid")"
+        FALTA=$((FALTA + 1))
+        continue
+    fi
+    printf '  [PASS] %s tem simbolo com o mesmo build-id (%s)\n' "$rel" "$(printf '%.12s' "$bid")"
+done < <(find "$WORK" "$ROOT/mods" "$ROOT/out" -name '*.so' -not -path '*/obj/*' \
+    -not -path '*/libs/*' -not -path '*/symbols/*' 2>/dev/null)
+if [ "$ENTREGUES" -eq 0 ]; then
+    die "nenhum .so entregue encontrado para conferir: o teste nao provar nada"
+fi
+check "todo .so entregue ($ENTREGUES) tem simbolo com o mesmo build-id" "$FALTA"
+
 # --- 5. nenhum consumidor de libs/arm64-v8a/*.so copia o .so cru ----------
 # A lista é o conjunto de tudo que a varredura encontrou. Se um consumidor novo
 # aparecer, a lista tem que ser atualizada — e este check garante que nenhum dos
@@ -190,6 +242,50 @@ for f in tools/pack_bmod.sh tools/deploy_mod.sh manager/build.sh tools/build_mod
     fi
 done
 check "nenhum consumidor copia o .so de build cru" "$RAW_COPY"
+
+# --- 5b. o caminho de RELEASE passa RAIZ DE SÍMBOLOS --------------------------
+#
+# É o que cobre o caso do u_dump.so sem buildar o APK aqui (o APK do gate exige
+# o SDK e demora). Sem o terceiro argumento o .so não-stripado é DESCARTADO, e o
+# APK entrega uma biblioteca nativa de que ninguém tem símbolo — que foi
+# exatamente o achado: manager/build.sh chamava com dois argumentos.
+#
+# Só o caminho de RELEASE é exigido: build_release (que monta o diretório da
+# release), build_module (o loader do zip Magisk) e manager/build (os assets do
+# APK) têm um arquivo de símbolos para onde guardar. pack_bmod e deploy_mod são
+# ferramentas de DESENVOLVEDOR — o .bmod vai para outra pessoa e o deploy vai
+# para o aparelho de quem está testando; não há arquivo de símbolos para nenhum
+# dos dois, e inventar um seria guardar 1,8 MB à toa.
+echo "ship-stripped: (5b) o caminho de release guarda símbolo do que publica"
+SINROOT=0
+for f in manager/build.sh tools/build_release.sh tools/build_module.sh; do
+    [ -f "$ROOT/$f" ] || continue
+    while IFS= read -r linha; do
+        # NÃO usar IFS=: para separar "NN:conteudo": a linha pode ter mais
+        # dois-pontos dentro ("${SYMBOLS_DIR:-}") e o campo saía partido.
+        ln="${linha%%:*}"
+        # a chamada pode continuar na linha seguinte; junta as 3
+        corpo="$(sed -n "${ln},$((ln + 2))p" "$ROOT/$f")"
+        # a chamada pode ocupar DUAS linhas ("\\" no fim da primeira), então os
+        # argumentos são contados no corpo inteiro — mas só a partir da linha
+        # da chamada, e sem as linhas de comentário (que citam symbols_ship sem
+        # chamar).
+        ult="$(printf '%s' "$corpo" | grep -m1 -E '^[[:space:]]*symbols_ship ')"
+        [ -n "$ult" ] || continue
+        chamada="$ult"
+        # se a primeira linha acabou em \, a continuação entra na contagem
+        case "$ult" in *\\) chamada="$ult $(printf '%s' "$corpo" | sed -n '2p')" ;; esac
+        nargs="$(printf '%s' "$chamada" | sed 's/.*symbols_ship //' | grep -o '"[^"]*"' | wc -l)"
+        if [ "$nargs" -lt 3 ]; then
+            printf '  [FAIL] %s:%s publica um .so e NAO guarda simbolo (%s argumento(s))\n' \
+                "$f" "$ln" "$nargs"
+            SINROOT=1
+        else
+            printf '  [PASS] %s:%s guarda simbolo do que publica\n' "$f" "$ln"
+        fi
+    done < <(grep -nE '^[[:space:]]*symbols_ship ' "$ROOT/$f" 2>/dev/null || true)
+done
+check "todo .so publicado tem simbolo guardado" "$SINROOT"
 
 [ "$fail" -eq 0 ] || die "simbolo vazando para o usuario (ver acima)"
 echo "ship-stripped: OK (bmod, deploy e APK sem .symtab; $SRC_SIZE -> $(stat -c%s "$WORK/bmod.so") bytes)"
