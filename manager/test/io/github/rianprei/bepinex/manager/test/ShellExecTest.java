@@ -750,10 +750,20 @@ public class ShellExecTest {
                 sh(StatusChecker.command(adb.getPath())).out, new StatusChecker.SystemStatus());
         check("sem zygisk nem magisk: card diz 'não confirmado'",
                 !f.zygiskActive && f.zygiskInfo.contains("não confirmado"));
+        new File(modules, "zygisknext").mkdirs();
+        StatusChecker.SystemStatus zygiskNext = StatusChecker.parse(
+                sh(StatusChecker.command(adb.getPath())).out, new StatusChecker.SystemStatus());
+        check("somente modules/zygisknext ativa Zygisk",
+                zygiskNext.zygiskActive && zygiskNext.zygiskInfo.contains("Ativo"));
+        new File(modules, "zygisk-on").mkdirs();
+        StatusChecker.SystemStatus multipleZygisk = StatusChecker.parse(
+                sh(StatusChecker.command(adb.getPath())).out, new StatusChecker.SystemStatus());
+        check("dois módulos zygisk continuam ativos sem erro",
+                multipleZygisk.zygiskActive && multipleZygisk.zygiskInfo.contains("Ativo"));
         new File(adb, "zygisk").mkdirs();
         StatusChecker.SystemStatus g = StatusChecker.parse(
                 sh(StatusChecker.command(adb.getPath())).out, new StatusChecker.SystemStatus());
-        check("com /data/adb/zygisk: zygisk ativo (1 das 3 condições)",
+        check("com /data/adb/zygisk: zygisk ativo",
                 g.zygiskActive && g.zygiskInfo.contains("Ativo"));
         check("nenhum su aninhado no comando (1 processo, não 2)",
                 !StatusChecker.command(adb.getPath()).contains("su -c"));
