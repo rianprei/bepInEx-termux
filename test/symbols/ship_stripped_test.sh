@@ -176,8 +176,8 @@ while IFS= read -r entregue; do
     bid="$(symbols_build_id "$entregue")"
     rel="$entregue"
     case "$entregue" in
-        "$WORK"/*) rel="(stage do deploy) ${entregue#$WORK/}" ;;
-        "$ROOT"/*) rel="${entregue#$ROOT/}" ;;
+        "$WORK"/*) rel="(stage do deploy) ${entregue#"$WORK"/}" ;;
+        "$ROOT"/*) rel="${entregue#"$ROOT"/}" ;;
     esac
     if [ -z "$bid" ] || [ "$bid" = "0" ]; then
         printf '  [FAIL] %s sem NT_GNU_BUILD_ID: nao da para casar simbolo\n' "$rel"
@@ -286,6 +286,66 @@ for f in manager/build.sh tools/build_release.sh tools/build_module.sh; do
     done < <(grep -nE '^[[:space:]]*symbols_ship ' "$ROOT/$f" 2>/dev/null || true)
 done
 check "todo .so publicado tem simbolo guardado" "$SINROOT"
+
+# --- 5c. o símbolo guardado não leva caminho de quem compilou ---------------
+#
+# ACHADO DA REVISÃO (f59e9ff, BAIXA): a release é pública e o arquivo de
+# símbolos carregava /home/rianprei/... e /home/rianprei/battlecats-mods/...,
+# vindos do DWARF do prebuilt jni/lib/arm64-v8a/libdobby.a e das Includes do
+# próprio NDK. Duas fontes, a mesma clase: o home de quem montou a release.
+#
+# O conserto é em jni/repro.mk: o prebuilt é linkado sem as seções .debug_* (o
+# .text é byte a byte o mesmo — conferido nos 40 objetos) e a raiz do NDK entra
+# no prefix-map. O prebuilt VERSIONADO não é alterado; a cópia limpa é do build.
+#
+# Este check olha o símbolo GUARDADO, que é o arquivo que sai na release.
+#
+# O padrão é /home/ e /Users/ — caminhos de MÁQUINA DE BUILD, e só eles.
+# "battlecats-mods" NÃO entra: no loader ele aparece em caminho de APARELHO
+# (/data/data/com.termux/files/home/battlecats-mods/...) e nos símbolos JNI do
+# jogo (Java_jp_co_ponos_battlecats_*), que são legítimos. Pegar o nome do
+# projeto daria falso positivo em código que está certo.
+echo "ship-stripped: (5c) o símbolo guardado não leva caminho pessoal"
+VAZ=0
+# O alvo tem que ser um mod que USA Dobby. O mod de teste deste arquivo vem de
+# mods/_template, que não usa Dobby — com ele o check passaria mesmo com o
+# prebuilt cru, e a primeira sabotagem passou justamente por isso.
+DOBBY_MOD="${SYMBOLS_DOBBY_MOD:-u_noads}"
+DOBBY_SO="$ROOT/mods/$DOBBY_MOD/libs/arm64-v8a/lib$DOBBY_MOD.so"
+if [ ! -f "$DOBBY_SO" ] || [ "$ROOT/mods/$DOBBY_MOD/jni/Android.mk" -nt "$DOBBY_SO" ] ||
+   [ "$ROOT/jni/repro.mk" -nt "$DOBBY_SO" ] || [ "$ROOT/jni/lib/arm64-v8a/libdobby.a" -nt "$DOBBY_SO" ]; then
+    ( cd "$ROOT/mods/$DOBBY_MOD" && "$NDK/ndk-build" -B -j4 ) >"$WORK/dobby.log" 2>&1 ||
+        { tail -5 "$WORK/dobby.log" >&2; die "build de mods/$DOBBY_MOD (que usa Dobby) falhou"; }
+fi
+[ -f "$DOBBY_SO" ] || die "mods/$DOBBY_MOD nao gerou $DOBBY_SO: o check (5c) nao prova nada"
+# e o símbolo guardado DESTE .so, que é o arquivo que sai na release
+DOBBY_SYM="$WORK/symbols-dobby"
+# symbols_add imprime o build-id no stdout; aqui o que importa e que ele
+# ARMAZENA o .so nao-stripado (o 2o argumento), que e o arquivo que sai na
+# release. O id vai para stdout de propósito, para o build-id nao ser um valor
+# morto que o shellcheck acusa.
+symbols_add "$DOBBY_SO" "$DOBBY_SYM" "lib$DOBBY_MOD" >/dev/null
+for alvo in "$DOBBY_SO" "$DOBBY_SYM" "$WORK/symbols"; do
+    [ -e "$alvo" ] || continue
+    while IFS= read -r bin; do
+        [ -f "$bin" ] || continue
+        case "$bin" in
+            */prebuilt-limpo/*) continue ;;   # a cópia já limpa é a boa
+        esac
+        n=$(strings "$bin" 2>/dev/null | grep -cE '/home/|/Users/' || true)
+        if [ "$n" -gt 0 ]; then
+            printf '  [FAIL] %s leva %s caminho(s) de maquina de build:\n' \
+                "${bin#"$ROOT"/}" "$n"
+            strings "$bin" | grep -E '/home/|/Users/' | sort -u |
+                head -3 | sed 's/^/          /'
+            VAZ=1
+        fi
+    done < <(find "$alvo" -name '*.so' 2>/dev/null)
+done
+if [ "$VAZ" -eq 0 ]; then
+    printf '  [PASS] mods/%s (que usa Dobby), seu símbolo guardado e o deste teste não levam /home nem /Users\n' "$DOBBY_MOD"
+fi
+check "o símbolo guardado não leva caminho de quem compilou" "$VAZ"
 
 [ "$fail" -eq 0 ] || die "simbolo vazando para o usuario (ver acima)"
 echo "ship-stripped: OK (bmod, deploy e APK sem .symtab; $SRC_SIZE -> $(stat -c%s "$WORK/bmod.so") bytes)"
