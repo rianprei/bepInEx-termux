@@ -14,5 +14,5 @@ sed -i "s/__MOD_ID__/$id/g" \
     "mods/$id/jni/mod.cpp" "mods/$id/jni/Android.mk" "mods/$id/manifest.json"
 
 echo "criado: mods/$id"
-echo "build + deploy:   tools/deploy_mod.sh $id <pkg>"
-echo "pacote .bmod:     tools/pack_bmod.sh $id"
+echo "build + deploy:   tools/deploy_mod.sh $id <pkg> (detecta ABI instalada)"
+echo "pacote .bmod:     tools/pack_bmod.sh $id <ABI do jogo>"

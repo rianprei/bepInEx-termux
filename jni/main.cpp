@@ -1910,6 +1910,10 @@ static void *generic_event_thread(void *arg) {
              loaded > 0 ? "" : " (pasta vazia)");
         return nullptr;
     }
+#if !defined(__aarch64__)
+    LOGI("%s: detector/hook genérico ainda não suportado em 32-bit; ignorando", pkg);
+    return nullptr;
+#endif
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
     // JNI única logo após System.loadLibrary() (padrão comum de init) pode
     // rodar ANTES do poll instalar o hook — DobbyInstrument só intercepta
@@ -1969,6 +1973,14 @@ public:
         }
         be_bc = bc_path_is_bc(pkg_copy);
         env->ReleaseStringUTFChars(args->nice_name, nice_name);
+#if !defined(__aarch64__)
+        if (be_bc) {
+            LOGW("%s: offsets e hooks do Battle Cats só foram validados em AArch64; processo ignorado",
+                 pkg_copy);
+            api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+#endif
         if (!be_bc) {
             // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
             // entrar no caminho de mods autônomos — nada de allowlist, nada de

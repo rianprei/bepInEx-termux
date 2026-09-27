@@ -197,6 +197,15 @@ static void fake_try_show_interstitial(void *, void *) {
 }
 
 static void *worker(void *) {
+    // 32-bit: o hook Dobby deste mod so foi validado em aparelho AArch64. Sem
+    // esta guarda o MESMO codigo roda no ARM32, onde nunca foi testado — e um
+    // hook errado em ARM32 pode fechar o jogo. Mesma decisao do u_patch, do
+    // u_noads e do u_frida: recusar com log e sair limpo, em vez de hookar.
+#if !defined(__aarch64__)
+    LOG("não suportado em 32-bit: o hook Dobby é AArch64 e não foi validado em "
+        "aparelho 32-bit; nenhum hook foi instalado");
+    return nullptr;
+#endif
     if (!il2cpp_boot(il)) { LOG("boot IL2CPP falhou; consulte o log do mod para o motivo"); return nullptr; }
     void *gb = nullptr, *cat = nullptr, *item = nullptr, *ads = nullptr;
     for (int i = 0; i < 600 && !(gb && cat && item && ads); i++) {

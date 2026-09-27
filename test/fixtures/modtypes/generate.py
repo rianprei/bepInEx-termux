@@ -63,16 +63,19 @@ def elf64(machine, pad=0x2000):
 
 
 def elf32(machine, pad=2048):
-    """ELF32 LE (armhf/x86) coerente no que o detector le: e_machine + class."""
-    e = bytearray(64)
+    """ELF32 LE com uma entrada PT_LOAD valida."""
+    e = bytearray(52)
     e[0:4] = b"\x7fELF"
     e[4] = 1                      # ELFCLASS32
     e[5] = 1                      # ELFDATA2LSB
     e[6] = 1
     struct.pack_into("<HH", e, 16, 3, machine)   # ET_DYN
     struct.pack_into("<I", e, 20, 1)
+    struct.pack_into("<I", e, 28, 52)            # e_phoff
+    struct.pack_into("<HHH", e, 40, 52, 32, 1)  # header + 1 program header
     out = bytearray(pad)
     out[0:len(e)] = e
+    struct.pack_into("<IIIIIIII", out, 52, 1, 0, 0, 0, pad, pad, 5, 4096)
     return bytes(out)
 
 

@@ -59,8 +59,7 @@ echo "${UPDATE_BINARY_SHA256}  ${ZIP_IN}" | sha256sum -c - >/dev/null || {
 }
 
 # --- 2. loader ------------------------------------------------------------------
-# Zygisk exige zygisk/<abi>.so (o nome do módulo sai do nome do .so? não: o
-# loader é carregado em todo app, não por nome de módulo — arm64-v8a.so basta).
+# Zygisk exige um arquivo zygisk/<abi>.so para cada ABI empacotada.
 [ -x "$NDK/ndk-build" ] || { echo "ERRO: ndk-build não encontrado em $NDK" >&2; exit 1; }
 # Antes de compilar: o sepolicy.rule tem que estar na gramática do magiskpolicy,
 # senão o Magisk aplica o arquivo em parte (statement ruim = warn e segue) e a
@@ -84,7 +83,11 @@ fi
 # --- 3. staging (limpo a cada run) ---------------------------------------------
 rm -rf "$STAGE" "$OUT/bepinex-termux-$VERSION.zip"
 mkdir -p "$STAGE/zygisk" "$STAGE/META-INF/com/google/android"
-cp libs/arm64-v8a/libbc-poc.so "$STAGE/zygisk/arm64-v8a.so"
+for abi in arm64-v8a armeabi-v7a; do
+    loader="libs/$abi/libbc-poc.so"
+    [ -f "$loader" ] || { echo "ERRO: build não gerou $loader" >&2; exit 1; }
+    cp "$loader" "$STAGE/zygisk/$abi.so"
+done
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
 cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \
    module/action.sh "$STAGE/"

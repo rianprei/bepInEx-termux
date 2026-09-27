@@ -18,7 +18,8 @@ import java.util.Set;
 // extensao .so nao garante um .so (dll de Windows, .lua do GameGuardian).
 //
 // O que o jogo faz com cada tipo:
-//   - ELF arm64  -> vira <id>.so em mods/<pkg>/ e o loader da dlopen (C1)
+//   - ELF ARM    -> vira <id>.so em mods/<pkg>/; o instalador exige a ABI
+//                   da aplicação escolhida antes de copiar (C1)
 //   - texto C4   -> vira <id>.bpatch, lido pelo u_patch
 //   - texto JS   -> vira <id>.js, lido pelo frida-gadget em modo script (F11)
 //   - .dll       -> NAO roda agora: .NET IL2CPP e F12, .NET Mono e F13, e
@@ -66,7 +67,8 @@ public final class ModContentDetector {
         BEPINEX_PC,       // zip de mod de PC com layout BepInEx: dll do PC;
                           // traducao para .bpatch e o futuro (dll2patch)
         ELF_ARM64,        // ELF E_AARCH64 (183): mod nativo Android arm64
-        ELF_MALFORMED,    // ELF arm64 com cabecalho/PT_LOAD incoerente
+        ELF_ARM32,        // ELF EM_ARM (40): mod nativo Android armeabi-v7a
+        ELF_MALFORMED,    // ELF ARM com cabecalho/PT_LOAD incoerente
         ELF_OTHER_ARCH,   // ELF de outra arquitetura
         FRIDA_GADGET,     // frida-gadget: nunca entra como .so de mod
         PATCH,            // texto com regra do contrato C4
@@ -224,7 +226,7 @@ public final class ModContentDetector {
                                 + "que faz os scripts .js da pasta rodarem sozinhos.", null, null);
             }
             int machine = elfMachine(h);
-            if (machine == 183) { // E_AARCH64: o unico que o loader da dlopen no Android
+            if (machine == EM_AARCH64) {
                 // Antes de virar <id>.so, o ELF64 tem que ser um .so de verdade:
                 // ET_DYN, cabecalho e tabela de programas coerentes com o
                 // tamanho REAL do arquivo, todo PT_LOAD dentro do arquivo.
@@ -239,10 +241,20 @@ public final class ModContentDetector {
                 }
                 return installAs(s, ".so", Kind.ELF_ARM64, "mod nativo para Android");
             }
+            if (machine == EM_ARM) {
+                ElfCheck elf = validateElf32Arm(h, s.length);
+                if (!elf.ok) {
+                    return new Detection(Kind.ELF_MALFORMED, "mod para Android estragado", false,
+                            "O arquivo é um mod ARM de 32 bits, mas está estragado: " + elf.reason
+                                    + ". Instalar mod pela metade fecha o jogo. Baixe o mod de novo "
+                                    + "e tente outra vez.", null, null);
+                }
+                return installAs(s, ".so", Kind.ELF_ARM32, "mod nativo para Android 32 bits");
+            }
             return new Detection(Kind.ELF_OTHER_ARCH, "mod para outro aparelho", false,
                     "É um mod de verdade, mas feito para outro tipo de aparelho (" + archName(machine)
-                            + "). O seu celular só roda a versão para ARM de 64 bits; procure o "
-                            + "download para ARM 64 deste mod.", null, null);
+                            + "). O Manager instala versões Android ARM de 32 e 64 bits; procure "
+                            + "uma dessas versões para este celular.", null, null);
         }
 
         if (h.length >= 2 && h[0] == 'M' && h[1] == 'Z') {
@@ -523,11 +535,71 @@ public final class ModContentDetector {
     }
 
     private static final int EI_CLASS = 4, EI_DATA = 5;
-    private static final int ELFCLASS64 = 2, ELFDATA2LSB = 1;
-    private static final int EM_AARCH64 = 183;
+    private static final int ELFCLASS32 = 1, ELFCLASS64 = 2, ELFDATA2LSB = 1;
+    private static final int EM_ARM = 40, EM_AARCH64 = 183;
     private static final int ET_DYN = 3, ET_EXEC = 2;
+    private static final int EH_SIZE_32 = 52, PH_ENT_SIZE_32 = 32;
     private static final int EH_SIZE_64 = 64, PH_ENT_SIZE_64 = 56, PH_NUM_MAX = 128;
     private static final int PT_LOAD = 1;
+
+    public static ElfCheck validateElf32Arm(byte[] h, long fileLength) {
+        if (h.length < EH_SIZE_32) {
+            return new ElfCheck(false, "cabeçalho cortado (" + h.length + " bytes lidos, eram precisos "
+                    + EH_SIZE_32 + ")");
+        }
+        if ((h[EI_CLASS] & 0xFF) != ELFCLASS32) {
+            return new ElfCheck(false, "não é o formato de 32 bits esperado");
+        }
+        if ((h[EI_DATA] & 0xFF) != ELFDATA2LSB) {
+            return new ElfCheck(false, "não está na ordem de bytes esperada");
+        }
+        int eType = u16(h, 16);
+        if (eType == ET_EXEC) {
+            return new ElfCheck(false, "é um programa fechado nele mesmo, não uma biblioteca (ET_EXEC em vez de ET_DYN)");
+        }
+        if (eType != ET_DYN) return new ElfCheck(false, "tipo de arquivo fora do esperado (" + eType + ")");
+        if (elfMachine(h) != EM_ARM) {
+            return new ElfCheck(false, "foi feito para outro tipo de aparelho (código " + elfMachine(h) + ")");
+        }
+        if (fileLength < EH_SIZE_32) {
+            return new ElfCheck(false, "o arquivo tem " + fileLength + " bytes, pequeno demais");
+        }
+        if (u16(h, 40) != EH_SIZE_32) {
+            return new ElfCheck(false, "cabeçalho com tamanho fora do padrão (" + u16(h, 40) + ")");
+        }
+        int ePhentsize = u16(h, 42);
+        if (ePhentsize != PH_ENT_SIZE_32) {
+            return new ElfCheck(false, "tabela interna com tamanho fora do padrão (" + ePhentsize + ")");
+        }
+        int ePhnum = u16(h, 44);
+        if (ePhnum == 0 || ePhnum > PH_NUM_MAX) {
+            return new ElfCheck(false, "quantidade de partes carregáveis fora do limite (" + ePhnum + ")");
+        }
+        long ePhoff = Integer.toUnsignedLong(u32(h, 28));
+        long tableEnd = ePhoff + (long) ePhnum * ePhentsize;
+        if (ePhoff < EH_SIZE_32 || tableEnd > fileLength) {
+            return new ElfCheck(false, "a tabela interna fica fora do arquivo (posição " + ePhoff
+                    + ", " + ePhnum + " partes, arquivo de " + fileLength + " bytes)");
+        }
+        if (tableEnd > h.length) {
+            return new ElfCheck(false, "tabela interna cortada: o arquivo tem " + h.length
+                    + " bytes lidos e a tabela precisaria de " + tableEnd);
+        }
+        boolean sawLoad = false;
+        for (int i = 0; i < ePhnum; i++) {
+            int off = (int) (ePhoff + (long) i * ePhentsize);
+            if (u32(h, off) != PT_LOAD) continue;
+            sawLoad = true;
+            long pOffset = Integer.toUnsignedLong(u32(h, off + 4));
+            long pFilesz = Integer.toUnsignedLong(u32(h, off + 16));
+            if (pFilesz == 0 || pOffset > fileLength || pFilesz > fileLength - pOffset) {
+                return new ElfCheck(false, "uma parte do código fica fora do arquivo (posição "
+                        + pOffset + ", " + pFilesz + " bytes, arquivo de " + fileLength + ")");
+            }
+        }
+        return sawLoad ? new ElfCheck(true, null)
+                : new ElfCheck(false, "não tem nenhuma parte de código para o sistema carregar");
+    }
 
     // Devolve null quando o arquivo nem e ELF (o chamador so chama em isElf).
     // A partir dai, ok/reason dizem se da para tratar como .so arm64.

@@ -6,4 +6,4 @@ APP_CPPFLAGS := -std=c++17 -fomit-frame-pointer -DANDROID -D_FORTIFY_SOURCE=2 -D
 # isenção saiu em 81efee2, quando o base limpou o flag de todos os mods).
 APP_LDFLAGS := -Wl,-z,relro,-z,now -Wl,--as-needed
 APP_PLATFORM := android-23
-APP_ABI := arm64-v8a
+APP_ABI := arm64-v8a armeabi-v7a

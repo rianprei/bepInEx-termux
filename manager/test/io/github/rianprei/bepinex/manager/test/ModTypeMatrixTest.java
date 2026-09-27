@@ -50,8 +50,8 @@ public class ModTypeMatrixTest {
         // --- o CONTEUDO manda sobre a extensao ------------------------------
         matrix(elfArm64(dir), Kind.ELF_ARM64, true, null,
                 new String[]{});
-        matrix(elfArm32(dir), Kind.ELF_OTHER_ARCH, false,
-                new String[]{"outro tipo de aparelho", "ARM de 32 bits"},
+        matrix(elfArm32(dir), Kind.ELF_ARM32, true,
+                new String[]{},
                 new String[]{});
         matrix(elfX86_64(dir), Kind.ELF_OTHER_ARCH, false,
                 new String[]{"outro tipo de aparelho", "x86-64"},
