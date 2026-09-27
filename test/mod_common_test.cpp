@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     {
         char dir[320];
         setenv("BEPINEX_PKG", "com.env.pkg", 1);
-        check("dir do mod com env", mod_dir(dir, sizeof(dir)) && strcmp(dir, "/data/local/tmp/mods/com.env.pkg") == 0);
+        check("dir do mod com env", mod_dir(dir, sizeof(dir)) && strcmp(dir, "/data/adb/bepinex/mods/com.env.pkg") == 0);
         check("buffer curto rejeitado", !mod_dir(out, 8));
         unsetenv("BEPINEX_PKG");
     }

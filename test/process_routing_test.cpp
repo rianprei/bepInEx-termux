@@ -92,7 +92,7 @@ int main() {
                                      mods_dir, sizeof(mods_dir));
         check("u_patch conserva pacote de 255 chars e caminho completo",
               got == BC_PROCESS_READY && max_package == patch_pkg &&
-              std::string(mods_dir) == "/data/local/tmp/mods/" + max_package);
+              std::string(mods_dir) == "/data/adb/bepinex/mods/" + max_package);
     }
 
     {

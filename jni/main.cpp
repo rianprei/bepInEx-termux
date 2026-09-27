@@ -19,6 +19,7 @@
 #include <android/api-level.h>
 #include <stdint.h>
 #include <dlfcn.h>
+#include <android/dlext.h>  // android_dlopen_ext + ANDROID_DLEXT_USE_LIBRARY_FD (API 21+, PUBLICO)
 #include <link.h>
 #include <string.h>
 #include <unistd.h>
@@ -38,6 +39,134 @@
 #include "zygisk.hpp"
 #include "dobby.h"
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
+#include "bc_mods_fd.h" // entrega do .so por FD (SCM_RIGHTS), do companion
+
+// Declaracoes antecipadas: as implementacoes ficam mais abaixo (depois do
+// registro de hooks), e sao usadas por codigo que vem antes delas.
+static inline const char *bc_app_state_dir(char *out, size_t cap);
+static int bc_mod_fd_request(const char *path, char *why, size_t whycap);
+static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap);
+static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
+static const char *bc_app_state_dir_impl(char *out, size_t cap);
+
+static inline const char *bc_app_state_dir(char *out, size_t cap) {
+    return bc_app_state_dir_impl(out, cap);
+}
+
+// ============================================================================
+// Entrega por FD: o companion (root) abre, o JOGO recebe o descritor
+// ============================================================================
+// O processo do jogo nao tem acesso a /data/adb/bepinex (root:root 0700) e
+// nao deve ter. Quem abre o .so e o companion, como root; o que CRUZA a
+// fronteira e o FD, pelo socket que ja existia (g_stream_fd).
+//
+// android_dlopen_ext + ANDROID_DLEXT_USE_LIBRARY_FD e API PUBLICA do NDK desde
+// API 21 (<android/dlext.h>) — nao e preciso dlsym nem declarar struct a mao.
+//
+// TIMEOUT OBRIGATORIO DOS DOIS LADOS: um companion que nao responde (daemon
+// morto, EADDRINUSE, socket que nao subiu) tem que virar "mod nao carrega" com
+// log, NUNCA o jogo travado num recvmsg. E um companion que responde com um
+// .so corrompido tambem: o dlopen volta e o log explica qual arquivo.
+
+// O socket do companion, ou -1. Snapshot unico: se cair no meio do envio o
+// mod nao carrega, e o proximo ciclo tenta de novo.
+static int bc_fd_socket(void) {
+    int fd = g_stream_fd.load(std::memory_order_relaxed);
+    return fd;
+}
+
+// Pede o FD de `path` ao companion. Devolve o fd pronto para o dlopen, ou -1
+// (com motivo em `why`). NUNCA bloqueia para sempre.
+static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
+    why[0] = '\0';
+    int sock = bc_fd_socket();
+    if (sock < 0) {
+        snprintf(why, whycap, "sem canal com o companion");
+        return -1;
+    }
+    // O socket e compartilhado com o streaming de eventos (stream_send_prefixed),
+    // entao o pedido precisa de timeout explicito. SO_RCVTIMEO e por socket, e o
+    // socket e do companion — entao armamos e DESARMAMOS em volta do pedido.
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, BC_FD_VERB_SO, path);
+    int fd = -1;
+    if (n <= 0) {
+        snprintf(why, whycap, "caminho invalido para o pedido");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        snprintf(why, whycap, "companion nao recebeu o pedido: %s", strerror(errno));
+    } else {
+        char payload[BC_FD_ERR_MAX];
+        ssize_t r = bc_fd_recv_fd(sock, payload, sizeof(payload), &fd);
+        if (r < 0) {
+            // -1 do recvmsg com SO_RCVTIMEO = companion mudo. E o caso que
+            // travaria o jogo sem o timeout.
+            snprintf(why, whycap, "companion nao respondeu em 5s");
+        } else if (fd < 0) {
+            int e = 0;
+            if (bc_fd_parse_error(payload, &e))
+                snprintf(why, whycap, "companion recusou: errno %d (%s)", e, strerror(e));
+            else
+                snprintf(why, whycap, "resposta sem fd e sem erro");
+        }
+    }
+    // Desarma: o streaming de eventos nao pode herdar o timeout de 5s.
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    return fd;
+}
+
+// dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
+// nao carrega — e o motivo vai para o log. Nao ha fallback para dlopen por
+// caminho: o caminho nao e mais acessivel ao jogo, e um fallback seria
+// justamente a reabertura que a revisao fechou.
+static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap) {
+    int fd = bc_mod_fd_request(path, why, whycap);
+    if (fd < 0) return nullptr;
+    android_dlextinfo info;
+    memset(&info, 0, sizeof(info));
+    info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
+    info.library_fd = fd;
+    void *h = android_dlopen_ext(path, flags, &info);
+    // O dlopen faz dup() do fd (e o SO o fecha depois), entao este e o nosso.
+    close(fd);
+    if (h == nullptr && why[0] == '\0') {
+        snprintf(why, whycap, "android_dlopen_ext falhou: %s", dlerror());
+    }
+    return h;
+}
+
+
+// ============================================================================
+// Onde o JOGO escreve: o state dir do PROPRIO app (revisao de seguranca)
+// ============================================================================
+// A arvore de mods foi para /data/adb/bepinex (root:root 0700) e o jogo nao
+// escreve — nem deve. Mas o log e o snapshot sao ESCRITOS pelo jogo, entao
+// precisam de um lugar que o app consiga escrever.
+//
+// O caminho vem de args->app_data_dir, que o zygote entrega no preAppSpecialize,
+// e NAO de "/data/data/<pkg>" montado a mao: app_data_dir ja e o caminho real
+// do usuario, entao isso funciona em multiusuario/work profile sem codigo
+// extra. Montar /data/data/<pkg> na mao quebraria em /data/user/10/<pkg>, que
+// e o perfil de trabalho.
+//
+// src/gen e src=/data (o padrao do Android) sao equivalentes; o app ve o
+// caminho em que foi montado.
+static char g_app_data_dir[256] = {0};
+
+static const char *bc_app_state_dir_impl(char *out, size_t cap) {
+    const char *base = g_app_data_dir[0] ? g_app_data_dir : "/data/data";
+    snprintf(out, cap, "%s/files/bepinex", base);
+    return out;
+}
+
+
+
+#include "bc_loader.h"    // BC_MODS_ROOT: a arvore root-only
 #include "bc_mods_conf.h" // config runtime de hooks (companion escreve, módulo lê)
 #include "bc_hook_logic.h" // dispatcher Prefix/Postfix + lógica unpatch/repatch (single source of truth, testado no harness)
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
@@ -75,7 +204,6 @@ static std::atomic<int>  g_sdk{0};           // runtime Android SDK level (JNI)
 static std::atomic<bool> g_build_id_resolved{false}; // PT_NOTE build-id == BC_BUILD_ID (fail-closed pra base+offset)
 // (g_mod_enabled removido — throttle agora é g_throttle_every:int do config)
 static std::atomic<int>  g_frame_counter{0};   // frame counter pro throttle
-static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
 // Métrica de overhead do dispatcher (clock_gettime MONOTONIC)
 static std::atomic<uint64_t> g_hook_overhead_ns{0};      // nanos totais no dispatcher
 static std::atomic<uint64_t> g_hook_overhead_count{0};   // nº de medições
@@ -437,7 +565,13 @@ struct HookPlan {
 // do BepInEx, opção não-default) — processo Android pode ser morto pelo
 // OOM killer sem aviso, ao contrário do processo desktop; perder as
 // últimas linhas antes de um crash seria pior aqui do que no PC.
-#define BC_POC_LOG_PATH "/data/local/tmp/bc_poc_LogOutput.log"
+// O log do JOGO vai para o state dir do proprio app (bc_app_state_dir), e nao
+// para /data/local/tmp: aquele diretorio e 0777 e foi o que a revisao de
+// seguracao apontou — o jogo nao tem por que escrever num lugar que qualquer
+// appuid do aparelho controla.
+#define BC_POC_LOG_NAME "bc_poc_LogOutput.log"
+// Montado em runtime: o caminho so existe depois do preAppSpecialize, quando
+// o zygote entregou o app_data_dir. Ver bc_app_state_dir().
 #define BC_POC_LOG_FILE_LIMIT 5
 static FILE *g_log_file = nullptr;
 // pthread_once, não bool simples: stream_send_prefixed é chamado de várias
@@ -460,9 +594,13 @@ static void log_file_open() {
     char path[64];
     for (int i = 0; i < BC_POC_LOG_FILE_LIMIT; i++) {
         if (i == 0) {
-            snprintf(path, sizeof(path), "%s", BC_POC_LOG_PATH);
+            char state[320];
+            bc_app_state_dir(state, sizeof(state));
+            snprintf(path, sizeof(path), "%s/%s", state, BC_POC_LOG_NAME);
         } else {
-            snprintf(path, sizeof(path), "/data/local/tmp/bc_poc_LogOutput.%d.log", i);
+            char state[320];
+            bc_app_state_dir(state, sizeof(state));
+            snprintf(path, sizeof(path), "%s/bc_poc_LogOutput.%d.log", state, i);
         }
         g_log_file = fopen(path, "w");
         if (g_log_file != nullptr) return;
@@ -1239,7 +1377,16 @@ static void load_dynamic_mods() {
     if (n_names > BC_MOD_GRAPH_MAX_MODS) n_names = BC_MOD_GRAPH_MAX_MODS;
 
     bc_loader_ops ops = {};
-    ops.dlopen = [](const char *path, int flags) -> void * { return dlopen(path, flags); };
+    // dlopen POR FD. O caminho em BC_MODS_DIR e root-only e o jogo nao o abre
+    // mais: quem abre e o companion, como root, e o que CRUZA e o descritor.
+    // Sem o companion, o mod nao carrega e o motivo vai para o log — nunca
+    // dlopen por caminho, que seria a reabertura que a revisao fechou.
+    ops.dlopen = [](const char *path, int flags) -> void * {
+        char why[192] = {0};
+        void *h = bc_dlopen_via_fd(path, flags, why, sizeof(why));
+        if (h == nullptr) LOGW("dlopen por fd falhou em %s: %s", path, why);
+        return h;
+    };
     ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
     ops.dlclose = [](void *h) -> int { return dlclose(h); };
     ops.run_entry = mod_entry_runner;
@@ -1870,13 +2017,15 @@ static int load_generic_pkg_mods(const char *pkg) {
                 free(ents[i]);
                 continue;
             }
-            void *h = dlopen(path, RTLD_NOW);
+            // POR FD, como o outro caminho de carga. A arvore e root-only e o
+            // jogo nao a abre: o companion abre e entrega o descritor. Sem
+            // companion, o mod nao carrega e o motivo vai para o log — nunca
+            // dlopen por caminho, que seria a reabertura que a revisao fechou.
+            char why[192] = {0};
+            void *h = bc_dlopen_via_fd(path, RTLD_NOW, why, sizeof(why));
             if (h == nullptr) {
-                // dlerror() consome o erro do thread-local: guarda uma vez só,
-                // senão a segunda leitura devolve NULL e o %s quebra.
-                const char *err = dlerror();
-                LOGW("%s: dlopen %s falhou: %s", pkg, name, err ? err : "(null)");
-                pkg_log_line(pkg, tag, "dlopen falhou: %s", err ? err : "(null)");
+                LOGW("%s: mod %s nao carregou: %s", pkg, name, why);
+                pkg_log_line(pkg, tag, "mod nao carregou: %s", why);
             } else {
                 LOGI("%s: mod %s carregado", pkg, name);
                 publish_log("Info", "%s: mod %s carregado", pkg, name);
@@ -1959,8 +2108,12 @@ public:
             (int)args->uid,
             args->is_child_zygote != nullptr && *args->is_child_zygote != JNI_FALSE,
             nice_name, app_data_dir, pkg_copy, sizeof(pkg_copy));
-        if (app_data_dir != nullptr)
+        if (app_data_dir != nullptr) {
+            // Copia antes de soltar a string do JNI: o log e o snapshot sao
+            // escritos DEPOIS do specialize, quando ja nao da para ler dali.
+            snprintf(g_app_data_dir, sizeof(g_app_data_dir), "%s", app_data_dir);
             env->ReleaseStringUTFChars(args->app_data_dir, app_data_dir);
+        }
         if (process_status != BC_PROCESS_READY) {
             LOGI("processo %s ignorado: %s", nice_name, bc_process_status_name(process_status));
             env->ReleaseStringUTFChars(args->nice_name, nice_name);
@@ -2002,7 +2155,9 @@ public:
                 }
                 // BUG REAL achado por revisão (hermes): sem isso, publish_log()
                 // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
-                // g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
+
+
+// g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
                 // Termux, porque só o caminho be_bc chamava connectCompanion().
                 // Mesma restrição de SELinux do caminho BC: só funciona aqui,
                 // em preAppSpecialize.

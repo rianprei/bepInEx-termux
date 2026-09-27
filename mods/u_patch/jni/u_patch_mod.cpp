@@ -1,5 +1,6 @@
 // u_patch — motor declarativo (FASE F4): lê todo *.bpatch + <id>.conf de
-// /data/local/tmp/mods/<pkg>/ e aplica as regras C4 (return/mul/static).
+// BC_GENERIC_MODS_DIR/<pkg>/ e aplica as regras C4 (return/mul/static). O
+// caminho e root-only e o jogo nao o abre: o conteudo chega pelo socket.
 // Regra que não resolve vira log e o jogo segue. Nada de offset fixo: tudo
 // sai da API il2cpp exportada. Log mínimo próprio (F2 dá mod_common.h e a
 // gente troca — até lá, logcat + log.txt C1 aqui mesmo).
@@ -30,7 +31,9 @@
 // das funções puras que decidem o que é regra e qual é o id. Ela saiu daqui
 // porque o scan é lógica de string e precisa de teste de host: com ela no .cpp,
 // o gate passava mesmo com o loader procurando a extensão antiga.
-#define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
+// Raiz root-only (fonte unica em jni/bc_loader.h). O jogo nao abre este
+// caminho: o .bpatch/.conf chega por conteudo pelo socket do companion.
+#define UP_MODS_DIR_FMT "%s/%s"
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
 

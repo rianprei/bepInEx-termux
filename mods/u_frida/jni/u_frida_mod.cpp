@@ -5,7 +5,7 @@
 // Pacote, dir e log: mods/common/mod_common.h (C1).
 //
 // Onde mora o quê: binário E config ficam na pasta de mods
-// (/data/local/tmp/mods/<pkg>/), que é bepinex_mod_file e tem
+// (BC_GENERIC_MODS_DIR/<pkg>), que e bepinex_mod_file e tem
 // `allow appdomain bepinex_mod_file file { getattr open read map execute }`
 // no module/sepolicy.rule. [NAO VERIFICADO EM ENFORCING] dlopen a partir
 // de /data/data/<pkg>/files (app_data_file) seria negado: AOSP

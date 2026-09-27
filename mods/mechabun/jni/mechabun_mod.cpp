@@ -199,6 +199,7 @@
 #include <cstdio>
 #include <cstring>
 #include <pthread.h>
+#include "../../../jni/bc_loader.h"  // BC_MODS_DIR: a raiz root-only da arvore
 #include "bc_mod_api.h"
 
 // pthread_mutex direto em vez de std::mutex/<mutex> -- APP_STL=c++_static
@@ -652,7 +653,9 @@ static void hooked_load_unit(long big_data, int unit_id) {
 typedef FILE *(*orig_fopen_fn)(const char *path, const char *mode);
 static orig_fopen_fn g_orig_fopen = nullptr;
 
-#define MECHABUN_ASSET_DIR "/data/local/tmp/bc_mods/mechabun_assets/"
+// Raiz root-only (fonte unica em jni/bc_loader.h): o jogo nao abre este
+// caminho, o companion entrega o conteudo.
+#define MECHABUN_ASSET_DIR BC_MODS_DIR "/mechabun_assets/"
 
 // D12 v2 — redirect do pack de animacao (fopen hook, extensao do D16.1).
 // v1 (425_f01.maanim) foi ERRADO: unit 425 nunca foi a Mecha-Bun (rig

@@ -250,6 +250,59 @@ int main() {
         }
     }
 
+    // (g) SABOTAGEM (a): o JOGO NAO PODE voltar a dlopen por caminho.
+    //
+    // A arvore e root-only e o jogo nao tem acesso a ela; o descritor e o que
+    // chega. Se o loader voltar a dlopen(caminho), em Enforcing o mod nao
+    // carrega e o usuario nao sabe por que — e o teste tem que dizer isso.
+    {
+        std::string self = __FILE__;
+        size_t barra = self.rfind('/');
+        if (barra != std::string::npos) self = self.substr(0, barra);
+        FILE *c = fopen((self + "/../../jni/main.cpp").c_str(), "r");
+        if (c == nullptr) {
+            check("abri jni/main.cpp para conferir o dlopen do jogo", false);
+        } else {
+            char buf[1048576] = {};
+            size_t n = fread(buf, 1, sizeof(buf) - 1, c);
+            fclose(c);
+            std::string code(buf, n);
+            // O loader do grafo (ops.dlopen) e o dos mods autonomos nao podem
+            // chamar dlopen() direto: tem que passar por bc_dlopen_via_fd.
+            bool usa_fd = code.find("bc_dlopen_via_fd(") != std::string::npos;
+            check("o loader do jogo tem o caminho de FD", usa_fd);
+            // NENHUM dlopen() cru em main.cpp — em QUALQUER forma
+            // ("return dlopen(", "= dlopen(", "dlopen(path"...). Contar
+            // ocorrencias de "dlopen(" e descontar as de "android_dlopen_ext("
+            // pega qualquer forma; a checagem anterior procurava so
+            // "return dlopen(" e a sabotagem (a) usou "= dlopen(", passando.
+            // ops.dlopen( e a INDIRECAO do loader (bc_loader_ops), nao uma
+            // chamada a dlopen: nao conta. Tampouco android_dlopen_ext(.
+            size_t todos = 0, p = 0;
+            while ((p = code.find("dlopen(", p)) != std::string::npos) {
+                if (p >= 4 && code.compare(p - 4, 4, "ops.") == 0) { p += 7; continue; }
+                todos++; p += 7;
+            }
+            size_t ext = 0;
+            p = 0;
+            while ((p = code.find("android_dlopen_ext(", p)) != std::string::npos) { ext++; p += 9; }
+            // ext > 0 prova que o caminho de FD existe; todos == 0 prova que
+            // nao sobrou nenhum dlopen() cru em NENHUMA forma.
+            check("o jogo nao chama dlopen() por caminho (so android_dlopen_ext)",
+                  ext > 0 && todos == 0);
+            // E o pedido do FD tem TIMEOUT: companion mudo tem que virar "mod
+            // nao carrega", nunca o jogo travado.
+            bool tem_timeout = code.find("SO_RCVTIMEO") != std::string::npos &&
+                               code.find("nao respondeu em") != std::string::npos;
+            check("o recvmsg do FD tem timeout (companion mudo nao trava o jogo)", tem_timeout);
+            // E o dlopen e pelo FD de verdade, com a flag PUBLICA do NDK.
+            bool usa_dlext = code.find("ANDROID_DLEXT_USE_LIBRARY_FD") != std::string::npos &&
+                             code.find("android_dlopen_ext") != std::string::npos &&
+                             code.find("android/dlext.h") != std::string::npos;
+            check("o dlopen e por android_dlopen_ext + DLEXT_USE_LIBRARY_FD", usa_dlext);
+        }
+    }
+
     unlink(g_link.c_str());
     unlink(g_real.c_str());
     unlink(g_txt.c_str());
