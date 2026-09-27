@@ -28,9 +28,17 @@ public class ModContentDetectorTest {
 
     // --- amostras sintéticas -------------------------------------------------
 
+    private static final String BMOD_MANIFEST_JSON =
+            "{\"format\":1,\"id\":\"meu\",\"name\":\"Meu Mod\",\"engine\":\"unity-il2cpp\"," 
+                    + "\"type\":\"native\",\"game\":\"*\"}";
+
     private static Sample zip(boolean withManifest) {
         byte[] head = {'P', 'K', 3, 4, 0, 0, 0, 0};
-        return new Sample("mod.bmod", head, null, withManifest, false);
+        byte[] manifest = withManifest
+                ? BMOD_MANIFEST_JSON.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                : null;
+        return new Sample("mod.bmod", head, null, withManifest, false, head.length,
+                manifest, null);
     }
 
     /**

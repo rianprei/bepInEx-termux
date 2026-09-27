@@ -1,8 +1,11 @@
 package io.github.rianprei.bepinex.manager.core;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 // Contrato C7 — o Manager aceita mod de QUALQUER origem: o tipo vem do
@@ -20,13 +23,21 @@ import java.util.Set;
 //   - texto JS   -> vira <id>.js, lido pelo frida-gadget em modo script (F11)
 //   - .dll       -> NAO roda agora: .NET IL2CPP e F12, .NET Mono e F13, e
 //                   .dll Mono em jogo IL2CPP nao roda de jeito nenhum
+//   - APK/OBB/XAPK, asset UnityFS, .pak de Unreal, save do jogador ->
+//                   NUNCA modifica: e arquivo do jogo, nao mod
 //
-// Nenhum caminho escreve no APK/OBB/arquivos do jogo: tudo em runtime.
+// O CONTEUDO manda sobre a extensao (o corpus de test/fixtures/modtypes
+// prova os dois lados): ELF com nome .png instala, zip com nome .so e
+// recusado como zip, .apk so e container do jogo se o nome diz isso — um
+// .zip com classes.dex dentro cai no aviso comum de zip, e um .apk sem
+// nada de Android la dentro seria so um zip. Nenhum caminho escreve no
+// APK/OBB/arquivos do jogo: tudo em runtime.
 public final class ModContentDetector {
 
     public enum Kind {
-        BMOD,             // zip com manifest.json (C2)
-        ZIP_PLAIN,        // zip sem manifest.json
+        BMOD,             // zip com manifest.json do formato C2 (pelo CONTEUDO)
+        ZIP_PLAIN,        // zip sem manifest.json de pacote .bmod
+        ZIP_GAME_CONTAINER, // APK/OBB/XAPK: pacote do jogo, nunca mod
         ELF_ARM64,        // ELF E_AARCH64 (183): mod nativo Android arm64
         ELF_MALFORMED,    // ELF arm64 com cabecalho/PT_LOAD incoerente
         ELF_OTHER_ARCH,   // ELF de outra arquitetura
@@ -39,6 +50,8 @@ public final class ModContentDetector {
         PE_NATIVE,        // .exe/.dll nativo do Windows (sem runtime .NET)
         MACHO,            // .dylib de iOS/macOS
         CHEAT_ENGINE,     // tabela do Cheat Engine
+        GAME_DATA,        // UnityFS / .pak de Unreal: dado do jogo, nao mod
+        SAVE_GAME,        // save do jogador (progresso em JSON)
         BINARY_UNKNOWN,   // binario que nao e nada disso
         TEXT_OTHER        // texto que nao e .patch nem script
     }
@@ -63,7 +76,7 @@ public final class ModContentDetector {
         }
     }
 
-    // Tudo que a detecco precisa saber sobre o arquivo. Quem le o arquivo
+    // Tudo que a deteccao precisa saber sobre o arquivo. Quem le o arquivo
     // preenche (LooseModInstaller); a deteccao aqui e PURA e testavel no host.
     public static final class Sample {
         public final String fileName;
@@ -72,20 +85,31 @@ public final class ModContentDetector {
         public final boolean zipHasManifest;
         public final boolean fridaMarker;  // assinatura do gadget no conteudo
         public final long length;          // tamanho REAL do arquivo em bytes
+        public final byte[] zipManifestBytes; // conteudo de manifest.json, se zip
+        public final List<String> zipEntryNames; // nomes das entradas, se zip
 
         public Sample(String fileName, byte[] head, String text,
                       boolean zipHasManifest, boolean fridaMarker) {
-            this(fileName, head, text, zipHasManifest, fridaMarker, (head != null) ? head.length : 0L);
+            this(fileName, head, text, zipHasManifest, fridaMarker,
+                    (head != null) ? head.length : 0L);
         }
 
         public Sample(String fileName, byte[] head, String text,
                       boolean zipHasManifest, boolean fridaMarker, long length) {
+            this(fileName, head, text, zipHasManifest, fridaMarker, length, null, null);
+        }
+
+        public Sample(String fileName, byte[] head, String text,
+                      boolean zipHasManifest, boolean fridaMarker, long length,
+                      byte[] zipManifestBytes, List<String> zipEntryNames) {
             this.fileName = (fileName != null) ? fileName : "";
             this.head = (head != null) ? head : new byte[0];
             this.text = text;
             this.zipHasManifest = zipHasManifest;
             this.fridaMarker = fridaMarker;
             this.length = length;
+            this.zipManifestBytes = zipManifestBytes;
+            this.zipEntryNames = (zipEntryNames != null) ? zipEntryNames : java.util.Collections.emptyList();
         }
     }
 
@@ -116,16 +140,41 @@ public final class ModContentDetector {
     public static Detection detect(Sample s, boolean engineIl2cpp) {
         byte[] h = s.head;
 
+        // Arquivo vazio (0 byte): nenhuma magica de extensao pode inventar
+        // um tipo para ele. E o download que falhou inteiro.
+        if (s.length <= 0) {
+            return new Detection(Kind.BINARY_UNKNOWN, "arquivo vazio (0 byte)", false,
+                    "Este arquivo esta VAZIO (0 byte). Nao e mod de tipo nenhum: foi um "
+                            + "download que falhou ou uma copia que nao copiou nada. Baixe o "
+                            + "mod de novo e confira que o arquivo tem conteudo.", null, null);
+        }
+
         if (isZip(h)) {
-            if (s.zipHasManifest) {
+            // manifest.json pelo CONTEUDO (formato 1 + id C2), nao pela
+            // existencia: o .xapk tambem traz um manifest.json, mas e o do
+            // instalador de APK (xapk_version), nao o de pacote .bmod. Sem
+            // essa leitura, um APK renomeado .bmod seria "instalado" e o
+            // erro so apareceria quebrado, depois, dentro do fluxo C2.
+            if (isBmodManifest(s.zipManifestBytes)) {
                 return new Detection(Kind.BMOD, "pacote .bmod", true,
-                        "Pacote .bmod (zip com manifest.json): instalar pelo fluxo C2.",
-                        null, null);
+                        "Pacote .bmod (zip com manifest.json do formato do projeto): "
+                                + "instalar pelo fluxo C2.", null, null);
+            }
+            if (looksLikeGameContainer(s)) {
+                String what = gameContainerName(s);
+                return new Detection(Kind.ZIP_GAME_CONTAINER, what, false,
+                        "Isto e o " + what + " — o pacote do PROPRIO JOGO, nao um mod. O "
+                                + "Manager nunca modifica arquivo do jogo (nem APK, nem OBB, "
+                                + "nem expansao): mod aqui e .so, .patch e .js em "
+                                + "/data/local/tmp/mods/, em runtime. Se veio de um pacote "
+                                + "de mod de PC, procure dentro dele a pasta BepInEx/ e o "
+                                + "que for .dll .NET o Manager reconhece.", null, null);
             }
             return new Detection(Kind.ZIP_PLAIN, "arquivo compactado (.zip)", false,
-                    "Isto e um .zip comum, sem manifest.json dentro. O Manager so instala "
-                            + "pacote .bmod (o zip que tem manifest.json) ou arquivo solto "
-                            + "com codigo de mod. Descompacte e instale o arquivo de dentro.", null, null);
+                    "Isto e um .zip comum, sem manifest.json de pacote .bmod dentro. O "
+                            + "Manager so instala pacote .bmod (o zip que tem manifest.json "
+                            + "do projeto) ou arquivo solto com codigo de mod. Descompacte "
+                            + "e instale o arquivo de dentro.", null, null);
         }
 
         if (isElf(h)) {
@@ -163,7 +212,12 @@ public final class ModContentDetector {
         }
 
         if (h.length >= 2 && h[0] == 'M' && h[1] == 'Z') {
-            String t = (s.text != null) ? s.text : "";
+            // PE de verdade e binario (zeros no proprio header DOS), entao o
+            // "texto" do Sample vem vazio. As marcas de .NET (mscorlib,
+            // mscoree, Il2CppInterop) moram em strings ASCII dentro do
+            // binario: lemos como o strings do Unix le, senao todo .dll .NET
+            // seria "binario de Windows" — a mentira classica.
+            String t = (s.text != null && !s.text.isEmpty()) ? s.text : asciiStrings(h);
             if (t.contains("mscorlib") || t.contains("_CorDllMain") || t.contains("mscoree")) {
                 boolean il2cpp = t.contains("Il2CppInterop") || t.contains("UnhollowerBaseLib")
                         || t.contains("Il2CppDomain") || t.contains("BepInEx.Unity.IL2CPP");
@@ -199,6 +253,23 @@ public final class ModContentDetector {
                     "Isto e um binario Mach-O (iOS/macOS). Nao roda em Android.", null, null);
         }
 
+        // Asset de engine: magic no comeco manda; a extensao e pista apenas
+        // quando o conteudo nao diz nada (todo .pak de Unreal comeca com um
+        // numero de versao cru, que e igual a lixo qualquer).
+        if (startsWith(h, UNITYFS_MAGIC)) {
+            return new Detection(Kind.GAME_DATA, "asset Unity (UnityFS)", false,
+                    "Isto e um ASSET do Unity (formato UnityFS): dado do jogo (textura, "
+                            + "audio, cena), nao codigo de mod. Ele e parte dos arquivos do "
+                            + "jogo, que o Manager nao modifica; trocar asset desses e "
+                            + "modificar o jogo, nao instalar mod.", null, null);
+        }
+        if (isUnrealPak(s)) {
+            return new Detection(Kind.GAME_DATA, "pacote de dados do Unreal (.pak)", false,
+                    "Isto e um .pak do Unreal Engine: o pacote de dados do PROPRIO JOGO "
+                            + "(texturas, mapas, audio). Nao e mod, e o Manager nunca "
+                            + "modifica arquivo do jogo.", null, null);
+        }
+
         if (s.text != null) {
             String t = s.text;
             if (t.contains("Auto Assembler") || t.contains("<CheatEngine") || t.contains("Cheat Engine")) {
@@ -218,6 +289,16 @@ public final class ModContentDetector {
                         "Isto e script do GameGuardian (gg.). O caminho de script GameGuardian e "
                                 + "F10 e ainda nao esta implementado. Para Frida, use script .js "
                                 + "(com frida-gadget na pasta).", null, null);
+            }
+            // Save do jogador: JSON sem nenhuma regra C4 nem script, mas com
+            // cara de progresso. A extensao aqui e so o empate final, e a
+            // recusa diz a verdade: save nao e mod.
+            if (looksLikeSaveJson(t, s.fileName)) {
+                return new Detection(Kind.SAVE_GAME, "save do jogo (progresso)", false,
+                        "Isto e um SAVE do jogo (progresso do jogador em JSON), nao um mod. "
+                                + "Save restaura progresso no jogo, nao adiciona codigo; o "
+                                + "Manager so instala mod (codigo), entao nao tem onde isso "
+                                + "encaixar.", null, null);
             }
             return new Detection(Kind.TEXT_OTHER, "texto", false,
                     "Isto e um arquivo de texto, mas nao tem regra C4 (.patch) nem script Frida "
@@ -277,6 +358,110 @@ public final class ModContentDetector {
         while (id.endsWith("-")) id = id.substring(0, id.length() - 1);
         if (id.isEmpty() || id.length() > 48) return null;
         return id;
+    }
+
+    // Extrai as sequencias de ASCII imprimivel (>= 4 chars) de um binario,
+    // separadas por \n — a mesma ideia do strings(1). E o que permite ler
+    // marcas de .NET/PE dentro de um arquivo binario de verdade.
+    public static String asciiStrings(byte[] h) {
+        if (h == null) return "";
+        StringBuilder sb = new StringBuilder();
+        int run = 0;
+        for (byte b : h) {
+            if (b >= 0x20 && b < 0x7F) {
+                sb.append((char) b);
+                run++;
+            } else {
+                if (run >= 4) sb.append('\n');
+                run = 0;
+            }
+        }
+        if (run >= 4) sb.append('\n');
+        return sb.toString();
+    }
+
+    // --- pistas de container/asset/save (o CONTEUDO manda; extensao e pista)
+
+    public static final byte[] UNITYFS_MAGIC = {'U', 'n', 'i', 't', 'y', 'F', 'S', 0};
+
+    private static boolean startsWith(byte[] h, byte[] magic) {
+        if (h.length < magic.length) return false;
+        for (int i = 0; i < magic.length; i++) {
+            if (h[i] != magic[i]) return false;
+        }
+        return true;
+    }
+
+    // manifest.json de pacote .bmod (C2): formato 1 e id no padrao do
+    // contrato. O parser completo roda no instalador; aqui so o suficiente
+    // para nao confundir .bmod com manifest de .xapk (xapk_version) ou de
+    // save (campos de progresso).
+    public static boolean isBmodManifest(byte[] raw) {
+        if (raw == null || raw.length == 0 || raw.length > 64 * 1024) return false;
+        Map<String, Object> json;
+        try {
+            json = MiniJson.parseObject(new String(raw, StandardCharsets.UTF_8));
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (!(json.get("format") instanceof Number) || ((Number) json.get("format")).intValue() != 1) {
+            return false;
+        }
+        Object id = json.get("id");
+        if (!(id instanceof String)) return false;
+        return ((String) id).matches("[a-z0-9-]{3,48}");
+    }
+
+    private static final String[] GAME_CONTAINER_EXTS = {".apk", ".obb", ".xapk", ".apks"};
+
+    // APK/OBB/XAPK: so e container do jogo se o NOME diz isso. O conteudo
+    // de um zip nao prova nada (um mod de PC zipado tambem e zip); o nome
+    // .apk/.obb e a pista do que o pacote e. Um .zip com classes.dex dentro
+    // e rarissimo fora de APK — mas se acontecer, cai no aviso comum de zip,
+    // que manda descompactar: mensagem honesta nos dois casos.
+    private static boolean looksLikeGameContainer(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        for (String ext : GAME_CONTAINER_EXTS) {
+            if (lower.endsWith(ext)) return true;
+        }
+        for (String name : s.zipEntryNames) {
+            if (name.endsWith(".apk")) return true;
+        }
+        return false;
+    }
+
+    private static String gameContainerName(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".obb")) return "arquivo OBB de expansao";
+        if (lower.endsWith(".xapk")) return "pacote XAPK";
+        if (lower.endsWith(".apks")) return "pacote APKS (APK split)";
+        return "APK";
+    }
+
+    // .pak de Unreal: o magic e so um numero de versao cru (igual a lixo
+    // qualquer); sem a extensao, nao ha como dizer. Conteudo + extensao
+    // juntos e que dao a certeza honesta.
+    private static boolean isUnrealPak(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".pak")) return false;
+        return s.head.length >= 8 && s.text == null;   // binario nao-texto
+    }
+
+    // Save do jogador: JSON (o comeco tem cara de objeto/array) sem nenhuma
+    // regra C4 nem script, com nome de save (ou campos tipicos de progresso).
+    private static boolean looksLikeSaveJson(String text, String fileName) {
+        String t = text.trim();
+        if (t.isEmpty()) return false;
+        char c = t.charAt(0);
+        if (c != '{' && c != '[') return false;
+        String lower = (fileName != null) ? fileName.toLowerCase(Locale.ROOT) : "";
+        if (lower.endsWith(".json")) return true;
+        String[] saveFields = {"\"save\"", "\"player\"", "\"inventory\"", "\"gold\"",
+                "\"xp\"", "\"level\"", "\"save_version\"", "\"progress\""};
+        for (String f : saveFields) {
+            if (t.contains(f)) return true;
+        }
+        return false;
     }
 
     // --- validacao de ELF64 (so o que o loader vai mesmo abrir) -------------

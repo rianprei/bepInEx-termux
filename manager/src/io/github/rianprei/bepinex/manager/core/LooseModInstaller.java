@@ -165,7 +165,7 @@ public final class LooseModInstaller {
     }
 
     // Le o arquivo e monta a Sample: cabecalho (magic), texto (se for texto),
-    // presenca de manifest.json no zip e assinatura do frida-gadget.
+    // manifest.json e nomes de entradas (se zip) e assinatura do frida-gadget.
     public static ModContentDetector.Sample probe(File src) throws IOException {
         byte[] head = readHead(src, HEAD_SIZE);
         boolean isZip = ModContentDetector.isZip(head);
@@ -174,11 +174,26 @@ public final class LooseModInstaller {
             text = readText(src, TEXT_LIMIT);
         }
         boolean zipHasManifest = false;
+        byte[] zipManifestBytes = null;
+        java.util.List<String> zipEntryNames = java.util.Collections.emptyList();
         if (isZip) {
             try (ZipFile zip = new ZipFile(src)) {
-                zipHasManifest = (zip.getEntry("manifest.json") != null);
+                zipEntryNames = new java.util.ArrayList<>();
+                java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    zipEntryNames.add(entries.nextElement().getName());
+                }
+                java.util.zip.ZipEntry manifestEntry = zip.getEntry("manifest.json");
+                if (manifestEntry != null) {
+                    zipHasManifest = true;
+                    // Mesmo teto do BmodInstaller (64KB): so o comeco basta
+                    // para dizer se e o manifest do projeto (formato 1 + id).
+                    zipManifestBytes = readLimited(zip.getInputStream(manifestEntry), 64 * 1024);
+                }
             } catch (IOException ignored) {
                 zipHasManifest = false;   // zip corrompido: cai no texto de "compactado"
+                zipManifestBytes = null;
+                zipEntryNames = java.util.Collections.emptyList();
             }
         }
         boolean fridaMarker = (text != null && ModContentDetector.hasFridaMarker(text))
@@ -187,7 +202,44 @@ public final class LooseModInstaller {
         // offset+tamanho com ele. Um .so pela metade (corte de download)
         // passa no magic e morre aqui.
         return new ModContentDetector.Sample(src.getName(), head, text, zipHasManifest,
-                fridaMarker, src.length());
+                fridaMarker, src.length(), zipManifestBytes, zipEntryNames);
+    }
+
+    // Le no maximo max bytes de um stream (para o manifesto, que nao
+    // precisa passar do teto para a deteccao decidir).
+    private static byte[] readLimited(InputStream in, int max) throws IOException {
+        try (InputStream lim = new LimitInputStream(in, max)) {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = lim.read(buf)) > 0) {
+                baos.write(buf, 0, n);
+            }
+            return baos.toByteArray();
+        }
+    }
+
+    // Corta o stream em max bytes, sem ler o resto da entrada.
+    private static final class LimitInputStream extends java.io.FilterInputStream {
+        private long remaining;
+        LimitInputStream(InputStream in, long max) {
+            super(in);
+            this.remaining = max;
+        }
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) return -1;
+            int b = super.read();
+            if (b >= 0) remaining--;
+            return b;
+        }
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (remaining <= 0) return -1;
+            int n = super.read(b, off, (int) Math.min(len, remaining));
+            if (n > 0) remaining -= n;
+            return n;
+        }
     }
 
     private static byte[] readHead(File src, int max) throws IOException {

@@ -79,6 +79,7 @@ public final class BmodInstaller {
 
         try (ZipFile zip = new ZipFile(bmodFile)) {
             requireEntryCount(zip);
+            requireSafeEntryNames(zip);
             ZipEntry manifestEntry = zip.getEntry("manifest.json");
             if (manifestEntry == null) {
                 throw new IOException("Arquivo .bmod invalido: manifest.json ausente");
@@ -101,6 +102,7 @@ public final class BmodInstaller {
 
         try (ZipFile zip = new ZipFile(bmodFile)) {
             requireEntryCount(zip);
+            requireSafeEntryNames(zip);
 
             // 1. manifest.json -> <id>.json
             File jsonFile = new File(tmpDir, manifest.id + ".json");
@@ -242,6 +244,30 @@ public final class BmodInstaller {
         if (entries > MAX_ENTRIES) {
             throw new IOException("O .bmod tem " + entries + " entradas; o limite e " + MAX_ENTRIES
                     + ". Instalacao abortada.");
+        }
+    }
+
+    // Zip-slip: entrada cujo NOME sai da pasta de extracao. Hoje o payload
+    // sai por nome fixo (mod.so/mod.patch), mas nada garante que um futuro
+    // fluxo use entry.getName() — e a defesa tem que morar onde o zip e
+    // lido, nao na memoria de quem escreveu o extrator. Barra "../", ".."
+    // isolado, caminho absoluto, disco de Windows e "./" disfarcado. O
+    // id do manifest tem regex propria ([a-z0-9-]{3,48}), que ja impede o
+    // MESMO ataque via manifest.id nos caminhos <id>.json/tmp_bmod_<id>.
+    private static void requireSafeEntryNames(ZipFile zip) throws IOException {
+        java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            String normalized = name.replace('\\', '/');
+            boolean unsafe = normalized.contains("../")
+                    || normalized.equals("..")
+                    || normalized.startsWith("/")
+                    || normalized.matches("[A-Za-z]:.*");
+            if (unsafe) {
+                throw new IOException("O .bmod tem entrada com caminho perigoso ('" + name
+                        + "', que sairia da pasta de instalacao: ataque zip-slip). "
+                        + "Instalacao abortada, nada foi instalado.");
+            }
         }
     }
 
