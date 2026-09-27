@@ -39,6 +39,7 @@ public class ShellExecTest {
         testCrashGuardExecutado();
         testProbeExecutado();
         testOutrosCompostos();
+        testCadeiasComChcon();
         System.out.println("  [OK] ShellExecTest (comandos root executados em sh de verdade)");
     }
 
@@ -57,6 +58,9 @@ public class ShellExecTest {
             throw new AssertionError("o host não tem sh utilizável para provar os comandos root: " + e);
         }
     }
+
+    /** "\n" de verdade: o script do stub é escrito em disco, não em tela. */
+    private static final String NL = String.valueOf((char) 10);
 
     private static final class Result {
         int code;
@@ -311,7 +315,287 @@ public class ShellExecTest {
                         new File(dir, "nao-existe.tsv").getPath())).out.trim().equals("missing"));
     }
 
-    // ---------- 6) probe do sistema -----------------------------------------
+    // ---------- 6) as 4 cadeias com chcon ----------------------------------
+    //
+    // `chcon` não existe no host, e era o motivo dessas quatro cadeias ficarem
+    // de fora do teste de shell. Resolvido com um stub à frente do PATH: ele
+    // grava os argumentos num arquivo e sai 0, ou sai 1 se a env pedir.
+    // A string que vai para o device é a mesma — o stub só troca o binário.
+
+    /** Cria um stub de chcon e devolve o PATH com ele na frente. */
+    private static String pathWithChconStub(File binDir, File logFile, String exitCode) {
+        try {
+            binDir.mkdirs();
+            File stub = new File(binDir, "chcon");
+            // Imita o chcon REAL: grava o que recebeu e sai 1 se o alvo não
+            // existir. Sem isso, um `; chcon` num alvo inexistente passaria
+            // como sucesso e a sabotagem passaria batido (achado da revisão de
+            // 2026-09-27).
+            String script = "#!/bin/sh" + NL
+                    + "printf '%s\\n' \"$*\" >> '" + logFile.getPath() + "'" + NL
+                    + "for t; do :; done" + NL
+                    + "if [ ! -e \"$t\" ]; then exit 1; fi" + NL
+                    + "exit " + exitCode + NL;
+            write(stub, script);
+            stub.setExecutable(true);
+            return binDir.getPath() + ":" + System.getenv("PATH");
+        } catch (Exception e) {
+            throw new AssertionError("não consegui criar o stub de chcon: " + e);
+        }
+    }
+
+    private static String chconLog(File logFile) {
+        try {
+            return Files.exists(logFile.toPath())
+                    ? new String(Files.readAllBytes(logFile.toPath()), StandardCharsets.UTF_8) : "";
+        } catch (Exception e) {
+            throw new AssertionError("não consegui ler o log do stub: " + e);
+        }
+    }
+
+    private static Result shWithPath(String cmd, String path, File cwd) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(Arrays.asList("sh", "-c", cmd));
+            pb.environment().put("PATH", path);
+            if (cwd != null) pb.directory(cwd);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            proc.getOutputStream().close();
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            try (InputStream in = proc.getInputStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            }
+            Result r = new Result();
+            r.code = proc.waitFor();
+            r.out = new String(bo.toByteArray(), StandardCharsets.UTF_8);
+            return r;
+        } catch (Exception e) {
+            throw new AssertionError("falha ao executar com PATH custom: " + e);
+        }
+    }
+
+    private static String mode(File f) {
+        try {
+            Process proc = new ProcessBuilder(Arrays.asList("stat", "-c", "%a", f.getPath())).start();
+            java.io.BufferedReader br = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8));
+            String v = br.readLine();
+            proc.waitFor();
+            return v == null ? "?" : v.trim();
+        } catch (Exception e) {
+            throw new AssertionError("stat falhou: " + e);
+        }
+    }
+
+    private static String read(File f) {
+        try {
+            return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new AssertionError("leitura falhou: " + e);
+        }
+    }
+
+    private static void testCadeiasComChcon() {
+        // (1) ensureModDir: cria a pasta com 755 e o contexto certo
+        File root = tempDir("chcon-dir");
+        File bin = new File(root, "bin");
+        File log = new File(root, "chcon.log");
+        String path = pathWithChconStub(bin, log, "0");
+        // path com ESPAÇO de propósito: a cadeia tem que aguentar
+        String dir = new File(root, "mods com espaco/com.foo.jogo").getPath();
+        checkSyntax("ensureModDirCommand", SuHelper.ensureModDirCommand(dir));
+        Result r = shWithPath(SuHelper.ensureModDirCommand(dir), path, root);
+        check("ensureModDir: cadeia sai com 0", r.code == 0);
+        check("ensureModDir: a pasta existe", new File(dir).isDirectory());
+        check("ensureModDir: modo 755 exato", mode(new File(dir)).equals("755"));
+        check("ensureModDir: chcon chamado 1 vez", chconLog(log).trim().split("\n").length == 1);
+        check("ensureModDir: chcon com o contexto do contrato e o path",
+                chconLog(log).contains(SuHelper.SELINUX_MOD_CONTEXT) && chconLog(log).contains(dir));
+
+        // (2) writeTextFile: copia conteúdo e deixa 644
+        File root2 = tempDir("chcon-write");
+        File bin2 = new File(root2, "bin");
+        File log2 = new File(root2, "chcon.log");
+        String path2 = pathWithChconStub(bin2, log2, "0");
+        File tmp = new File(root2, "origem.tmp");
+        write(tmp, "conteudo do conf\nsegunda linha\n");
+        String dest = new File(root2, "destino com espaco.conf").getPath();
+        checkSyntax("writeTextFileCommand", SuHelper.writeTextFileCommand(tmp.getPath(), dest));
+        Result r2 = shWithPath(SuHelper.writeTextFileCommand(tmp.getPath(), dest), path2, root2);
+        check("writeTextFile: cadeia sai com 0", r2.code == 0);
+        check("writeTextFile: conteúdo idêntico", read(new File(dest)).equals("conteudo do conf\nsegunda linha\n"));
+        check("writeTextFile: modo 644 exato", mode(new File(dest)).equals("644"));
+        check("writeTextFile: chcon 1x no destino", chconLog(log2).trim().equals(
+                SuHelper.SELINUX_MOD_CONTEXT + " " + dest));
+
+        // (3) copyFile: cp -f com o modo pedido
+        File root3 = tempDir("chcon-copy");
+        File bin3 = new File(root3, "bin");
+        File log3 = new File(root3, "chcon.log");
+        String path3 = pathWithChconStub(bin3, log3, "0");
+        File src3 = new File(root3, "mod.so");
+        write(src3, "ELF de mentira");
+        String dest3 = new File(root3, "instalado com espaco.so").getPath();
+        checkSyntax("copyFileCommand", SuHelper.copyFileCommand(src3.getPath(), dest3, "755"));
+        Result r3 = shWithPath(SuHelper.copyFileCommand(src3.getPath(), dest3, "755"), path3, root3);
+        check("copyFile: cadeia sai com 0", r3.code == 0);
+        check("copyFile: conteúdo idêntico", read(new File(dest3)).equals("ELF de mentira"));
+        check("copyFile: modo 755 exato (o modo do argumento, não 644)", mode(new File(dest3)).equals("755"));
+        check("copyFile: chcon 1x no destino", chconLog(log3).trim().equals(
+                SuHelper.SELINUX_MOD_CONTEXT + " " + dest3));
+
+        // (4) toggleMod: mv + chcon no nome novo
+        File root4 = tempDir("chcon-toggle");
+        File bin4 = new File(root4, "bin");
+        File log4 = new File(root4, "chcon.log");
+        String path4 = pathWithChconStub(bin4, log4, "0");
+        String cur = new File(root4, "meu mod.so").getPath();
+        String nw = new File(root4, "meu mod.so.off").getPath();
+        write(new File(cur), "payload");
+        checkSyntax("toggleModCommand", SuHelper.toggleModCommand(cur, nw));
+        Result r4 = shWithPath(SuHelper.toggleModCommand(cur, nw), path4, root4);
+        check("toggleMod: cadeia sai com 0", r4.code == 0);
+        check("toggleMod: o nome antigo sumiu", !new File(cur).exists());
+        check("toggleMod: o nome novo tem o conteúdo", read(new File(nw)).equals("payload"));
+        check("toggleMod: chcon 1x no nome novo", chconLog(log4).trim().equals(
+                SuHelper.SELINUX_MOD_CONTEXT + " " + nw));
+
+        // (5) STUB FALHANDO: a cadeia tem que sair != 0, senão o Java
+        // devolveria true com o contexto de SELinux não aplicado — o arquivo
+        // fica com o contexto errado e o jogo não lê em modo Enforcing.
+        File root5 = tempDir("chcon-fail");
+        File bin5 = new File(root5, "bin");
+        File log5 = new File(root5, "chcon.log");
+        String path5 = pathWithChconStub(bin5, log5, "1");
+        String dir5 = new File(root5, "com.foo.jogo").getPath();
+        Result rf = shWithPath(SuHelper.ensureModDirCommand(dir5), path5, root5);
+        check("stub falhando: a cadeia NÃO sai com 0", rf.code != 0);
+        check("stub falhando: o Java traduziu isso em falha (exec.success == code 0)", !(rf.code == 0));
+        File src5 = new File(root5, "a.so");
+        write(src5, "x");
+        String dest5 = new File(root5, "b.so").getPath();
+        Result rf2 = shWithPath(SuHelper.copyFileCommand(src5.getPath(), dest5, "644"), path5, root5);
+        check("copyFile com stub falhando também sai != 0", rf2.code != 0);
+
+        // (6) O QUE O "&&" COMPRA: se um passo do meio falha, o chcon NÃO
+        // pode rodar. Com `;` ele rodaria e a cadeia sairia 0 (o chcon é o
+        // último), e o Java devolveria true com modo/contexto errado.
+        // Executado de verdade, com um stub de chmod que falha.
+        File root6 = tempDir("chmod-fail");
+        File bin6 = new File(root6, "bin");
+        bin6.mkdirs();
+        File chmodLog = new File(root6, "chmod.log");
+        File chconLog6 = new File(root6, "chcon.log");
+        String stubChmod = "#!/bin/sh" + NL
+                + "printf '%s\\n' \"$*\" >> '" + chmodLog.getPath() + "'" + NL
+                + "if [ \"$BEP_STUB_CHMOD_FAIL\" = 1 ]; then exit 1; fi" + NL
+                + "exit 0" + NL;
+        File chmodStub = new File(bin6, "chmod");
+        write(chmodStub, stubChmod);
+        chmodStub.setExecutable(true);
+        File chconStub6 = new File(bin6, "chcon");
+        String stubChcon6 = "#!/bin/sh" + NL
+                + "printf '%s\\n' \"$*\" >> '" + chconLog6.getPath() + "'" + NL
+                + "exit 0" + NL;
+        write(chconStub6, stubChcon6);
+        chconStub6.setExecutable(true);
+        String path6 = bin6.getPath() + ":" + System.getenv("PATH");
+
+        File src6 = new File(root6, "c.so");
+        write(src6, "x");
+        String dest6 = new File(root6, "d.so").getPath();
+        Result okChain = shWithPathEnv(SuHelper.copyFileCommand(src6.getPath(), dest6, "644"),
+                path6, root6, "BEP_STUB_CHMOD_FAIL", "0");
+        check("com tudo funcionando: a cadeia sai com 0 e o chcon roda",
+                okChain.code == 0 && chconLog(chconLog6).contains(dest6));
+
+        String dest6b = new File(root6, "e.so").getPath();
+        Result failChain = shWithPathEnv(SuHelper.copyFileCommand(src6.getPath(), dest6b, "644"),
+                path6, root6, "BEP_STUB_CHMOD_FAIL", "1");
+        check("chmod falhando: a cadeia sai != 0", failChain.code != 0);
+        // isto é o que o `&&` garante: com `;` o chcon rodaria e a cadeia
+        // sairia 0, e o check abaixo accuse
+        check("chmod falhando: o chcon NÃO foi chamado (o && para a cadeia)",
+                chconLog(chconLog6).indexOf(dest6b) < 0);
+
+        // (7) O 1º COMANDO DE CADA CADEIA FALHANDO: o `&&` tem que impedir
+        // o chcon de rodar (e o chcon que roda em alvo inexistente falha, o
+        // que tornaria `;` indistinguível só pelo código de saída — por isso
+        // o teste afirma o LOG do stub, não só o exit).
+        // Cada cadeia tem seu jeito de o primeiro passo falhar de verdade:
+        //   ensureModDir  -> mkdir sob um ARQUIVO (não é diretório)
+        //   writeTextFile -> cp com origem inexistente
+        //   copyFile      -> cp -f com origem inexistente
+        //   toggleMod     -> mv com origem inexistente
+        String[] nomes = {"ensureModDir", "writeTextFile", "copyFile", "toggleMod"};
+        for (String nome : nomes) {
+            File ffRoot = tempDir("firstfail-" + nome);
+            File ffBin = new File(ffRoot, "bin");
+            File ffLog = new File(ffRoot, "chcon.log");
+            String ffPath = pathWithChconStub(ffBin, ffLog, "0");
+            String cmd;
+            if ("ensureModDir".equals(nome)) {
+                File arquivo = new File(ffRoot, "bloqueio");
+                write(arquivo, "sou um arquivo, nao um diretorio");
+                String dirAlvo = new File(arquivo, "com.foo.jogo").getPath();
+                cmd = SuHelper.ensureModDirCommand(dirAlvo);
+            } else if ("writeTextFile".equals(nome)) {
+                File inexistente = new File(ffRoot, "nao-existe.tmp");
+                cmd = SuHelper.writeTextFileCommand(inexistente.getPath(),
+                        new File(ffRoot, "destino").getPath());
+            } else if ("copyFile".equals(nome)) {
+                File inexistente = new File(ffRoot, "nao-existe.so");
+                cmd = SuHelper.copyFileCommand(inexistente.getPath(),
+                        new File(ffRoot, "destino.so").getPath(), "644");
+            } else {
+                File inexistente = new File(ffRoot, "nao-existe.so");
+                cmd = SuHelper.toggleModCommand(inexistente.getPath(),
+                        new File(ffRoot, "alvo.so.off").getPath());
+            }
+            Result rr = shWithPath(cmd, ffPath, ffRoot);
+            check(nome + ": 1o comando falhando => cadeia sai != 0", rr.code != 0);
+            check(nome + ": o chcon NÃO foi chamado (log do stub vazio)",
+                    chconLog(ffLog).trim().isEmpty());
+            check(nome + ": o Result do SuHelper traduz isso em falha (success == false)",
+                    !new SuHelper.Result(rr.code, rr.out, "", null).success);
+        }
+
+        // e a variante `;` de verdade, para documentar o que o && evita
+        String semiChain = SuHelper.copyFileCommand(src6.getPath(), dest6, "644")
+                .replace("644 '" + dest6 + "' && chcon", "644 '" + dest6 + "'; chcon");
+        Result semi = shWithPathEnv(semiChain, path6, root6, "BEP_STUB_CHMOD_FAIL", "1");
+        check("com `;` no lugar do `&&`, o chcon roda e a cadeia sai 0 (o bug)",
+                semi.code == 0 && chconLog(chconLog6).contains(dest6));
+    }
+
+    /** Como shWithPath, com uma env extra no ambiente do processo. */
+    private static Result shWithPathEnv(String cmd, String path, File cwd, String key, String value) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(Arrays.asList("sh", "-c", cmd));
+            pb.environment().put("PATH", path);
+            pb.environment().put(key, value);
+            if (cwd != null) pb.directory(cwd);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            proc.getOutputStream().close();
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            try (InputStream in = proc.getInputStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            }
+            Result r = new Result();
+            r.code = proc.waitFor();
+            r.out = new String(bo.toByteArray(), StandardCharsets.UTF_8);
+            return r;
+        } catch (Exception e) {
+            throw new AssertionError("falha ao executar com env custom: " + e);
+        }
+    }
+
+    // ---------- 7) probe do sistema -----------------------------------------
 
     private static void testProbeExecutado() {
         File root = tempDir("probe");
