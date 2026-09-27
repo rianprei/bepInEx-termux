@@ -210,13 +210,14 @@ não pela extensão, e diz em português se roda. A tabela honesta:
 | Tipo de jogo | Funciona? | Observação |
 |---|---|---|
 | Unity IL2CPP arm64 | **sim** (experimental) | validado só em Swamp Attack 2 e Battle Cats (POCO C75, Android 16) |
-| Unity Mono | **só .so próprio** | sem adaptação automática de mods de PC |
-| Unreal | **só .so próprio** | sem adaptação automática |
-| Godot | **só .so próprio** | sem adaptação automática |
-| Cocos2d-x | **só .so próprio** | sem adaptação automática |
-| Nativo (C/C++) | **só .so próprio** | sem adaptação automática |
+| Unity Mono | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Unreal | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Godot | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Cocos2d-x | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Nativo (C/C++) | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
 | Jogo 32-bit (arm32) | **não** | arm32 em andamento |
-| Processo :sufixo/multiusuário | **em correção** | em desenvolvimento |
+| Jogo com vários processos (:unity, :remote) | **corrigido** (experimental) | ainda não testado no celular |
+| Celular com vários usuários/perfil de trabalho | **ainda não** | em desenvolvimento |
 
 **Legenda:** "só .so próprio" = o jogo carrega mods nativos `.so` feitos para ele,
 mas não converte mods de PC automaticamente. "(experimental)" = ainda não
@@ -268,10 +269,11 @@ tabela acima. O caso comum ("jogo Android é IL2CPP, meu mod de PC é Mono")
 **não tem conversão automática**: o mod de PC referencia tipos que não
 existem no binário IL2CPP. O caminho é recriar o mod aqui (Mod Maker ou SDK).
 
-**Converter `.dll` de BepInEx** funciona só pra mod bem simples (troca de valor
-fixo). Medido em 30 mods reais: nenhum convertido; mesmo no melhor caso, ~3%.
-Mod de PC em geral **não roda no celular** por aqui. Veja
-[docs/DLL-COVERAGE.md](docs/DLL-COVERAGE.md) para os números completos.
+**Converter `.dll` de BepInEx**: medido em 30 mods reais, 0 de 378 patches
+convertidos (375 recusados porque o método-alvo fica no jogo, 3 por classe
+aninhada). Os ~3% são estimativa do tipo de corpo, não conversão medida.
+Mod de PC em geral **não roda no celular** por aqui. Veja o documento
+`docs/DLL-COVERAGE.md` (chega pela branch uni/dll-coverage) para os números completos.
 
 ### Meu celular usa SELinux Enforcing — funciona?
 É o padrão em celular de fábrica, e o módulo já carrega as regras
