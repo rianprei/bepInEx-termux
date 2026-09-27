@@ -27,8 +27,6 @@
 //   g++ -std=c++17 -Wall -Wextra -Werror -I jni mods/u_patch/jni/u_field_nresolve_test.cpp
 //       -o u_field_nresolve
 
-#include <cerrno>
-#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,25 +43,8 @@ void check(const char *name, bool cond) {
     if (!cond) g_fail++;
 }
 
-std::string case_label(unsigned local_id) {
-    // The gate injects a global range; standalone output stays file-qualified.
-    const char *base_text = std::getenv("UP_FIELD_CASE_ID_BASE");
-    if (base_text != nullptr && *base_text != '\0' && local_id > 0) {
-        errno = 0;
-        char *end = nullptr;
-        const unsigned long base = std::strtoul(base_text, &end, 10);
-        const unsigned long offset = static_cast<unsigned long>(local_id - 1);
-        if (errno == 0 && end != base_text && *end == '\0' &&
-            base <= ULONG_MAX - offset) {
-            return "Caso " + std::to_string(base + offset);
-        }
-    }
-    return "Caso u_field_nresolve/" + std::to_string(local_id);
-}
-
-void print_case(unsigned local_id, const char *description) {
-    const std::string label = case_label(local_id);
-    printf("%s[%s] %s\n", local_id == 1 ? "" : "\n", label.c_str(), description);
+void print_case(unsigned id, const char *description) {
+    printf("%s[Caso %u] %s\n", id == 84 ? "" : "\n", id, description);
 }
 
 // --- o mundo que o fake representa -----------------------------------------
@@ -197,11 +178,11 @@ void case_each_link() {
 int main() {
     printf("== u_field_nresolve_test: cadeia de resolução com Il2Cpp falso ==\n\n");
 
-    print_case(1, "cada elo devolvendo nullptr: recusa com motivo, sem crash");
+    print_case(84, "cada elo devolvendo nullptr: recusa com motivo, sem crash");
     case_each_link();
 
     // --- O type confusion: o que vai pro type_get_name é o TYPE -----------
-    print_case(2, "type_get_name recebe o Il2CppType*, não a Il2CppClass*");
+    print_case(85, "type_get_name recebe o Il2CppType*, não a Il2CppClass*");
     {
         // ESTE é o caso que quebra se o bug do device voltar. O fix passa `t`;
         // o bug passava `class_from_type(t)`. Os dois são não-nulos, então
@@ -220,7 +201,7 @@ int main() {
     }
 
     // --- O tipo de cada valor do C4, e o casamento com up_value_type_check -
-    print_case(3, "tipos reais do C4: bool/int/float com want certo");
+    print_case(86, "tipos reais do C4: bool/int/float com want certo");
     {
         struct Row { const char *name; size_t want; bool aceita; };
         const Row rows[] = {
@@ -255,7 +236,7 @@ int main() {
     // com SIGSEGV aqui em vez de num assert. Sem il2cpp_free não dá pra copiar
     // (copiar sem devolver é leak) nem devolver (free() é UB): a resposta
     // honesta é recusar e deixar o log explicar.
-    print_case(4, "free ausente: recusa em vez de free() da libc");
+    print_case(87, "free ausente: recusa em vez de free() da libc");
     {
         reset();
         Il2Cpp il = make_il();
@@ -270,7 +251,7 @@ int main() {
     }
 
     // --- nome maior que o buffer: recusa, não trunca ----------------------
-    print_case(5, "nome de tipo maior que o buffer: recusa em vez de truncar");
+    print_case(88, "nome de tipo maior que o buffer: recusa em vez de truncar");
     {
         reset();
         Il2Cpp il = make_il();
@@ -283,7 +264,7 @@ int main() {
     }
 
     // --- a linha de log, no formato que o mod escreve ----------------------
-    print_case(6, "linha de log PT-BR: 'campo X não encontrado em Y'");
+    print_case(89, "linha de log PT-BR: 'campo X não encontrado em Y'");
     {
         char line[256];
         up_resolve_log_line(UP_RS_NO_FIELD, "WeaponInfo", "unlimitedAmmo", line, sizeof(line));
@@ -304,7 +285,7 @@ int main() {
     }
 
     // --- args inválidos não crasham ---------------------------------------
-    print_case(7, "argumentos nulos: recusa, sem crash");
+    print_case(90, "argumentos nulos: recusa, sem crash");
     {
         reset();
         Il2Cpp il = make_il();
@@ -317,7 +298,7 @@ int main() {
     }
 
     // --- a regra do device, ponta a ponta ----------------------------------
-    print_case(8, "a regra que derrubou o jogo, com a cadeia toda no ar");
+    print_case(91, "a regra que derrubou o jogo, com a cadeia toda no ar");
     {
         // `field WeaponInfo unlimitedAmmo bool true` — o texto exato da regra. O
         // arquivo no aparelho se chamava .patch na epoca do crash; a extensao
