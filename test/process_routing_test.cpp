@@ -24,7 +24,7 @@ struct process_case {
 };
 
 int main() {
-    printf("[Caso 63] bc_process_select: pacote canônico e filtro de processo\n");
+    printf("[Caso 79] bc_process_select: pacote canônico e filtro de processo\n");
     const process_case cases[] = {
         {"principal usa app_data_dir", 10123, false, "com.foo", "/data/user/0/com.foo",
          BC_PROCESS_READY, "com.foo", true},
