@@ -30,13 +30,15 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | F1d crashguard | merged, validado | 2026-09-26: t_crash matou 2x, 3ª abertura sem mods e viva, aviso no log; reativar = mods voltam; contador zera após 20s vivo |
 | F2 SDK | merged, sem device | `new_mod`/`pack_bmod`/template só testados no host |
 | F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
-| F4 u_patch | **não mergeado** | em andamento: `uni/f4-upatch` (kimi) |
+| F4 u_patch | merged, sem device | `6589f2f`: motor completo (return/mul/static/field) + `thunk_exec` por execução real no qemu + fixture C4 compartilhada; falta a rodada de device (roteiro no DEVICE-ROUND.md) |
 | F5/F6 Manager | merged, sem device | APK compila e os testes JVM passam no gate; o app nunca foi instalado num celular |
 | F7 zip | merged, sem device | v0.4.1 determinístico (`d34b709`); instalar o zip num celular segue pendente |
 | F8 docs | merged, sem device | 8 achados de revisão corrigidos (`15b9a3f`) |
 | F9b u_noads | merged, sem device | `f08164b`: fecha o anúncio pelo callback de cada SDK (6 SDKs, 15 hooks); falta rodar no SA2 com `sa2content` desligado |
 | F11 u_frida | merged, sem device | script `.js` por `tools/deploy_frida.sh` (PC+adb) nunca rodou num celular |
-| T2 verify_all | merged, sem device | roda no host; `device test test/device/*.sh` segue SKIP por não existir |
+| T2 verify_all | merged, sem device | roda no host; desde `1224346` as etapas `device test` existem e passam (simulador, fake clock), mas continuam sendo SIMULAÇÃO — o `tools/device_test.sh` no celular de verdade (Permissive + Enforcing) é o item 3 da "Definição de pronto" e segue aberto |
+| T1 kit de device | merged, sem device | `1224346` (`restore-sim.sh`, `quoting-check.sh`, kit de restore com backup verificado), `c3da4cc` (fake clock: 65s → ~10s) e `2b3d8c6` (stdin herdado no filtro do su, que era a trava intermitente) |
+| docs de referência no gate | merged, sem device | `276e805`/`0ec85e0`: o gate confere que todo `arquivo:linha` citado em docs/README existe, e `docs/DEVICE-ROUND.md` é o roteiro da rodada |
 | guarda do gadget no loader | merged, sem device | `e92b13f` rejeita `.so` com `DT_SONAME` de gadget (Caso 63) — é barreira de host, ainda não testada com o gadget real num celular |
 
 ## Diferença honesta pro Lucky Patcher
@@ -131,6 +133,10 @@ field   <Classe>  <campo>   <bool|int|float>           <valor>  [<Método> <narg
 ```
 - `field` = campo de **instância**: a cada chamada de `<Método>` (instância, da mesma `<Classe>`), escreve `this.<campo> = <valor>` antes de rodar o original (hook com thunk, `this` = x0, offset via `field_get_offset`). Sem `<Método>`, o u_patch escolhe sozinho até 8 métodos de instância da classe que passam na guarda de tamanho. Motivo (teste no device 2026-09-26): `return ComplexCreature HasAmmo 0 bool true` aplicou e foi chamado 12x (Frida), mas a munição acabou mesmo assim, porque o jogo decrementa e checa o campo direto; o que dá munição infinita é o campo `WeaponInfo.unlimitedAmmo` (o sa2ammo usa ele). Método patchado não cobre lógica que lê campo direto.
 - `<Classe>` = `Namespace.Nome`, ou só `Nome` sem namespace (o último `.` separa). Classe aninhada fica fora do v1.
+- O número de campos é **exato**: 6 em `return`/`mul`, 5 em `static`, 5 (auto) ou 7 (com `<Método> <nargs>`) em `field`. Token a mais ou a menos é linha inválida nos dois lados.
+- `<nargs>` é inteiro: só dígitos, `>= 0` e `<= 64` (teto do `up_parse_nargs` do u_patch). `field` com 5 tokens não leva `<nargs>`: é o modo "auto", e `nargs = -1` é **só** esse modo, nunca o explícito.
+- `<tipo>` sai do conjunto fechado `bool|int|float`; `mul` não aceita `bool` (o fator multiplica valor numérico).
+- Um mesmo arquivo de fixtures vale pros dois lados: `test/fixtures/c4_lines.tsv` (`<linha> TAB <accept|reject>`), lido pelo `PatchGenerator.parse` do Manager (teste JVM `C4FixtureTest`) e pelo harness do `u_patch`. Divergência = os dois lados falham, com a linha no erro; corrige-se o lado errado conforme este contrato, nunca a fixture.
 - `<valor>`/`<fator>` pode ser `$key`, e aí vem do `<id>.conf`.
 - Busca em todos os assemblies (`domain_get_assemblies` + `class_from_name`).
 - Exemplo (SA2): `return ComplexCreature HasAmmo 0 bool true`.
@@ -187,7 +193,7 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 | **G7. Release imutável** | Tag + zip reproduzível + SHA256 publicado; versão em um lugar só (`VERSION`); dependência externa pinada por hash. |
 
 ### Definição de pronto (gate de merge — sem exceção)
-1. `tools/verify_all.sh` verde num checkout limpo: todos os mods e o loader com ndk-build sem warning (fora o `-static-libstdc++`), harness 0 falhas, testes JVM do Manager, `check_sepolicy_rule.sh`, `sh -n`/shellcheck em todo script, encoding arm64 conferido contra o assembler do NDK.
+1. `tools/verify_all.sh` verde num checkout limpo: todos os mods e o loader com ndk-build sem warning (a isenção do `-static-libstdc++` acabou em `81efee2` — o flag saiu de todo `Application.mk` e hoje QUALQUER warning é FAIL), harness 0 falhas, testes JVM do Manager, `check_sepolicy_rule.sh`, `sh -n`/shellcheck em todo script, encoding arm64 conferido contra o assembler do NDK.
 2. Revisão cruzada por **outro** agente, com todos os achados corrigidos (inclusive os cosméticos).
 3. `tools/device_test.sh` no device, em Permissive **e** Enforcing: SA2 + Battle Cats + o mod novo, zero crash, zero `avc: denied` do nosso caminho, device restaurado no fim.
 4. Soak test: 10 min de jogo com o mod, sem crash, sem ANR e sem crescer memória sem parar.
@@ -220,7 +226,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [~] `mods/common/mod_common.h`: `mod_pkg()`, `mod_dir()`, `mod_log(tag, fmt, ...)` (logcat + log.txt C1), `mod_conf_get(id, key, default)` (C3). (host OK: `6fd1415` + etapa `host test/mod_common_test.cpp`; device: pendente.)
 - [~] `mods/_template/` (Android.mk, Application.mk, `mod.cpp` com boot il2cpp + log). (host OK: `d0e35f7` + etapa `ndk-build mods/_template` PASS; device: pendente — `new_mod.sh hello` no SA2 nunca rodou.)
 - [~] `tools/new_mod.sh <id>`, `tools/deploy_mod.sh <id> <pkg>` (ndk-build + push + force-stop), `tools/pack_bmod.sh <id>` (gera `.bmod`, C2). (host OK: `d0e35f7`, `bash -n` + shellcheck PASS no gate; device: pendente.)
-- [ ] Migrar sa2ammo/sa2content pra `mod_common.h`, **só se** não mudar comportamento. (Falta: só `_template`, `u_dump` e `u_frida` usam `mod_common.h`; `sa2ammo` e `sa2content` seguem com o log próprio.)
+- [~] Migrar sa2ammo/sa2content pra `mod_common.h`, **só se** não mudar comportamento. (host OK: `5166d37` (sa2ammo, sa2content) + `3b85de2` (u_dump e t_crash, que ainda tinham C1 duplicado por baixo do `mod_common`) + `09483b8`; a linha de log dos dois passou a ir para `/data/data/<pkg>/files/bepinex/log.txt` e o `up_log` próprio do u_patch saiu, então a rotação do log C1 tem UM dono; device: pendente — o SA2 tem que continuar com munição e conteúdo, e o t_crash tem que continuar matando 2x.)
 - **Verifica:** `new_mod.sh hello` → deploy no SA2 → `hello: il2cpp ok` no log.txt.
 
 ### F3 — u_dump (scanner universal Unity IL2CPP)
@@ -229,13 +235,15 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** dump.tsv no SA2 contém `ComplexCreature`/`HasAmmo`; no TABS, `UnitBlueprint`.
 
 ### F4 — u_patch (motor declarativo = base do Mod Maker)
-- [ ] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (em andamento: `uni/f4-upatch`)
-- [ ] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (em andamento: `uni/f4-upatch`)
-- [ ] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (em andamento: `uni/f4-upatch`)
-- [ ] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (em andamento: `uni/f4-upatch`)
-- [ ] `field`: campo de instância reescrito a cada chamada de `<Método>` (a 4ª linha do verbo C4). É o que falta para o C4 fechar. (em andamento: `uni/f4-upatch`, kimi)
-- [ ] Parser puro e testável (harness host). (em andamento: `uni/f4-upatch`; enquanto o mod não entra na base, o gate mostra `u_patch encoding harness (not present) | SKIP`.)
-- **Verifica:** SA2 com `return ComplexCreature HasAmmo 0 bool true` → munição não trava; regra inválida → log e jogo segue.
+- [~] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (host OK: `up_scan_apply` + `up_foreach_line` puro (Casos 69-77) e a etapa "u_patch encoding harness" do gate passando; device: pendente — a rodada do F4 no SA2 ainda não rodou.)
+- [~] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (host OK: Caso 70 confere cada palavra contra o llvm-objdump do NDK e o guard `up_method_fits` (Caso 71) recusa método curto; device: pendente.)
+- [~] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (host OK: Caso 70 + `test/device/thunk_exec` executando o thunk de verdade no qemu (8×100k threads, recursão, float) e `buga`/`bugb2` falhando de propósito; device: pendente.)
+- [~] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (host OK: revalidação do FieldInfo a cada 10 passadas, com o valor reescrito a cada 2s; device: pendente.)
+- [~] `field`: campo de instância reescrito a cada chamada de `<Método>` (a 4ª linha do verbo C4). (host OK: Caso 72/77 conferem o layout palavra a palavra e o `test/device/thunk_exec` executa o thunk com `this=NULL` (não escreve e chama o original) e com `this` válido (escreve e o original lê de volta, com canário); device: pendente — falta medir se o campo segura valor no jogo, que é a razão de o verbo existir.)
+- [x] Parser puro e testável (harness host). (Entrega de host, não precisa de device: `u_patch_parse.h` puro, Casos 69/73/74/76 e a fixture `test/fixtures/c4_lines.tsv` — a mesma que o `PatchGenerator` do Manager lê, então os dois lados do C4 não podem divergir sem os dois testes caírem.)
+- [x] Guarda de `this` nulo no thunk `field` (achado CRÍTICO do cross-review: o jogo chama método com `this == nullptr` e o store em `[0+off]` derrubava o jogo). (host OK: `up_enc_cbz_x0` + layout com o caminho direto (Caso 77) e o teste de execução com `this=NULL`; a sabotagem sem o `cbz` faz o caso falhar.)
+- [x] Tipos e recusas antes de hookar: tamanho do campo pelo tipo real do il2cpp, classe de valor (struct) recusada, e `return`/`mul` float em método que devolve `System.Double` recusado — cada um com caso próprio. (host OK: `up_value_type_check` no Caso 73.)
+- **Verifica:** SA2 com `return ComplexCreature HasAmmo 0 bool true` → munição não trava; regra inválida → log e jogo segue. O roteiro pronto da rodada está em `docs/DEVICE-ROUND.md:102`.
 
 ### F5 — bepInEx Manager: núcleo (APK)
 - [~] Java puro, sem AndroidX/Gradle: build com SDK (`aapt2` + `javac --release 17` + `d8` + `apksigner`) por `manager/build.sh`, usando `~/Android/Sdk` (build-tools 37, android-36). minSdk 26. (host OK: `manager/build.sh` gera APK assinado e o `badging` confere com o `VERSION` da raiz (`dacad11`); device: pendente — o APK nunca foi instalado num celular.)
@@ -244,10 +252,11 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [~] Instalar `.bmod`: intent filter pra abrir `.bmod` + botão "+" (SAF). Mostra o manifest, avisa se `game` ≠ pacote ou engine incompatível, e copia os arquivos via `su`. (host OK: `AndroidManifest.xml` tem o filter (`pathPattern .*\.bmod`), `BmodInstaller` valida compatibilidade e `LooseModInstaller` cobre qualquer arquivo (C7), com tetos anti-zip-bomb (`BmodInstallerTest`); device: pendente.)
 - [~] Tela Status: root ok? módulo ativo (`/data/adb/modules/<id>`)? Zygisk ligado? Versão. (host OK: `StatusChecker` + card de status com versão vinda do `VERSION` (`BuildVersionTest`); device: pendente.)
 - [~] Todo `su` num helper só; falha de root = mensagem clara, sem crash. (host OK: `SuHelper` com validação central de todo dado interpolado no shell root (`SuHelperTest`: pkg/nome/chmod/caminho hostis recusados antes de montar o comando); device: pendente — `su` de verdade ainda não foi exercitado por teste automatizado.)
+- [~] Assinar com a chave do usuário sem expor a senha no `ps`. (host OK: `manager/build.sh` usa `--ks-pass env:MANAGER_KS_PASS` (nunca `pass:<literal>` fora da chave debug pública) e, sem a variável, deixa o apksigner perguntar no terminal; `tools/build_release.sh` acha `~/.config/bepinex-termux/manager-release.jks` por padrão e grava no `BUILD-INFO` o fingerprint SHA-256 do CERTIFICADO, extraído do APK assinado; `test/release_key_test.sh` assina com keystore temporário nos dois caminhos e apaga tudo no trap; chave e binário assinado fora do git em todo o repo. device: pendente — assinar com a chave de verdade e conferir o fingerprint é coisa de humano.)
 - **Verifica:** instalar `sa2-infinite-ammo.bmod` pelo app, ligar, reiniciar SA2 → ativo; desligar → volta ao normal.
 
 ### F6 — Mod Maker (criar mod sem código)
-- [ ] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`. (Falta: o código do fluxo existe (`ModMakerActivity`, com guarda `hasAsset`), mas `manager/assets/` não existe — o `u_dump.so` ainda não está embutido no APK.)
+- [~] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`. (Correção do sync anterior: `manager/assets/` NÃO é um arquivo versionado — o `manager/build.sh` compila `mods/u_dump` e copia o `.so` para lá a cada build, que é por isso que a pasta não aparece no repo. host OK: `build.sh` etapas de asset + `ModMakerActivity` com guarda `hasAsset` que avisa "Componente Ausente" em vez de scanner quebrado; device: pendente — o botão Escanear nunca foi apertado num celular.)
 - [~] Busca com filtro (classe/método/campo), resultados paginados (dump pode ter 100k+ linhas). (host OK: `ModMakerActivity` + `DumpParserTest` (C5) com leitura de arquivo de 100k+ linhas; device: pendente.)
 - [~] Ação por item: método bool → "sempre verdadeiro/falso"; método int/float → "sempre N" ou "multiplicar por N"; campo estático → "fixar em N"; campo de instância → verbo `field` do C4. Gera regras C4. (host OK: `PatchGeneratorTest` (C4) cobre `return`/`mul`/`static`/`field` com round-trip; device: pendente.)
 - [~] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.patch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; device: pendente — e `u_patch.so` nem existe na base ainda, F4.)
@@ -300,14 +309,16 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 | F1 loader | — | kilo | `uni/f1-zeroconfig` | mergeado, device validado |
 | F2 SDK + kit | F1 (log C1) | OpenCode | `uni/f2-sdk-v2` | mergeado, sem device |
 | F3 u_dump | contrato C5 | freebuff | `uni/f3-udump` | mergeado, device validado |
-| F4 u_patch | contrato C4 | kimi | `uni/f4-upatch` | **em andamento** (única fase de código fora da base) |
+| F4 u_patch | contrato C4 | kimi | `uni/f4-upatch` | mergeado (`6589f2f`), sem device — volta pro device com o roteiro do `DEVICE-ROUND.md` |
 | F5+F6 Manager | contratos C1–C6 | Antigravity | `uni/f5-manager` | mergeado, sem device |
 | F7 módulo + F8 docs | F5 | OpenCode / hermes | `uni/f7-module`, `uni/f8-docs` | mergeados, sem device |
 | F9/F9b pesquisa + u_noads | — | hermes | `uni/f9b-noads` | mergeado (`f08164b`), sem device |
 | F11 u_frida | — | kimi | `uni/f11-frida` | mergeado, sem device |
 | guarda do gadget | F11 | hermes | `uni/loader-frida-guard` | mergeado (`e92b13f`), sem device |
-| T1 device | tudo acima | OpenCode | `uni/t1-devicetest` | em andamento |
+| T1 device | tudo acima | OpenCode | `uni/t1-devicetest`, `uni/sim-fast`, `uni/sim-safe` | mergeado, sem device (simulador, fake clock, stdin) |
 | T2 verify_all | — | — | `uni/t2-verify` | mergeado, roda no host |
+| G7 release-key | F5 | Claude Code | `uni/release-key` | mergeado (`192e967`), sem device (falta assinar com a chave real) |
+| C4 compartilhado | contrato C4 | Claude Code | `uni/c4-shared` | mergeado: Manager e u_patch leem a mesma fixture |
 
 F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até ele chegar, F3/F4 usam o próprio log mínimo e trocam depois. Integração: merge em `feat/generic-pkg-mods` (sem push sem autorização do usuário), revisão cruzada por outro agente, validação no device (SA2 + BC) pelo orquestrador.
 

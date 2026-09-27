@@ -366,12 +366,18 @@ int main() {
                 char *expect = tab + 1;
                 while (*expect == ' ' || *expect == '\t') expect++;
                 up_rule_t r;
+                // up_parse_line DESTRÓI a linha (o tokenizador escreve NUL no
+                // buffer), então a mensagem de erro saía com só o primeiro
+                // token ("return") — e o ponto da fixture é dizer QUAL linha
+                // divergiu. Copia antes.
+                char shown[512];
+                snprintf(shown, sizeof(shown), "%s", line);
                 int got = up_parse_line(line, &r);
                 int want_accept = strcmp(expect, "accept") == 0;
                 int ok = want_accept ? (got == 0) : (got == -1);
                 if (!ok) {
                     printf("  [FAIL] fixture: '%s' esperava %s, parser deu %d\n",
-                           line, want_accept ? "accept" : "reject", got);
+                           shown, want_accept ? "accept" : "reject", got);
                     nbad++;
                 }
                 nlines++;
