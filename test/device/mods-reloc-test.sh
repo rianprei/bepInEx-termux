@@ -16,6 +16,8 @@
 #   (d) idempotência: rodar duas vezes não quebra nem duplica;
 #   (e) o que a migração NÃO apaga: se sobrou algo no diretório antigo
 #       (porque um link recusou), o diretório antigo continua de pé.
+# shellcheck disable=SC2015  # as asserções são "A && ok || bad" de propósito:
+# ok() e bad() nunca falham, então o A&&B||C é o if-then-else aqui.
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -120,9 +122,9 @@ fi
 echo "== (d) rodar duas vezes nao quebra nem duplica =="
 seed
 sh -c ". '$MIG'; bep_migrate_tree '$OLD' '$NEW' '$WHY' mods bc_mods" >/dev/null 2>&1
-antes=$(ls "$NEW/mods/$PKG" 2>/dev/null | wc -l)
+antes=$(find "$NEW/mods/$PKG" -maxdepth 1 -type f 2>/dev/null | wc -l)
 sh -c ". '$MIG'; bep_migrate_tree '$OLD' '$NEW' '$WHY' mods bc_mods" >/dev/null 2>&1
-depois=$(ls "$NEW/mods/$PKG" 2>/dev/null | wc -l)
+depois=$(find "$NEW/mods/$PKG" -maxdepth 1 -type f 2>/dev/null | wc -l)
 [ "$antes" = "$depois" ] \
     && ok "a arvore nova nao mudou na segunda passada ($antes entradas)" \
     || bad "a arvore nova mudou na segunda passada ($antes -> $depois)"

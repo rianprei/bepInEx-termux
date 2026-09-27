@@ -29,13 +29,13 @@
 # simbolico, socket, fifo, device — FICA ONDE ESTA e e logada com o motivo. Um
 # `mv` seguido de link quebraria a arvore e ainda assim reportaria sucesso.
 
-# Raiz de mods. Fonte unica: BC_MODS_ROOT aqui e em jni/bc_loader.h
-# (mesmo valor, mesmas duas palavras) e manager SuHelper.MODS_ROOT.
+# Raiz de mods. Valor PADRAO: quem chama pode sobrescrever antes de sourcing
+# (o post-fs-data põe a dele), e bep_migrate_tree recebe os caminhos como
+# argumento de qualquer forma — esta variável e a.documentacao do valor, nao um
+# parametro. Fonte unica do valor: BC_MODS_ROOT em jni/bc_loader.h,
+# SuHelper.MODS_ROOT no Manager, MODS_ROOT no post-fs-data.sh.
+# shellcheck disable=SC2034
 BEPINEX_ROOT=/data/adb/bepinex
-
-# Raiz antiga (a que o shell/app podem manipular). Mantida aqui porque é
-# history: some quando a migração terminar com sucesso.
-BEPINEX_OLD_ROOT=/data/local/tmp
 
 # _bep_migrate_um <entrada-antiga> <destino> <caminho-rel-log>
 # Move UMA entrada da arvore antiga para a nova. Decide o tipo por lstat() e
