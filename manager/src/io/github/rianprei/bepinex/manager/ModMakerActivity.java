@@ -202,7 +202,7 @@ public class ModMakerActivity extends Activity {
         mTvScannerStatus.setText("Verificando dump.tsv no dispositivo...");
         new Thread(() -> {
             String remoteDumpPath = "/data/data/" + mPkg + "/files/bepinex/dump.tsv";
-            SuHelper.Result r = SuHelper.exec("[ -f '" + remoteDumpPath + "' ] && wc -l '" + remoteDumpPath + "' || echo 'missing'");
+            SuHelper.Result r = SuHelper.exec(ScanFlow.dumpProbeCommand(remoteDumpPath));
             boolean exists = r.success && !r.stdout.contains("missing");
 
             if (exists) {

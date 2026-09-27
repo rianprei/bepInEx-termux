@@ -21,7 +21,9 @@ fails=0
 ok() { printf '  [PASS] %s\n' "$1"; }
 bad() { printf '  [FAIL] %s\n' "$1"; fails=$((fails + 1)); }
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -n "$APK" ] && [ -f "$APK" ] || { echo "uso: $0 <apk> [versionCode]" >&2; exit 2; }
+[ -f "$ROOT/tools/zip_arsc_info.py" ] || { echo "ERRO: tools/zip_arsc_info.py ausente" >&2; exit 2; }
 [ -x "$BUILD_TOOLS/zipalign" ] || { echo "ERRO: zipalign ausente ($BUILD_TOOLS)" >&2; exit 2; }
 [ -x "$BUILD_TOOLS/apksigner" ] || { echo "ERRO: apksigner ausente ($BUILD_TOOLS)" >&2; exit 2; }
 [ -x "$BUILD_TOOLS/aapt2" ] || { echo "ERRO: aapt2 ausente ($BUILD_TOOLS)" >&2; exit 2; }
@@ -36,35 +38,22 @@ else
 fi
 
 # 2) resources.arsc: tem que estar STORED (método 0) e começar em offset
-#    múltiplo de 4. Comprimido, o Android 11+ não instala (-124). O offset
-#    vem do cabeçalho LOCAL (o que o PackageManager lê), então é esse que
-#    importa — o diretório central pode discordar.
-read -r ARSC_METHOD ARSC_OFF < <(python3 - "$APK" <<'PY'
-import struct, sys, zipfile
-apk = sys.argv[1]
-with zipfile.ZipFile(apk) as z:
-    info = z.getinfo("resources.arsc")
-method = info.compress_type                      # 0 = STORED
-with open(apk, "rb") as f:
-    # offset do cabeçalho local, lido do diretório central
-    f.seek(info.header_offset)
-    sig = f.read(4)
-    if sig != b"PK\x03\x04":
-        print("-1 -1"); raise SystemExit(0)
-    name_len, extra_len = struct.unpack("<HH", f.read(4))
-    off = info.header_offset + 30 + name_len + extra_len
-print(method, off)   # método e offset: o tamanho não é usado pelo check
-PY
-)
+#    múltiplo de 4. Comprimido, o Android 11+ não instala (-124).
+#    O offset vem do CABEÇALHO LOCAL (bytes 26-29 = name_len/extra_len), que é
+#    o que o PackageManager lê e o que o zipalign alinha. Ler os bytes 4-7 (a
+#    versão) dava 12902 num APK que o zipalign dizia estar em 12904 — FAIL
+#    falso (achado do OpenCode, 2026-09-27). A leitura mora em
+#    tools/zip_arsc_info.py, que o host test exercita com zips sintéticos.
+read -r ARSC_METHOD ARSC_OFF _ARSC_NAME _ARSC_EXTRA < <(python3 "$ROOT/tools/zip_arsc_info.py" "$APK")
 if [ "$ARSC_METHOD" = "0" ]; then
     ok "resources.arsc STORED (método 0)"
 else
     bad "resources.arsc está comprimido (método $ARSC_METHOD, 0=STORED) — o Android 11+ recusa com INSTALL_PARSE_FAILED (-124)"
 fi
-if [ -n "$ARSC_OFF" ] && [ "$ARSC_OFF" -eq 0 ] 2>/dev/null; then
-    bad "não consegui ler o offset de resources.arsc"
-elif [ $((ARSC_OFF % 4)) -eq 0 ] 2>/dev/null; then
-    ok "resources.arsc alinhado em 4 (offset $ARSC_OFF)"
+if [ -z "$ARSC_OFF" ] || [ "$ARSC_OFF" = "-1" ]; then
+    bad "não consegui ler o offset de resources.arsc (cabeçalho local ilegível?)"
+elif [ $((ARSC_OFF % 4)) -eq 0 ]; then
+    ok "resources.arsc alinhado em 4 (offset $ARSC_OFF, cabeçalho local)"
 else
     bad "resources.arsc com offset $ARSC_OFF, não múltiplo de 4"
 fi

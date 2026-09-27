@@ -25,6 +25,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
+import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
@@ -302,6 +303,17 @@ public class GameDetailActivity extends Activity {
             }
 
             // 2. Le metadados de <id>.json e verifica <id>.conf
+            // Um `su` só: o conteúdo de todos os <id>.json deste jogo, com
+            // separador (SuHelper.readTextFiles). Antes era um readTextFile
+            // por mod — 30 mods = 30 processos su.
+            List<String> jsonNames = new ArrayList<>();
+            for (String f : files) {
+                if (f.endsWith(".json")) jsonNames.add(f);
+            }
+            Map<String, String> jsonBundle = ModInventory.parseBundle(
+                    SuHelper.readTextFiles("/data/local/tmp/mods/" + mPkg, jsonNames),
+                    SuHelper.BUNDLE_SEP);
+
             for (Map.Entry<String, ModInfo> entry : map.entrySet()) {
                 String id = entry.getKey();
                 ModInfo info = entry.getValue();
@@ -311,7 +323,10 @@ public class GameDetailActivity extends Activity {
                 }
 
                 if (files.contains(id + ".json")) {
-                    String json = SuHelper.readTextFile("/data/local/tmp/mods/" + mPkg + "/" + id + ".json");
+                    // O conteúdo vem do PACOTE abaixo: uma única chamada root
+                    // para todos os .json do jogo, em vez de um `su` por mod
+                    // (mesmo bug de orçamento da tela de jogos, em escala menor — sem o `su` por mod.
+                    String json = jsonBundle.get(id + ".json");
                     if (json != null) {
                         try {
                             ModManifest m = ManifestParser.parse(json);

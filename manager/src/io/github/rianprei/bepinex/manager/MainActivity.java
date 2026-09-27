@@ -29,6 +29,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.BmodInstaller;
+import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
@@ -41,6 +42,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_BMOD = 1001;
@@ -156,6 +158,19 @@ public class MainActivity extends Activity {
             List<ApplicationInfo> apps = pm.getInstalledApplications(PackageManager.GET_META_DATA);
             List<GameInfo> loaded = new ArrayList<>();
 
+            // Inventário de mods de TODOS os apps em UMA chamada root, ANTES do
+            // laço (achado de device 2026-09-27: uma chamada su por app
+            // instalado esgotava a memória do aparelho e travava o Manager).
+            List<String> allPkgs = new ArrayList<>();
+            for (ApplicationInfo ai : apps) {
+                if (getPackageName().equals(ai.packageName)) continue;
+                allPkgs.add(ai.packageName);
+            }
+            Map<String, ModInventory.Counts> inv = ModInventory.inventory(allPkgs,
+                    new ModInventory.RootCall() {
+                        @Override public String exec() { return SuHelper.listAllModsInventory(); }
+                    });
+
             for (ApplicationInfo ai : apps) {
                 // Pular o proprio bepInEx Manager
                 if (getPackageName().equals(ai.packageName)) continue;
@@ -177,18 +192,11 @@ public class MainActivity extends Activity {
                 File nativeDir = ai.nativeLibraryDir != null ? new File(ai.nativeLibraryDir) : null;
                 String engine = EngineDetector.detectFromApks(apks, nativeDir);
 
-                // Checa se ja existem mods para este jogo em /data/local/tmp/mods/<pkg>/
-                List<String> modFiles = SuHelper.listFiles("/data/local/tmp/mods/" + ai.packageName);
-                int totalMods = 0;
-                int activeMods = 0;
-                for (String f : modFiles) {
-                    if (f.endsWith(".so") || f.endsWith(".patch")) {
-                        totalMods++;
-                        activeMods++;
-                    } else if (f.endsWith(".so.off") || f.endsWith(".patch.off")) {
-                        totalMods++;
-                    }
-                }
+                // Mods deste jogo vêm do inventário de UMA chamada acima —
+                // sem chamada root por app, por refresh, por lista.
+                ModInventory.Counts counts = inv.get(ai.packageName);
+                int totalMods = (counts != null) ? counts.total : 0;
+                int activeMods = (counts != null) ? counts.active : 0;
 
                 GameInfo info = new GameInfo();
                 info.packageName = ai.packageName;

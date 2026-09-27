@@ -2,7 +2,7 @@ package io.github.rianprei.bepinex.manager.test;
 
 public class TestRunner {
     public static void main(String[] args) {
-        System.out.println("=== Executando Testes Unitarios JVM (Contratos C2-C7 + F1d + VERSION + .bmod hostil + C4 compartilhado) ===");
+        System.out.println("=== Executando Testes Unitarios JVM (Contratos C2-C7 + F1d + VERSION + .bmod hostil + C4 compartilhado + orcamento de su) ===");
         try {
             ManifestParserTest.run();
             ConfTest.run();
@@ -16,6 +16,8 @@ public class TestRunner {
             ScanFlowTest.run();
             BmodInstallerTest.run();
             C4FixtureTest.run();
+            RootCallBudgetTest.run();
+            ShellExecTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);
         } catch (Throwable t) {
