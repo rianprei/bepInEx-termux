@@ -164,7 +164,7 @@ No `manifest.json` do seu mod:
 ]
 ```
 
-O Manager (em desenvolvimento) vira isso em slider e grava `mult=2` no
+O Manager vira isso em slider e grava `mult=2` no
 `<id>.conf`. No mod: `double mult = mod_conf_float("hello", "mult", 2.0);`.
 Formato do `.conf` e regras do manifest: [BMOD-FORMAT.md](BMOD-FORMAT.md).
 

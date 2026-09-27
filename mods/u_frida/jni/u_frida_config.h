@@ -18,7 +18,7 @@
 #define UF_CONFIG_MAX 4096  // config maior que isso = recusado (não lê pela metade)
 
 // É mod .js? *.js, menos oculto/subpasta. *.js.off não termina em .js,
-// então já cai fora pela regra abaixo (igual C1 dos .so/.patch).
+// então já cai fora pela regra abaixo (igual C1 dos .so/.bpatch).
 static inline bool uf_is_js_mod(const char *name) {
     if (name == nullptr || name[0] == '\0' || name[0] == '.') return false;
     if (strchr(name, '/') != nullptr) return false;

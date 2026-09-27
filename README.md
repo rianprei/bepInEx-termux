@@ -21,9 +21,13 @@ Hoje o projeto é validado em: **Swamp Attack 2** (Unity IL2CPP, mods em
 produção: munição infinita e conteúdo extra) e **Battle Cats** (caminho
 próprio, histórico, intacto). TABS Pocket Edition é o próximo alvo. O app
 **bepInEx Manager** (instalar/ligar/desligar mods com um toque, sem terminal)
-está **em desenvolvimento** — enquanto ele não chega, o botão **Ação** do
-Magisk mostra o diagnóstico (mods instalados, log, SELinux) e os scripts
-`tools/` fazem a instalação.
+já existe e instala `.bmod`, `.so`, `.bpatch` e `.js`. O módulo, o
+carregamento de mods `.so`, o crashguard com **Reativar**, o scanner e o
+bloqueio de anúncios foram verificados no celular (POCO C75, 26-27/09).
+A instalação de mods pelo Manager e a criação de mods pelo Mod Maker no
+celular ainda não foram testadas (experimental). O
+botão **Ação** do Magisk mostra o diagnóstico (mods instalados, log,
+SELinux) e os scripts `tools/` fazem a instalação.
 
 ## Requisitos
 
@@ -52,11 +56,10 @@ Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
 
 ## Instalar um mod
 
-> **Pelo Manager (em desenvolvimento — ainda não existe):** quando chegar,
-> você vai abrir o arquivo `.bmod` (baixado, recebido no WhatsApp, de onde
-> for) e ele mostra o que o mod faz, instala com um toque e oferece
-> liga/desliga e opções. Nada disso funciona hoje. O que segue é o caminho
-> que **já funciona**, sem Manager.
+> **Pelo Manager (experimental):** o Manager já existe e instala `.bmod`,
+> `.so`, `.bpatch` e `.js` com um toque. A instalação e o uso no celular
+> ainda não foram verificados em aparelho (experimental). O que segue é o
+> caminho alternativo, sem Manager.
 
 Hoje, instalar um mod = colocar os arquivos dele na pasta do jogo e
 reiniciar o jogo. O jeito mais curto é um script que faz tudo (build,
@@ -80,8 +83,22 @@ tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 - **Remover:** apague os arquivos do mod da pasta e reinicie o jogo. Nada
   fica dentro do jogo.
 
+### Se o seletor de arquivos do celular falhar
+
+No celular (Xiaomi), o seletor não devolveu o arquivo ao Manager. A opção
+**Escolher da pasta Download** foi criada por isso, mas ainda não foi
+testada no celular (experimental).
+
+Se o seletor voltar sem arquivo, toque em **Escolher da pasta Download**.
+Se ainda assim não funcionar, o passo a passo manual:
+
+1. Abra o **gerenciador de arquivos** do celular.
+2. Mova o arquivo do mod para a pasta **Download**.
+3. No Manager, toque em **Escolher da pasta Download**.
+4. Selecione o arquivo.
+
 Pra criar um mod seu do zero (C++), veja [docs/SDK.md](docs/SDK.md). O
-formato dos arquivos (`.bmod`, `.patch`, `.conf`) está em
+formato dos arquivos (`.bmod`, `.bpatch`, `.conf`) está em
 [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
 
 Para gerar uma release local completa (zip Magisk, APK do Manager, exemplos
@@ -92,54 +109,119 @@ A árvore Git precisa estar limpa. Sem
 externamente. A reprodução pode ser conferida com
 `VERIFY_RELEASE=1 tools/verify_all.sh`.
 
-## Criar mod sem código (Mod Maker) — em desenvolvimento
+## Criar mod sem código (Mod Maker) — experimental
 
-A meta (fase F6 do roadmap): no Manager, você toca em **"Escanear jogo"**,
-o jogo roda uma vez e devolve a lista de classes/métodos/campos (`dump.tsv`);
-você busca (ex.: `HasAmmo`), escolhe uma ação ("sempre verdadeiro", "sempre
-retornar N", "multiplicar por N", "fixar campo em N") e salva — sem escrever
-uma linha. O mod salvo é um `.bmod` que dá pra compartilhar.
+O Manager tem o **Mod Maker**: você toca em **"Escanear jogo"**, o jogo roda
+uma vez e devolve a lista de classes/métodos/campos; você busca (ex.:
+`HasAmmo`), escolhe uma ação ("sempre verdadeiro", "sempre retornar N",
+"multiplicar por N", "fixar campo em N") e salva — sem escrever uma linha.
+O mod salvo é um `.bmod` que dá pra compartilhar.
 
-Hoje isso já funciona por partes, sem Manager:
+**Como usar:**
 
-- **Descobrir nomes:** o scanner `u_dump` (já mergeado) gera o `dump.tsv`
-  com todas as classes, métodos e campos do jogo (Unity IL2CPP), pela API em
-  runtime — sem depender de ferramenta de dump externa. Caminho de hoje (com
-  terminal, no PC com adb): `tools/deploy_mod.sh u_dump <pacote>` — builda,
-  instala e reinicia o jogo; o dump sai em
-  `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que o jogo
-  abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar o
-  jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar
-  de usar.
-  No Manager isso vira o botão "Escanear jogo".
-- **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
-  `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em
-  integração** (fase F4): o contrato das regras já está fixado no roadmap e
-  a lição que criou o verbo `field` veio de teste real no device, mas nada
-  de `.patch` é instalável até o F4 mergear. De propósito não há instrução
-  operacional aqui — quando mergear, esta seção e o
-  [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md) ganham o passo a passo.
+1. Toque em **Escanear jogo** e escolha o jogo.
+2. Navegue pela lista de classes e métodos.
+3. Escolha o método que quer alterar.
+4. Escolha a ação: "sempre verdadeiro", "sempre retornar N", "multiplicar
+   por N" ou "fixar campo em N".
+5. Salve e instale o mod gerado.
+
+**Status:** o **Escanear jogo** funcionou no celular (lista com 162 mil
+linhas). Criar e salvar o mod pelo app no celular ainda não foi testado
+(experimental).
+
+**Atenção:** a regra de campo (`field`) pode fechar o jogo. O primeiro teste
+no celular fechou o jogo; depois da correção, o re-teste aplicou a regra em
+8 métodos e o jogo ficou vivo por 120s. O efeito no jogo (ex.: munição
+infinita) ainda não foi confirmado por alguém jogando. As regras `return`,
+`mul` e `static` ainda não foram testadas no celular.
+
+**Caminho do PC, sem o Manager:** os mesmos nomes saem do scanner `u_dump`,
+que gera o `dump.tsv` com todas as classes, métodos e campos do jogo
+(Unity IL2CPP) pela API em runtime. Com terminal e adb no PC:
+`tools/deploy_mod.sh u_dump <pacote>` — builda, instala e reinicia o jogo; o
+dump sai em `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que
+o jogo abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar
+o jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar de
+usar. No Manager isso vira o botão "Escanear jogo" acima.
+
+**Aplicar regras à mão:** um `.bpatch` com regras declarativas simples
+(verbos `return`/`mul`/`static`/`field`), servido pelo `u_patch` — motor já
+mergeado e com o contrato das regras em
+[docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
 
 ## Que mods rodam
 
-O Manager (em desenvolvimento) vai identificar o arquivo **pelo conteúdo**,
-não pela extensão, e dizer em português se roda. A tabela honesta:
+O Manager identifica o arquivo **pelo conteúdo**,
+não pela extensão, e diz em português se roda. A tabela honesta:
 
 | Arquivo | Roda? | Observação |
 |---|---|---|
 | `.bmod` (nosso pacote) | **sim** | zip com manifest + mod |
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
-| `.patch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
+| `.bpatch` (regras declarativas) | **sim** (experimental) | testado só no PC; uso no celular pendente de verificação |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
-| `.js` script Frida | em desenvolvimento (F11) | via frida-gadget |
-| `.dll` de BepInEx/MelonLoader **IL2CPP** | depois (F12) | exige runtime .NET no processo |
-| `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois (F13) | Harmony roda nativo em Mono |
+| `.js` script Frida | **não use** | o frida-gadget 17.19.0 fechou o jogo (SA2) no teste em celular; pode fechar o jogo até a correção |
+| `.dll` de BepInEx/MelonLoader **IL2CPP** | depois | exige runtime .NET no processo |
+| `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois | Harmony roda nativo em Mono |
 | `.dll` Mono de PC em jogo **IL2CPP** (ex.: mods de TABS PC) | **não automático** | os dois binários falam línguas diferentes; use o Mod Maker/SDK pra recriar |
 | `.exe`, `.dylib` iOS, `.CT` Cheat Engine | não | outra plataforma/binário |
-| `.lua` GameGuardian | depois (F10) | fora do caminho crítico |
+| `.lua` GameGuardian | depois | fora do caminho crítico |
 
-O tipo de engine é detectado pelas libs do jogo (Unity IL2CPP, Unity Mono,
-Cocos2d-x, outros → "nativo"). Nenhum caminho modifica arquivo do jogo.
+### Tipos de arquivo que NÃO funcionam (e por quê)
+
+- **`.dll` de BepInEx (mod de PC):** é um mod da versão de PC do jogo,
+  embalado para o BepInEx do computador (a pasta `BepInEx` com plugins está
+  aí dentro). O `.dll` dele é feito para o jogo rodando no computador e
+  não funciona no celular. Em breve vai dar para converter mods simples
+  para o formato que o celular roda (`.bpatch`); por enquanto, procure a
+  versão para Android deste mod.
+
+- **`.apk`:** é o instalador do jogo, não um mod. O Manager nunca modifica
+  arquivo do jogo: nem pacote do aplicativo, nem expansão. Para instalar
+  mod, escolha o arquivo de mod em si (`.so`, `.bpatch` ou `.js`).
+
+- **`.xapk`:** é um pacote de expansão do jogo, não um mod. O Manager nunca
+  modifica arquivo do jogo.
+
+- **`.zip` comum:** é um arquivo compactado sem pacote de mod dentro. O
+  Manager só instala pacote de mod (`.bmod`) ou arquivo de mod avulso.
+  Descompacte no gerenciador de arquivos e volte aqui com o arquivo de
+  dentro.
+
+- **`.so` de outra arquitetura (arm32, x86):** é um mod de verdade, mas
+  feito para outro tipo de aparelho. O seu celular só roda a versão para
+  ARM de 64 bits; procure o download para ARM 64 deste mod.
+
+- **`.so` estragado:** o arquivo é um mod para Android, mas está estragado
+  (download cortado ou corrompido). Instalar mod pela metade fecha o jogo.
+  Baixe o mod de novo e tente outra vez.
+
+- **Frida Gadget:** é o programa do Frida (a ferramenta que roda os scripts),
+  não um mod. Se ele entrar como mod, o jogo abre e fica travado esperando
+  um computador conectar. O Manager sabe cuidar dele: toque em instalar e
+  ele vai para o lugar certo, junto com a configuração que faz os scripts
+  `.js` da pasta rodarem sozinhos.
+
+### Suporte por engine
+
+O tipo de engine é detectado pelas libs do jogo. O que cada engine suporta:
+
+- **Unity IL2CPP:** você pode escanear o jogo para criar mods de valores
+  sem programar e instalar mods prontos feitos para este jogo. O uso de
+  scripts JavaScript pelo carregador no celular é experimental; mods de
+  outro jogo não têm compatibilidade garantida.
+
+- **Unity Mono:** você pode instalar mods prontos feitos para este jogo e
+  usar scripts JavaScript pelo carregador (experimental no celular). Ainda
+  não é possível criar mods sem programar para Unity Mono.
+
+- **Outras engines (Cocos2d-x, Unreal, Godot, etc.):** você pode instalar
+  mods prontos feitos para este jogo e usar scripts JavaScript pelo
+  carregador (experimental no celular). Ainda não é possível criar mods
+  sem programar para estas engines.
+
+Nenhum caminho modifica arquivo do jogo.
 
 ## FAQ
 
@@ -183,7 +265,7 @@ de fábrica varia por fabricante, e se algo não carregar o botão **Ação**
 mostra o estado do SELinux e o rótulo da pasta pra diagnosticar.
 
 Instalar mod depois do boot exige aplicar o rótulo no arquivo — o
-`deploy_mod.sh` e o Manager (em desenvolvimento) fazem isso sozinhos; se
+`deploy_mod.sh` e o Manager fazem isso sozinhos; se
 você copia na mão, aplique
 `chcon u:object_r:bepinex_mod_file:s0 <arquivo>` via root.
 
@@ -223,7 +305,7 @@ como pessoa comum, as seções acima já bastam.
 
 - **Novo (roadmap universal):** o projeto deixou de ser só o POC do Battle
   Cats e virou um loader genérico — `docs/ROADMAP-UNIVERSAL.md` tem o mapa
-  completo (objetivo, contratos C1–C7, fases F1–F13 e o que já mergeou).
+  completo (objetivo, contratos e fases).
 - **Módulo completo com uma linha:** `tools/build_module.sh` gera
   `out/bepinex-termux-<versão>.zip` com `module.prop`, `zygisk/arm64-v8a.so`,
   `sepolicy.rule`, scripts de boot e (quando disponível) o APK do Manager —
@@ -231,7 +313,7 @@ como pessoa comum, as seções acima já bastam.
 - **SDK de mod nativo:** [docs/SDK.md](docs/SDK.md) — template, `new_mod.sh`,
   `deploy_mod.sh`, `pack_bmod.sh` e a API do `mod_common.h`.
 - **Formato dos arquivos de mod:** [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md)
-  (`.bmod`, `.conf`, `.patch`, `dump.tsv`).
+  (`.bmod`, `.conf`, `.bpatch`, `dump.tsv`).
 - **Testes:** `test/selftest_harness.cpp` (host, sem device) +
   `test/mod_common_test.cpp` (SDK).
 

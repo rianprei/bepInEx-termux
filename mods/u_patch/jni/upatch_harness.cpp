@@ -20,10 +20,10 @@ static int count_cb(char *line, int lineno, void *vctx) {
     return 0;
 }
 
-// --- round-trip real (Caso 78): tradutor JVM -> parser C++ -----------------
+// --- round-trip real (Caso 79): tradutor JVM -> parser C++ -----------------
 //
 // O Dll2PatchTest (gate JVM) grava o patchText() REAL do HarmonyTranslator em
-// test/fixtures/dll2patch/translator_output.patch — o mesmo artefato .patch
+// test/fixtures/dll2patch/translator_output.bpatch — o mesmo artefato .bpatch
 // que o Manager empurra para o celular. Este caso é o round-trip SEM RÉPLICA:
 // cada linha passa pelas funções REAIS que o mod roda no device
 // (up_foreach_line -> up_parse_line -> up_split_class, a cadeia inteira do
@@ -612,22 +612,77 @@ int main() {
               f[0] != 0x39004009u && f[2] != 0x39004009u);
     }
 
-    printf("\n[Caso 78] round-trip real: saída do tradutor JVM → parser C++ (gate)\n");
+    // --- #14: o scan do loader, que e o que diz quais arquivos o motor le ---
+    //
+    // Este caso existe por causa de uma SABOTAGEM que passou: com o loader
+    // voltando a procurar so "*.patch", o verify_all inteiro continuou PASS.
+    // A decisao de scan vivia no .cpp, sem nenhum teste de host, e nada no gate
+    // executava o loader. Agora ela mora em u_patch_parse.h (puro) e e
+    // testada aqui.
+    printf("\n[Caso 78] up_is_patch_file/up_patch_id_from_name: o scan do loader\n");
+    {
+        // 1. o que o motor tem que ler
+        check("t1.bpatch é lido", up_is_patch_file("t1.bpatch"));
+        check("meu_mod.bpatch é lido", up_is_patch_file("meu_mod.bpatch"));
+        // 2. o que ele NÃO tem que ler
+        check("x.bpatch.off (desligado) nao é lido", !up_is_patch_file("t1.bpatch.off"));
+        check("x.conf nao é lido", !up_is_patch_file("t1.conf"));
+        check("x.so nao é lido", !up_is_patch_file("lib.so"));
+        check("sem extensao nao é lido", !up_is_patch_file("regras"));
+        // A extensao ANTIGA: o motor nao deve mais ler, porque o Manager
+        // instala o que reconhece por conteudo como <id>.bpatch. Se um dia o
+        // loader voltar a aceitar .patch, esta linha e a que avisa.
+        check("t1.patch (extensao antiga) NAO é lido", !up_is_patch_file("t1.patch"));
+        // 3. ".bpatch" e prefixo de ".bpatch.off", nao sufixo de outra coisa
+        check("bpatch sem ponto nao é lido", !up_is_patch_file("bpatch"));
+        check("xbpatch nao é lido (precisa do ponto)", !up_is_patch_file("xbpatch"));
+        // 4. o id, e o par com o <id>.conf
+        char id[128] = {};
+        check("id de t1.bpatch é t1", up_patch_id_from_name("t1.bpatch", id, sizeof(id))
+              && strcmp(id, "t1") == 0);
+        check("id de meu_mod.bpatch é meu_mod",
+              up_patch_id_from_name("meu_mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu_mod") == 0);
+        check("id com ponto no meio preserva o ponto",
+              up_patch_id_from_name("meu.mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu.mod") == 0);
+        // O bug que o "- 6" hardcoded produziria: id com um caractere a mais.
+        check("id NÃO tem caractere sobrando da extensão",
+              up_patch_id_from_name("t1.bpatch", id, sizeof(id)) && strlen(id) == 2);
+        // 5. o .conf do mod e montado a partir DESTE id
+        char cpath[256];
+        snprintf(cpath, sizeof(cpath), "/data/local/tmp/mods/com.x/%s.conf", id);
+        check("o .conf procurado é t1.conf (o par que o motor usa)",
+              strcmp(cpath, "/data/local/tmp/mods/com.x/t1.conf") == 0);
+        // 6. arestas: nome so com a extensao, id que nao cabe, nulo
+        check("nome exatamente .bpatch é recusado (id vazio)",
+              !up_patch_id_from_name(".bpatch", id, sizeof(id)));
+        check("id maior que o buffer é recusado", !up_patch_id_from_name("aaaa.bpatch", id, 4));
+        check("id em buffer de tamanho 1 é recusado", !up_patch_id_from_name("a.bpatch", id, 1));
+        check("null é recusado sem crash", !up_patch_id_from_name(nullptr, id, sizeof(id))
+              && !up_is_patch_file(nullptr));
+        // 7. o comprimento da extensao e o da constante, e nao um numero solto
+        check("o comprimento da extensao bate com UP_PATCH_EXT",
+              up_patch_ext_len() == strlen(UP_PATCH_EXT));
+        check("a extensao do motor e .bpatch", strcmp(UP_PATCH_EXT, ".bpatch") == 0);
+    }
+
+    printf("\n[Caso 79] round-trip real: saída do tradutor JVM → parser C++ (gate)\n");
     {
         // O arquivo é gerado pelo gate JVM (Dll2PatchTest grava o patchText()
         // real do HarmonyTranslator) e versionado com o golden — o verify_all
         // roda os testes JVM ANTES deste harness, então aqui sempre parseia a
         // saída fresca do tradutor, nunca uma cópia velha. Faltando/velho, este
         // caso falha: é ele quem prova que o C++ real é quem decide.
-        FILE *fp = fopen("test/fixtures/dll2patch/translator_output.patch", "rb");
+        FILE *fp = fopen("test/fixtures/dll2patch/translator_output.bpatch", "rb");
         if (!fp) {
-            check("translator_output.patch abriu (gate JVM o gera; rode manager/run_tests.sh)", false);
+            check("translator_output.bpatch abriu (gate JVM o gera; rode manager/run_tests.sh)", false);
         } else {
             char buf[65536];
             size_t len = fread(buf, 1, sizeof(buf) - 1, fp);
             fclose(fp);
             if (len >= sizeof(buf) - 1) {
-                check("translator_output.patch cabe no buffer (tradutor explode regras?)", false);
+                check("translator_output.bpatch cabe no buffer (tradutor explode regras?)", false);
             } else {
                 buf[len] = '\0';
                 RoundTripCtx ctx = {0, 0, ""};
@@ -637,7 +692,7 @@ int main() {
                       ctx.why[0] == '\0');
                 check("casos A-C: 3 regras aceitas pelo parser C++ real",
                       ctx.rules == kRoundTripNGold);
-                check("cabeçalho do .patch pulado como comentário", ctx.skips >= 1);
+                check("cabeçalho do .bpatch pulado como comentário", ctx.skips >= 1);
             }
         }
         // Prova negativa permanente (o motivo da recusa de '/' no tradutor):

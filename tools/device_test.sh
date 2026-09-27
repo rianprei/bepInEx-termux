@@ -559,9 +559,9 @@ fi
 
 NEED_PATCH=0
 NEED_JS=0
-for f in "$TDIR"/*.patch "$TDIR"/*.js; do
+for f in "$TDIR"/*.bpatch "$TDIR"/*.js; do
     [ -e "$f" ] || continue
-    case "$f" in *.patch) NEED_PATCH=1;; *.js) NEED_JS=1;; esac
+    case "$f" in *.bpatch) NEED_PATCH=1;; *.js) NEED_JS=1;; esac
 done
 SKIP_JS=0
 if [ "$NEED_JS" = 1 ]; then
@@ -584,7 +584,7 @@ fi
 sim_exit() { [ "${T1_SIM_EXIT:-}" = "$1" ] && { echo "SIM: abortando em $1"; exit 9; } || true; }
 
 echo "--- instalando artefatos de $TDIR ---"
-for f in "$TDIR"/*.patch "$TDIR"/*.conf "$TDIR"/*.js; do
+for f in "$TDIR"/*.bpatch "$TDIR"/*.conf "$TDIR"/*.js; do
     [ -e "$f" ] || continue
     case "$f" in
         *.js) [ "$SKIP_JS" = 1 ] && continue;;

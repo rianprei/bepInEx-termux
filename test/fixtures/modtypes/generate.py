@@ -9,7 +9,8 @@ checado pelo ModTypeMatrixTest, que reprova corpus que muda).
 Corpus (o que o detector tem que saber dizer a verdade sobre):
   ELF arm64/arm32/x86_64, frida-gadget sintetico (ELF arm64 + SONAME +
   marca no conteudo), .dll .NET Mono/IL2CPP, .dll PE nativo, .exe,
-  .patch C4 valido e quebrado, .js Frida, .lua GameGuardian,
+  .bpatch C4 valido e quebrado, .patch C4 valido com a extensao ANTIGA,
+  .js Frida, .lua GameGuardian,
   .bmod valido, .bmod zip-slip, .zip BepInEx de PC, .apk/.obb/.xapk (zip),
   .pak Unreal, .bundle UnityFS, .json de save, .txt, vazio, 0B .so,
   ELF chamado .png e zip chamado .so.
@@ -135,7 +136,7 @@ PATCH_OK = (
     b"field WeaponInfo unlimitedAmmo bool true Update 1\n"
 )
 
-# .patch quebrado: nenhuma linha da gramatica C4 (tipos inventados, nargs
+# .bpatch quebrado: nenhuma linha da gramatica C4 (tipos inventados, nargs
 # negativo, campo sobrando) -> PatchGenerator.parse devolve lista vazia.
 PATCH_BROKEN = (
     b"# parece regra, mas o C4 nao aceita nenhuma\n"
@@ -182,8 +183,16 @@ def main():
     made.append(write("dll_nativo.dll", PE_NATIVE_DLL))
     made.append(write("hackeador.exe", PE_NATIVE_DLL))
     # --- texto ---
-    made.append(write("regras_boas.patch", PATCH_OK))
-    made.append(write("regras_quebradas.patch", PATCH_BROKEN))
+    made.append(write("regras_boas.bpatch", PATCH_OK))
+    made.append(write("regras_quebradas.bpatch", PATCH_BROKEN))
+    # O MESMO conteudo valido, com a extensao ANTIGA (.patch) e SEM extensao
+    # nenhuma. E o que segura o item 3 do rename: o detector decide pelo
+    # CONTEUDO, nao pelo nome, entao um arquivo C4 valido que o usuario trouxe
+    # de onde veio tem que ser reconhecido e instalado como <id>.bpatch. Se
+    # alguem "simplificar" o detector para olhar so a extensao, estes dois
+    # param de instalar e o usuario fica sem mod e sem explicacao.
+    made.append(write("regras_ext_antiga.patch", PATCH_OK))
+    made.append(write("regras_sem_extensao", PATCH_OK))
     made.append(write("script_frida.js", JS_FRIDA))
     made.append(write("script_gg.lua", LUA_GG))
     made.append(write("save_do_jogo.json", SAVE_JSON))

@@ -8,7 +8,7 @@ import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 
-// Gerador e analisador de arquivos .patch (Contrato C4).
+// Gerador e analisador de arquivos .bpatch (Contrato C4).
 public final class PatchGenerator {
     private PatchGenerator() {}
 

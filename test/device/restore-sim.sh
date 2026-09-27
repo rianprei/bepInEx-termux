@@ -192,13 +192,13 @@ scen "(5) interrupção: restaura uma vez, saída != 0, device volta ao inicial"
 new_device e
 # arquivo do USUÁRIO que já estava no estado inicial: tem que continuar lá
 # depois do restore (o restore volta ao inicial, não a um mods vazio)
-printf '12:00:00 [u_patch] patch do usuario\n' > "$DEV/data/local/tmp/mods/$PKG/meu_mod.patch"
+printf '12:00:00 [u_patch] patch do usuario\n' > "$DEV/data/local/tmp/mods/$PKG/meu_mod.bpatch"
 T1_SIM_EXIT=espera sh "$KIT" "$PKG" "$SA2" 60 > "$ROOT/out.txt" 2>&1 && RC=0 || RC=$?
 [ "$RC" != 0 ] && ok "saida != 0 na interrupcao (foi $RC)" || bad "saida != 0 na interrupcao (veio $RC)"
 n=$(grep -c "restaurando device" "$ROOT/out.txt" || true)
 [ "$n" = 1 ] && ok "restore rodou uma vez só" || bad "restore rodou uma vez só (rodou $n)"
-[ -f "$DEV/data/local/tmp/mods/$PKG/meu_mod.patch" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
-[ -f "$DEV/data/local/tmp/mods/$PKG/t1_return.patch" ] && bad "artefato do teste sobrou" || ok "artefato do teste removido"
+[ -f "$DEV/data/local/tmp/mods/$PKG/meu_mod.bpatch" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
+[ -f "$DEV/data/local/tmp/mods/$PKG/t1_return.bpatch" ] && bad "artefato do teste sobrou" || ok "artefato do teste removido"
 [ -d "$DEV/data/data/$PKG/files/bepinex" ] && ok "files/bepinex existe no final" || bad "files/bepinex existe no final"
 grep -q "log inicial\|11:00:00 \[loader\]" "$DEV/data/data/$PKG/files/bepinex/log.txt" 2>/dev/null \
     && ok "log.txt voltou ao inicial" || bad "log.txt voltou ao inicial"
@@ -210,7 +210,7 @@ T1_SIM_EXIT=instalado sh "$KIT" "$PKG" "$SA2" 60 > "$ROOT/out2.txt" 2>&1 && RC=0
 [ "$RC" != 0 ] && ok "saida != 0 (foi $RC)" || bad "saida != 0 (veio $RC)"
 n=$(grep -c "restaurando device" "$ROOT/out2.txt" || true)
 [ "$n" = 1 ] && ok "restore rodou uma vez só" || bad "restore rodou uma vez só (rodou $n)"
-[ -f "$DEV/data/local/tmp/mods/$PKG/t1_static.patch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
+[ -f "$DEV/data/local/tmp/mods/$PKG/t1_static.bpatch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
 [ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
 
 scen "(1) sem backup verificado de files/bepinex: a pasta do usuario NAO e apagada"
@@ -268,7 +268,7 @@ chmod 755 "$BINDIR/adb"
 scen "(campo) caso field roda separado"
 new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
-echo "$OUT" | grep -q "t1_field.patch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
+echo "$OUT" | grep -q "t1_field.bpatch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
 
 scen "(log) linhas escritas pelo jogo antes do crash sao removidas byte a byte"
 new_device log

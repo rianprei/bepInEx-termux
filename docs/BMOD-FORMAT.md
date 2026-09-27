@@ -1,23 +1,26 @@
-# Formato dos mods (`.bmod`, `.conf`, `.patch`, `dump.tsv`)
+# Formato dos mods (`.bmod`, `.conf`, `.bpatch`, `dump.tsv`)
 
 Pra quem **faz** mod. Pra instalar mods como usuário, o README do repo
 basta; aqui é o contrato dos arquivos (C2–C5 e C7 do
 [ROADMAP-UNIVERSAL.md](ROADMAP-UNIVERSAL.md)) do ponto de vista de quem
 empacota e distribui.
 
-Estado honesto dos motores (2026-09-26): mods **nativos** (`.so`) rodam hoje
+Estado honesto dos motores (2026-09-27): mods **nativos** (`.so`) rodam hoje
 e estão validados no device (Swamp Attack 2). O `u_patch` (motor das regras
-`.patch`, base do Mod Maker) está **em integração** (fase F4); o `u_dump`
-(scanner que gera o `dump.tsv`) já está mergeado (F3). O Manager (app) está
-**em desenvolvimento** (F5) — hoje a instalação é pelo
-`tools/deploy_mod.sh` ou na mão com root.
+`.bpatch`, base do Mod Maker) já está mergeado (F4); o `u_dump`
+(scanner que gera o `dump.tsv`) já está mergeado (F3). O Manager (app) já
+existe e instala `.bmod`/`.so`/`.bpatch`/`.js` — a instalação pelo Manager
+no celular foi testada (Xiaomi) mas o seletor não devolveu o arquivo
+(SAF MIUI); a opção **Escolher da pasta Download** foi criada por isso
+mas ainda não foi testada no celular (experimental). O
+`tools/deploy_mod.sh` continua como caminho alternativo.
 
 ## Onde cada coisa vive no device (C1)
 
 ```
 /data/local/tmp/mods/<pacote-do-jogo>/
     <id>.so        mod nativo (SDK C++)          ← carregado pelo loader
-    <id>.patch     regras declarativas (u_patch)
+    <id>.bpatch     regras declarativas (u_patch)
     <id>.conf      opções key=value (gerado do manifest)
     <id>.json      manifest instalado (o Manager lista a partir dele)
     u_patch.so     motor de regras (copiado 1x por jogo quando precisa)
@@ -40,7 +43,7 @@ Zip com dois arquivos:
 
 ```
 manifest.json
-mod.so        (type=native)   |   mod.patch   (type=patch)
+mod.so        (type=native)   |   mod.bpatch   (type=patch)
 ```
 
 `manifest.json` completo, com opção:
@@ -71,12 +74,12 @@ Regras (o `tools/pack_bmod.sh` valida na hora de empacotar):
   (qualquer jogo do mesmo engine).
 - `engine`: `unity-il2cpp` | `unity-mono` | `cocos2dx` | `native`.
 - `type`: `native` (o zip tem `mod.so`, arm64-v8a) ou `patch`
-  (o zip tem `mod.patch`).
+  (o zip tem `mod.bpatch`).
 - `options` (opcional): lista de chaves que o Manager vira sliders/switches.
   `type`: `bool` | `int` | `float` | `choice` (com `"choices": [..]`).
   `min`/`max` opcionais pra int/float.
 
-Na instalação: `mod.so` → `<id>.so`, `mod.patch` → `<id>.patch`, manifest →
+Na instalação: `mod.so` → `<id>.so`, `mod.bpatch` → `<id>.bpatch`, manifest →
 `<id>.json`, valores default das options → `<id>.conf`.
 
 ## `.conf` (C3) — opções
@@ -95,11 +98,11 @@ API de leitura no mod nativo (`mods/common/mod_common.h`):
 pra tipos. Valor ausente ou que não parseia vira o default — regra ruim
 não derruba mod.
 
-## `.patch` (C4) — regras declarativas (u_patch)
+## `.bpatch` (C4) — regras declarativas (u_patch)
 
-> **MOTOR EM INTEGRAÇÃO (F4):** o `u_patch` ainda não mergeou — esta seção
+> **MOTOR JÁ MERGEADO (F4):** o `u_patch` já mergeou — esta seção
 > documenta o **contrato fixo** do roadmap (C4), mas nada aqui é operacional
-> hoje. Não empacote nem distribua `.patch`/`type:patch` até o merge; o
+> hoje. Não empacote nem distribua `.bpatch`/`type:patch` até o merge; o
 > passo a passo de instalação entra aqui quando isso acontecer.
 
 Uma regra por linha, campos separados por espaço, `#` é comentário.
@@ -169,12 +172,12 @@ F	GameLogic.WeaponInfo	unlimitedAmmo	System.Boolean	0	0x70
 - `F` campo (`<Classe>`, `<campo>`, `<tipo>`, `<static 0|1>`, `<offset>`)
 
 Classe aninhada: `Namespace.Externa/Interna`. Pra refazer o dump, apague o
-`dump.tsv` e reinicie o jogo. Os nomes aqui são os mesmos que o `.patch`
+`dump.tsv` e reinicie o jogo. Os nomes aqui são os mesmos que o `.bpatch`
 e o SDK usam — nada de offset mágico.
 
 ## O que o Manager aceita de qualquer origem (C7)
 
-O Manager (em desenvolvimento) identifica o arquivo **pelo conteúdo**, não
+O Manager identifica o arquivo **pelo conteúdo**, não
 pela extensão:
 
 | Tipo detectado | Como detecta | Roda? |
@@ -182,8 +185,8 @@ pela extensão:
 | `.bmod` | zip com `manifest.json` | sim |
 | `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim (copia pra pasta) |
 | `.so` arm32/x86 | ELF de outra arquitetura | não |
-| `.patch` | texto nas regras C4 | **em integração** (u_patch, F4) |
-| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | em desenvolvimento (F11) |
+| `.bpatch` | texto nas regras C4 | **em integração** (u_patch, F4) |
+| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | experimental (gadget 17.19.0 fechou o jogo no teste em celular) |
 | `.dll` IL2CPP (BepInEx 6/MelonLoader IL2CPP) | PE + CLI + refs `Il2CppInterop`/`UnhollowerBaseLib` | depois (F12) |
 | `.dll` Mono em jogo Android **Mono** | AssemblyRefs sem `Il2Cpp*` + engine mono | depois (F13) |
 | `.dll` Mono (ex.: TABS PC) em jogo **IL2CPP** | idem + engine il2cpp | **não automático** (recrie com Mod Maker/SDK) |
@@ -198,12 +201,12 @@ runtime.
 > Ainda **não operacional**: `type:patch` depende do `u_patch` (F4, em
 > integração). O exemplo fica como referência do formato — quando o F4 e o
 > Manager mergarem, o `pack_bmod.sh` valida e empacota, o Manager instala
-> com um toque e os arquivos viram `sa2-infinite-ammo.patch`/`.json` como
+> com um toque e os arquivos viram `sa2-infinite-ammo.bpatch`/`.json` como
 > na seção C1 acima.
 
 ```
 manifest.json    {"format":1,"id":"sa2-infinite-ammo","name":"Munição
                   infinita","version":"1.0","game":"com.hyperdotstudios.
                   swampattack2","engine":"unity-il2cpp","type":"patch"}
-mod.patch        field WeaponInfo unlimitedAmmo bool true
+mod.bpatch        field WeaponInfo unlimitedAmmo bool true
 ```

@@ -9,8 +9,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.SuHelper;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 
-public class LogViewerActivity extends Activity {
+public class LogViewerActivity extends Activity implements UiLiveness.ActivityLike {
     private String mPkg;
     private TextView mTvTitle;
     private TextView mTvPath;
@@ -41,6 +42,7 @@ public class LogViewerActivity extends Activity {
             new Thread(() -> {
                 boolean ok = SuHelper.clearLog(mPkg);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     if (ok) {
                         Toast.makeText(this, "Log limpo com sucesso!", Toast.LENGTH_SHORT).show();
                         loadLog();
@@ -59,6 +61,7 @@ public class LogViewerActivity extends Activity {
         new Thread(() -> {
             String content = SuHelper.readLog(mPkg);
             mMainHandler.post(() -> {
+                if (!UiLiveness.alive(this)) return;
                 if (content == null || content.trim().isEmpty()) {
                     mTvContent.setText("Nenhum log encontrado ainda em /data/data/" + mPkg + "/files/bepinex/log.txt\n" +
                             "Certifique-se de que o jogo foi iniciado com mods ativos.");

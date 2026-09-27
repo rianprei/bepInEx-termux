@@ -17,8 +17,10 @@ código de roadmap — a varredura de textos reprova o contrário). Regenerar:
 | mod_il2cpp.dll | DOTNET_IL2CPP | nao | assembly .NET IL2CPP (F12, nao implementado) |
 | dll_nativo.dll | PE_NATIVE | nao | PE de Windows sem runtime .NET |
 | hackeador.exe | PE_NATIVE | nao | executavel de Windows |
-| regras_boas.patch | PATCH | sim | regras C4 validas |
-| regras_quebradas.patch | TEXT_OTHER | nao | nenhuma linha da gramatica C4 |
+| regras_boas.bpatch | PATCH | sim | regras C4 validas |
+| regras_quebradas.bpatch | TEXT_OTHER | nao | nenhuma linha da gramatica C4 |
+| regras_ext_antiga.patch | PATCH | sim | regras C4 validas com a extensao ANTIGA: o detector decide pelo CONTEUDO e instala como `<id>.bpatch` |
+| regras_sem_extensao | PATCH | sim | idem, sem extensao nenhuma |
 | script_frida.js | FRIDA_JS | sim | script Frida (roda com gadget na pasta) |
 | script_gg.lua | LUA_GG | nao | GameGuardian (F10, nao implementado) |
 | pacote_ok.bmod | BMOD | sim | zip com manifest.json do formato C2 |

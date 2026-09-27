@@ -1,4 +1,4 @@
-// u_patch — motor declarativo (FASE F4): lê todo *.patch + <id>.conf de
+// u_patch — motor declarativo (FASE F4): lê todo *.bpatch + <id>.conf de
 // /data/local/tmp/mods/<pkg>/ e aplica as regras C4 (return/mul/static).
 // Regra que não resolve vira log e o jogo segue. Nada de offset fixo: tudo
 // sai da API il2cpp exportada. Log mínimo próprio (F2 dá mod_common.h e a
@@ -25,6 +25,10 @@
 #include "u_patch_resolve.h"
 
 #define UP_TAG "u_patch"
+// A extensão do arquivo de regras mora em u_patch_parse.h (UP_PATCH_EXT), junto
+// das funções puras que decidem o que é regra e qual é o id. Ela saiu daqui
+// porque o scan é lógica de string e precisa de teste de host: com ela no .cpp,
+// o gate passava mesmo com o loader procurando a extensão antiga.
 #define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
@@ -73,17 +77,12 @@ static bool up_read_pkg() {
     return true;
 }
 
-static bool up_ends_with(const char *name, const char *suf) {
-    size_t nl = strlen(name), sl = strlen(suf);
-    return nl >= sl && strcmp(name + nl - sl, suf) == 0;
-}
-
 // Lê arquivo inteiro (até 64KB). Retorna malloc'd, *len = tamanho.
 #define UP_FILE_MAX 65535
 
 // Lê o arquivo inteiro (até UP_FILE_MAX). Retorna malloc'd, *len = tamanho.
 // Se *truncated vier não-nulo, ganha 1 quando o arquivo era MAIOR que o teto:
-// sem esse aviso um .patch de 200KB entrava pela metade e o usuário via metade
+// sem esse aviso um .bpatch de 200KB entrava pela metade e o usuário via metade
 // das regras sem efeito e nenhum log (achado #5 do review).
 static char *up_read_file(const char *path, size_t *len, bool *truncated) {
     if (truncated) *truncated = false;
@@ -223,7 +222,7 @@ static void up_mark(const char *sig, uint8_t state) {
     if (!up_table_full_logged) {
         up_table_full_logged = true;
         up_log("tabela de %d regras cheia: regras novas NÃO são lembradas (não voltam a ser "
-               "aplicadas nem logadas a cada 2s). Reduza o .patch ou divida em mais arquivos.",
+               "aplicadas nem logadas a cada 2s). Reduza o .bpatch ou divida em mais arquivos.",
                UP_APPLIED_MAX);
     }
 }
@@ -573,7 +572,7 @@ static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, co
     return true;
 }
 
-// Corpo de UMA linha do .patch (chamado por up_foreach_line, que garante o
+// Corpo de UMA linha do .bpatch (chamado por up_foreach_line, que garante o
 // avanço — o loop infinito em linha vazia do review não tem mais onde
 // nascer, e o Caso 70 do harness conta as linhas visitadas).
 struct up_line_ctx {
@@ -642,7 +641,7 @@ static int up_line_apply(char *line, int lineno, void *vctx) {
     return 0;  // pr == 1 (vazia/comentário) só não entra no bloco acima
 }
 
-// Uma passada: lê todo *.patch (menos *.off) + <id>.conf, aplica regra nova.
+// Uma passada: lê todo *.bpatch (menos *.off) + <id>.conf, aplica regra nova.
 // Retorna quantas regras aplicou.
 static int up_scan_apply(const Il2Cpp &il) {
     int applied = 0;
@@ -651,12 +650,13 @@ static int up_scan_apply(const Il2Cpp &il) {
     if (n < 0) return 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
-        bool is_patch = up_ends_with(name, ".patch") && !up_ends_with(name, ".off");
-        if (!is_patch) { free(ents[i]); continue; }
+        if (!up_is_patch_file(name)) { free(ents[i]); continue; }
         char id[128] = {};
-        size_t baselen = strlen(name) - 6;  // tira ".patch"
-        if (baselen >= sizeof(id)) baselen = sizeof(id) - 1;
-        memcpy(id, name, baselen);
+        // O id vem do helper puro, e nao de `strlen(name) - N`: o N era o
+        // comprimento da extensao escrito a mao, e trocar a extensao sem o N
+        // deixava o id com um caractere a mais e o <id>.conf do mod sumia em
+        // silencio.
+        if (!up_patch_id_from_name(name, id, sizeof(id))) { free(ents[i]); continue; }
         char ppath[448], cpath[448];
         snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
         snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);
@@ -665,7 +665,7 @@ static int up_scan_apply(const Il2Cpp &il) {
         char *cbuf = up_read_file(cpath, nullptr, nullptr);  // .conf opcional
         if (!pbuf) { free(ents[i]); free(cbuf); continue; }
         if (trunc) {
-            // #5: sem este aviso, um .patch de 200KB entrava pela metade e o
+            // #5: sem este aviso, um .bpatch de 200KB entrava pela metade e o
             // usuário via metade das regras sem efeito nenhum.
             up_log("%s: arquivo maior que %d bytes — truncado em %d, as regras depois "
                    "desse byte NAO foram lidas", name, UP_FILE_MAX, UP_FILE_MAX);
@@ -741,7 +741,7 @@ static void *up_worker(void *) {
     }
     if (!up_pkg[0]) {
         up_log("pacote (C1) não resolveu em 120s — u_patch não aplica nada; "
-               "o jogo segue sem os mods deste .patch");
+               "o jogo segue sem os mods deste .bpatch");
         return nullptr;
     }
     up_log("carregado, esperando libil2cpp.so");

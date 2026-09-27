@@ -126,6 +126,6 @@ Unity — é lá que jogo chama Show), com `thread_attach` antes de qualquer
 ## Manager customizado do jogo: FORA do u_noads
 
 `InterstitialAdManager.TryShowInterstitial` (SA2) é código do jogo, não SDK:
-não entra no genérico. Vira `.patch` documentado — ver
-`examples/sa2-interstitial.patch` (equivalente ao hook do sa2content, que
+não entra no genérico. Vira `.bpatch` documentado — ver
+`examples/sa2-interstitial.bpatch` (equivalente ao hook do sa2content, que
 faz o método virar no-op).
