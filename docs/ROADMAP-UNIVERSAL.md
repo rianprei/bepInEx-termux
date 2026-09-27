@@ -30,15 +30,15 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | F1d crashguard | merged, validado | 2026-09-26: t_crash matou 2x, 3ª abertura sem mods e viva, aviso no log; reativar = mods voltam; contador zera após 20s vivo |
 | F2 SDK | merged, sem device | `new_mod`/`pack_bmod`/template só testados no host |
 | F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
-| F4 u_patch | merged, sem device | `6589f2f`: motor completo (return/mul/static/field) + `thunk_exec` por execução real no qemu + fixture C4 compartilhada; falta a rodada de device (roteiro no DEVICE-ROUND.md) |
-| F5/F6 Manager | merged, sem device | APK compila e os testes JVM passam no gate; o app nunca foi instalado num celular |
-| F7 zip | merged, sem device | v0.4.1 determinístico (`d34b709`); instalar o zip num celular segue pendente |
+| F4 u_patch | merged; teste de device falhou | `6589f2f` implementa return/mul/static/field; `bf9eee3` unifica fixture C4 do Manager e do mod; harness e QEMU passam no host; no primeiro teste em aparelho (2026-09-27, 22:44), `field` causou SIGSEGV em il2cpp_type_get_name e o SA2 caiu; o kit detectou o crash e restaurou o aparelho. Evidência: ~/Documentos/mods/_backup_device_2026-09-27/evidence/tombstone_07_f4field.txt. `return`/`mul`/`static` ainda não foram testados no aparelho; correção em andamento (Kilo, uni/ufield-crash) |
+| F5/F6 Manager | merged, sem device | `59fe913`, `5ed8019`, `368406d`: APK e testes JVM passam no gate; inclui detector de engines, filtro de jogos, texto de suporte, controle de mods e Mod Maker; app nunca instalado num celular |
+| F7 zip + G7 release | merged, host verificado, sem device/publicação | `f36c650`: build local reproduzível, hashes e dependências pinadas; `192e967`: assinatura com chave fixa do usuário; zip e APK ainda não instalados em aparelho nem publicados |
 | F8 docs | merged, sem device | 8 achados de revisão corrigidos (`15b9a3f`) |
 | F9b u_noads | merged, sem device | `f08164b`: fecha o anúncio pelo callback de cada SDK (6 SDKs, 15 hooks); falta rodar no SA2 com `sa2content` desligado |
 | F11 u_frida | merged, sem device | script `.js` por `tools/deploy_frida.sh` (PC+adb) nunca rodou num celular |
-| T2 verify_all | merged, sem device | roda no host; desde `1224346` as etapas `device test` existem e passam (simulador, fake clock), mas continuam sendo SIMULAÇÃO — o `tools/device_test.sh` no celular de verdade (Permissive + Enforcing) é o item 3 da "Definição de pronto" e segue aberto |
-| T1 kit de device | merged, sem device | `1224346` (`restore-sim.sh`, `quoting-check.sh`, kit de restore com backup verificado), `c3da4cc` (fake clock: 65s → ~10s) e `2b3d8c6` (stdin herdado no filtro do su, que era a trava intermitente) |
-| docs de referência no gate | merged, sem device | `276e805`/`0ec85e0`: o gate confere que todo `arquivo:linha` citado em docs/README existe, e `docs/DEVICE-ROUND.md` é o roteiro da rodada |
+| T2 verify_all | merged, host verificado, sem device | `ad46276` cria o gate; ele compila e testa no host, inclusive simuladores; isso continua sendo SIMULAÇÃO — `tools/device_test.sh` no celular em Permissive e Enforcing segue aberto |
+| T1 kit de device | merged, sem device | `1224346` cria o kit com backup verificado; `c3da4cc` adiciona relógio falso; `2b3d8c6` corrige stdin herdado; `05b7138` valida SHA-256 de cada arquivo restaurado; tudo isso foi testado em simulação de host |
+| docs de referência no gate | merged, sem device | `73e45b5` estende a checagem para validar linha/faixa e texto literal citado; o gate atual verifica 26 referências; `docs/DEVICE-ROUND.md` é o roteiro da rodada |
 | guarda do gadget no loader | merged, sem device | `e92b13f` rejeita `.so` com `DT_SONAME` de gadget (Caso 63) — é barreira de host, ainda não testada com o gadget real num celular |
 
 ## Diferença honesta pro Lucky Patcher
@@ -77,11 +77,11 @@ zygote preAppSpecialize(pkg)            zygote preAppSpecialize(pkg)
 
 ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
   JÁ NO MAPA: zero-config por pasta (F1), log C1, crashguard de 20s (F1d),
-  sepolicy bepinex_mod_file (F1c), scanner u_dump (F3), scripts Frida em
-  modo script (F11), bloqueio de frida-gadget renomeado por DT_SONAME
-  (e92b13f), supressão de anúncio (F9b).
-  AINDA FORA DO MAPA: o motor de regras u_patch (F4, branch) e qualquer
-  coisa que rode .dll (F12/F13).
+  sepolicy bepinex_mod_file (F1c), scanner u_dump (F3), motor de regras
+  u_patch (F4), Manager e Mod Maker (F5/F6), scripts Frida em modo script
+  (F11), bloqueio de gadget renomeado por DT_SONAME (e92b13f) e supressão
+  de anúncio (F9b). As etapas dependentes de uso real no celular continuam
+  pendentes; execução de mods .dll também segue fora do mapa (F12/F13).
 
 ## Contratos (fixos — todos os agentes seguem)
 
@@ -152,13 +152,7 @@ F  <Namespace.Classe>  <campo>  <tipo>  <static 0|1>  <offset>
 Separador TAB. Classe aninhada: `Namespace.Externa/Interna` (sobe `class_get_declaring_type` até a raiz). Gera se não existir. Pra refazer, o Manager apaga o arquivo e reinicia o jogo.
 
 ### C6. Detecção de engine (Manager, sem abrir o jogo)
-Lista `lib/arm64-v8a/` no APK base + splits (`ApplicationInfo.sourceDir` + `splitSourceDirs`, via `ZipFile`) ou em `nativeLibraryDir`:
-- `libil2cpp.so` → `unity-il2cpp`
-- `libmonobdwgc-2.0.so` / `libmono*.so` → `unity-mono`
-- `libcocos2d*.so` ou `libcocos*` → `cocos2dx`
-- `libUE4.so` / `libUnreal.so` → `unreal`
-- `libgodot_android.so` → `godot`
-- senão → `native`/`java`
+Inspeciona nomes de bibliotecas e assets do APK base/splits (`ApplicationInfo.sourceDir` + `splitSourceDirs`, via `ZipFile`) ou `nativeLibraryDir`. A implementação e `EngineDetectorTest` cobrem Unity IL2CPP/Mono, Unreal, Godot, Cocos2d-x, Defold, Flutter, React Native, Solar2D, LÖVE, libGDX, Xamarin/.NET e Ren'Py. A ordem prioriza marcadores específicos de Unity; casos sem marcador conhecido viram nativo, Java ou desconhecido. É uma classificação por conteúdo, não confirmação de que o app é um jogo nem garantia de compatibilidade de mods.
 
 ### C7. Aceitar mod de qualquer origem (detecção automática no Manager)
 O usuário escolhe um arquivo qualquer + o jogo. O Manager identifica o tipo pelo **conteúdo** (magic/cabeçalho), não pela extensão, e diz em português se roda e como.
@@ -239,7 +233,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [~] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (host OK: Caso 70 confere cada palavra contra o llvm-objdump do NDK e o guard `up_method_fits` (Caso 71) recusa método curto; device: pendente.)
 - [~] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (host OK: Caso 70 + `test/device/thunk_exec` executando o thunk de verdade no qemu (8×100k threads, recursão, float) e `buga`/`bugb2` falhando de propósito; device: pendente.)
 - [~] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (host OK: revalidação do FieldInfo a cada 10 passadas, com o valor reescrito a cada 2s; device: pendente.)
-- [~] `field`: campo de instância reescrito a cada chamada de `<Método>` (a 4ª linha do verbo C4). (host OK: Caso 72/77 conferem o layout palavra a palavra e o `test/device/thunk_exec` executa o thunk com `this=NULL` (não escreve e chama o original) e com `this` válido (escreve e o original lê de volta, com canário); device: pendente — falta medir se o campo segura valor no jogo, que é a razão de o verbo existir.)
+- [~] `field`: campo de instância reescrito a cada chamada de `<Método>` (a 4ª linha do verbo C4). (host OK: Casos 72/77 conferem o layout palavra a palavra e o `test/device/thunk_exec` executa o thunk com `this=NULL` (não escreve e chama o original) e com `this` válido (escreve e o original lê de volta, com canário); device FAIL no primeiro teste (2026-09-27, 22:44): SIGSEGV em `il2cpp_type_get_name`, SA2 caiu e o kit restaurou o aparelho. Evidência: ~/Documentos/mods/_backup_device_2026-09-27/evidence/tombstone_07_f4field.txt. Correção em andamento (Kilo, uni/ufield-crash); não usar `field` até a correção ser integrada.)
 - [x] Parser puro e testável (harness host). (Entrega de host, não precisa de device: `u_patch_parse.h` puro, Casos 69/73/74/76 e a fixture `test/fixtures/c4_lines.tsv` — a mesma que o `PatchGenerator` do Manager lê, então os dois lados do C4 não podem divergir sem os dois testes caírem.)
 - [x] Guarda de `this` nulo no thunk `field` (achado CRÍTICO do cross-review: o jogo chama método com `this == nullptr` e o store em `[0+off]` derrubava o jogo). (host OK: `up_enc_cbz_x0` + layout com o caminho direto (Caso 77) e o teste de execução com `this=NULL`; a sabotagem sem o `cbz` faz o caso falhar.)
 - [x] Tipos e recusas antes de hookar: tamanho do campo pelo tipo real do il2cpp, classe de valor (struct) recusada, e `return`/`mul` float em método que devolve `System.Double` recusado — cada um com caso próprio. (host OK: `up_value_type_check` no Caso 73.)
@@ -247,7 +241,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 
 ### F5 — bepInEx Manager: núcleo (APK)
 - [~] Java puro, sem AndroidX/Gradle: build com SDK (`aapt2` + `javac --release 17` + `d8` + `apksigner`) por `manager/build.sh`, usando `~/Android/Sdk` (build-tools 37, android-36). minSdk 26. (host OK: `manager/build.sh` gera APK assinado e o `badging` confere com o `VERSION` da raiz (`dacad11`); device: pendente — o APK nunca foi instalado num celular.)
-- [~] Tela Jogos: apps instalados (filtra jogos + qualquer app com engine detectado, C6), ícone, badge do engine, nº de mods. (host OK: `MainActivity` + `EngineDetectorTest` (C6); device: pendente.)
+- [~] Tela Jogos: apps instalados (jogos identificados pelo sistema, engines de jogos conhecidos ou apps com mods; Flutter, React Native, Xamarin, nativo e Java não bastam por si só), ícone, badge do engine, nº de mods. (host OK: `MainActivity` + `EngineDetectorTest` e teste da regra `isGameEngine`; device: pendente.)
 - [~] Tela Jogo: mods instalados (C1/C2) com switch (renomeia `.off`), opções geradas do manifest (C3), "Reiniciar jogo" (`am force-stop` + launch), "Ver log" (log.txt C1). (host OK: `GameDetailActivity` + `SuHelper.toggleMod`, `ConfTest` (C3), `CrashGuardStateTest`; device: pendente.)
 - [~] Instalar `.bmod`: intent filter pra abrir `.bmod` + botão "+" (SAF). Mostra o manifest, avisa se `game` ≠ pacote ou engine incompatível, e copia os arquivos via `su`. (host OK: `AndroidManifest.xml` tem o filter (`pathPattern .*\.bmod`), `BmodInstaller` valida compatibilidade e `LooseModInstaller` cobre qualquer arquivo (C7), com tetos anti-zip-bomb (`BmodInstallerTest`); device: pendente.)
 - [~] Tela Status: root ok? módulo ativo (`/data/adb/modules/<id>`)? Zygisk ligado? Versão. (host OK: `StatusChecker` + card de status com versão vinda do `VERSION` (`BuildVersionTest`); device: pendente.)
@@ -259,11 +253,11 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [~] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`. (Correção do sync anterior: `manager/assets/` NÃO é um arquivo versionado — o `manager/build.sh` compila `mods/u_dump` e copia o `.so` para lá a cada build, que é por isso que a pasta não aparece no repo. host OK: `build.sh` etapas de asset + `ModMakerActivity` com guarda `hasAsset` que avisa "Componente Ausente" em vez de scanner quebrado; device: pendente — o botão Escanear nunca foi apertado num celular.)
 - [~] Busca com filtro (classe/método/campo), resultados paginados (dump pode ter 100k+ linhas). (host OK: `ModMakerActivity` + `DumpParserTest` (C5) com leitura de arquivo de 100k+ linhas; device: pendente.)
 - [~] Ação por item: método bool → "sempre verdadeiro/falso"; método int/float → "sempre N" ou "multiplicar por N"; campo estático → "fixar em N"; campo de instância → verbo `field` do C4. Gera regras C4. (host OK: `PatchGeneratorTest` (C4) cobre `return`/`mul`/`static`/`field` com round-trip; device: pendente.)
-- [~] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.patch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; device: pendente — e `u_patch.so` nem existe na base ainda, F4.)
+- [~] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.patch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; F4 já está merged; device: pendente.)
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)
-- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. (host OK: `b8034b2` + `e5d16a4`, v0.4.1 determinístico (`d34b709`), `bash -n` + shellcheck PASS; device: pendente — o zip não foi instalado pelo app Magisk em nenhum celular.)
+- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
 - [~] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar). (host OK: README e `module/*.sh` citam os três; device: pendente — só Magisk foi exercitado, e nem isso desde o formato novo.)
 - **Verifica:** zip instalado pelo app Magisk → reboot → Manager no launcher → SA2 com mod funciona.
 
@@ -319,6 +313,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 | T2 verify_all | — | — | `uni/t2-verify` | mergeado, roda no host |
 | G7 release-key | F5 | Claude Code | `uni/release-key` | mergeado (`192e967`), sem device (falta assinar com a chave real) |
 | C4 compartilhado | contrato C4 | Claude Code | `uni/c4-shared` | mergeado: Manager e u_patch leem a mesma fixture |
+| G7 release reproduzível | F5/F7 | Claude Code | `uni/g7-release` | mergeado (`f36c650`), builds locais reproduzíveis em host; sem tag, publicação ou validação em aparelho |
 
 F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até ele chegar, F3/F4 usam o próprio log mínimo e trocam depois. Integração: merge em `feat/generic-pkg-mods` (sem push sem autorização do usuário), revisão cruzada por outro agente, validação no device (SA2 + BC) pelo orquestrador.
 
