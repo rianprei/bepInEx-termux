@@ -309,6 +309,24 @@ else
     echo "AVISO: manager/build.sh ausente; testes JVM ignorados"
 fi
 
+# APK instalável: o que o Android 11+ exige de um APK assinado. Sai depois
+# do build do Manager acima. Enquanto o build.sh normalizar resources.arsc
+# com DEFLATE, esta etapa FALHA de propósito — é ela que pega o bug do
+# INSTALL_PARSE_FAILED (-124) que o host não enxerga. O fix (arsc STORED +
+# zipalign depois do link) é do d682d9b na uni/device-run; com ele mergeado
+# a etapa passa sem ninguém mexer aqui.
+if [ -f "$ROOT/manager/build.sh" ] && [ -f "$ROOT/manager/bepinex-manager.apk" ] \
+   && [ -x "$ROOT/tools/check_apk_installable.sh" ]; then
+    run_step "APK instalavel" "$TIMEOUT_TEST" bash -c '
+        cd "$1"
+        want=$(awk "{print \$2}" VERSION)
+        bash tools/check_apk_installable.sh manager/bepinex-manager.apk "$want"
+    ' bash "$ROOT"
+else
+    record "APK instalavel (not present)" SKIP 0 0
+    echo "AVISO: tools/check_apk_installable.sh ou o APK do Manager ausente" >&2
+fi
+
 if [ -d "$ROOT/mods/u_patch" ]; then
     run_step "u_patch encoding harness" "$TIMEOUT_TEST" bash -c '
         cd "$1"

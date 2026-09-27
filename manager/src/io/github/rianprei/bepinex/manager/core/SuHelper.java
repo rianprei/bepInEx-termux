@@ -157,6 +157,34 @@ public final class SuHelper {
         return new Result(-1, "", "", "Entrada invalida (" + what + "): " + value);
     }
 
+    /**
+     * Comando que DEVOLVE o dono de um arquivo para o dono do diretório pai
+     * (o app dono de /data/data/<pkg>/files). O Manager roda como root, e
+     * qualquer arquivo que ele crie ali fica root:root — aí o processo do
+     * jogo (outro uid) não consegue mais abrir pra appendar e TODOS os mods
+     * ficam mudos, sem erro nenhum visível. Achado da rodada de device
+     * 2026-09-26: log.txt apareceu root:root e ninguém soube por quê.
+     *
+     * toybox não tem chown --reference, então o uid:gid do pai vem de
+     * stat -c %u:%g. Função pura (sem exec) para o teste_host poder conferir
+     * o comando sem root.
+     */
+    public static String ownerFixCommand(String filePath) {
+        int slash = filePath.lastIndexOf('/');
+        String parent = slash > 0 ? filePath.substring(0, slash) : "/";
+        return "chown \"$(stat -c %u:%g '" + parent + "')\" '" + filePath + "' && chmod 644 '" + filePath + "'";
+    }
+
+    /** Aplica ownerFixCommand. false = nem tentou (caminho hostil). */
+    public static boolean ensureOwner(String filePath) {
+        try {
+            requirePath(filePath, "file");
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return exec(ownerFixCommand(filePath)).success;
+    }
+
     public static boolean isRootAvailable() {
         if (sRootAvailableCache != null && sRootAvailableCache) {
             return true;
@@ -229,6 +257,10 @@ public final class SuHelper {
             requirePath(tmp.getAbsolutePath(), "tmp");
             Result r = exec("cp '" + tmp.getAbsolutePath() + "' '" + filePath + "' && chmod 644 '" + filePath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + filePath + "'");
             tmp.delete();
+            // cp como root cria o arquivo root:root. Se o destino for dentro
+            // de /data/data/<pkg>/files (o state dir do jogo), isso tranca o
+            // app fora do próprio log — devolve o dono do diretório pai.
+            if (r.success && filePath.contains("/files/")) ensureOwner(filePath);
             return r.success;
         } catch (IOException | IllegalArgumentException e) {
             return false;
@@ -386,16 +418,43 @@ public final class SuHelper {
     // continuaria na tela mesmo com o jogo ja abrindo normal (o bloqueio
     // do loader dura so a janela de 20s, mas o arquivo do marcador nao
     // some sozinho).
+    /**
+     * Plano do "Reativar", como string de comando — puro, para o teste de host
+     * garantir o invariante que quebrou o device: <b>o Manager NUNCA cria o
+     * state dir do jogo</b> (é do app) e nunca escreve nele sem devolver o
+     * dono. Devolve null quando não há o que reativar.
+     */
+    public static String reactivateCommand(String pkg, boolean stateDirExists) {
+        if (!stateDirExists) return null;
+        return "rm -f '" + CrashGuardState.markerPath(pkg) + "' '"
+                + CrashGuardState.modsMarkerPath(pkg) + "' && "
+                + "echo '0 '$(date +%s) > '" + CrashGuardState.counterPath(pkg) + "'";
+    }
+
     public static boolean reactivateMods(String pkg) {
         try {
             requirePkg(pkg);
         } catch (IllegalArgumentException e) {
             return false;
         }
-        Result r = exec("mkdir -p '" + CrashGuardState.stateDir(pkg) + "' && "
-                + "rm -f '" + CrashGuardState.markerPath(pkg) + "' '"
-                + CrashGuardState.modsMarkerPath(pkg) + "' && "
-                + "echo '0 '$(date +%s) > '" + CrashGuardState.counterPath(pkg) + "'");
+        // NÃO cria o state dir: essa pasta é do APP (o loader e os mods
+        // criam na primeira linha de log, com o uid do app). Um
+        // `mkdir -p` aqui roda como root e, quando a pasta ainda não existe
+        // (instalação nova, ou logo depois do `rm -rf` do kit de teste),
+        // deixa /data/data/<pkg>/files/bepinex em root:root 0755 — o app
+        // ganha só r-x, o open(O_CREAT|O_APPEND) do log dá EACCES e todos
+        // os mods ficam mudos. Era a causa raiz do incidente de 2026-09-26.
+        //
+        // Se a pasta não existe, não há o que reativar: o jogo nunca rodou
+        // com mods, e o app vai criá-la com o dono certo.
+        String stateDir = CrashGuardState.stateDir(pkg);
+        Result has = exec("[ -d '" + stateDir + "' ] && echo yes || echo no");
+        boolean stateDirExists = has.success && has.stdout.contains("yes");
+        String cmd = reactivateCommand(pkg, stateDirExists);
+        if (cmd == null) return true;   // nada criado ainda: o app faz quando rodar
+        Result r = exec(cmd);
+        // O contador também é do app: o loader reescreve a cada 2s de vida.
+        if (r.success) ensureOwner(CrashGuardState.counterPath(pkg));
         return r.success;
     }
 
