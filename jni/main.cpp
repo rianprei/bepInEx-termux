@@ -75,6 +75,8 @@ static inline const char *bc_app_state_dir(char *out, size_t cap) {
 // elimina a classe inteira sem mutex — mas paga um handshake por pedido e um
 // socket novo por carga de mod. O mutex e o mais simples que e correto.
 static pthread_mutex_t g_companion_io = PTHREAD_MUTEX_INITIALIZER;
+// Quantos eventos de streaming o trylock descartou por um pedido em curso.
+static std::atomic<int> g_stream_dropped{0};
 
 // ============================================================================
 // Entrega por FD: o companion (root) abre, o JOGO recebe o descritor
@@ -227,6 +229,16 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
 // caminho: o caminho nao e mais acessivel ao jogo, e um fallback seria
 // justamente a reabertura que a revisao fechou.
 static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap) {
+    // Risco (B) — DEADLOCK: o dlopen roda o CONSTRUTOR do mod, e o construtor
+    // pode disparar um hook que chama stream_send_prefixed — na MESMA thread. Se
+    // o mutex estivesse tomado aqui, o relock seria de um mutex nao-recursivo
+    // pela MESMA thread: trava direta.
+    //
+    // Por isso bc_mod_fd_request() FECHA o mutex antes de devolver, e o
+    // android_dlopen_ext() abaixo roda SEM o mutex. O lock e da transacao
+    // request+resposta, e nao do "carregar o mod".
+    // (O caminho do streaming usa trylock, entao mesmo assim nao esperaria —
+    // mas "mesmo assim" e uma defesa, e nao o desenho.)
     int fd = bc_mod_fd_request(path, why, whycap);
     if (fd < 0) return nullptr;
     android_dlextinfo info;
@@ -754,9 +766,25 @@ static void stream_send_prefixed(const char *level, const char *source,
     log_file_write(line, len);  // grava SEMPRE, mesmo sem cliente stream conectado
     int fd = g_stream_fd.load(std::memory_order_relaxed);
     if (fd < 0) return;
-    // O mesmo mutex dos pedidos: enquanto um pedido do loader esta lendo a
-    // resposta, uma linha de evento aqui seria lida como se fosse a resposta.
-    pthread_mutex_lock(&g_companion_io);
+    // Risco (A): esta funcao roda na THREAD DO JOGO (um hook disparou). Com
+    // pthread_mutex_lock ela ficaria ate 5s esperando um pedido em curso — e
+    // 5s de jogo travado, que e pior que o mod nao carregar. Entao aqui e
+    // TRYLOCK: ocupado = o evento desta linha se perde e conta, e o jogo segue.
+    // Perder uma linha de log num instante de 5s e um preco justo; travar o
+    // jogo nao e.
+    //
+    // O motivo continua sendo o mesmo: enquanto um pedido do loader esta lendo
+    // a resposta, uma linha de evento aqui seria lida como se fosse a
+    // resposta.
+    if (pthread_mutex_trylock(&g_companion_io) != 0) {
+        int d = g_stream_dropped.fetch_add(1, std::memory_order_relaxed);
+        // Loga uma vez a cada 64, para nao logar por descarte (a linha de log
+        // que registraria o descarte precisa do mesmo socket).
+        if (d % 64 == 0)
+            LOGI("streaming: %d evento(s) descartado(s) — pedido do companion em curso",
+                 d + 1);
+        return;
+    }
     // MSG_DONTWAIT: não bloqueia o jogo. MSG_NOSIGNAL: evita SIGPIPE
     // (matar o jogo) se o companion morreu/fechou o socket por baixo.
     ssize_t r = send(fd, line, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL);
