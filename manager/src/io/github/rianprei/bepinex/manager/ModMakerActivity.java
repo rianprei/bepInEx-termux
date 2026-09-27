@@ -192,12 +192,17 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                     public void sleep(long millis) throws InterruptedException { Thread.sleep(millis); }
                 }, tmpSo);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("Scanner concluído: dump.tsv gerado.");
                     Toast.makeText(this, "Scanner concluído.", Toast.LENGTH_LONG).show();
                 });
-                mMainHandler.post(() -> checkAndSyncDump(false));
+                mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;   // evita chamada root em tela morta
+                    checkAndSyncDump(false);
+                });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("Erro ao escanear: " + e.getMessage());
                 });
             }
@@ -218,6 +223,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 SuHelper.exec("chmod 666 '" + mLocalDumpFile.getAbsolutePath() + "' 2>/dev/null");
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("dump.tsv pronto! (" + r.stdout.trim() + ")");
                     mTvScannerStatus.setTextColor(Color.parseColor("#22C55E"));
                     if (showToast) Toast.makeText(this, "dump.tsv sincronizado!", Toast.LENGTH_SHORT).show();
@@ -226,6 +232,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 });
             } else {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("dump.tsv não encontrado em /data/data/" + mPkg + "/files/bepinex/dump.tsv. Toque em 'Escanear Jogo'.");
                     mTvScannerStatus.setTextColor(Color.parseColor("#EAB308"));
                     if (showToast) Toast.makeText(this, "dump.tsv ainda não foi gerado.", Toast.LENGTH_SHORT).show();
@@ -253,6 +260,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 DumpParser.SearchResult result = DumpParser.search(reader, query, null, offset, PAGE_SIZE);
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mHasMorePages = result.hasMore;
                     mTvPageInfo.setText("Página " + (mCurrentPage + 1));
                     mBtnPrevPage.setEnabled(mCurrentPage > 0);
@@ -271,6 +279,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvDumpEmpty.setText("Erro ao ler dump: " + e.getMessage());
                     mTvDumpEmpty.setVisibility(View.VISIBLE);
                 });
@@ -658,6 +667,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     Toast.makeText(this, "Erro ao exportar: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }

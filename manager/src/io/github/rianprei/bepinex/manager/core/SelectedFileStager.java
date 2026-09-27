@@ -38,4 +38,38 @@ public final class SelectedFileStager {
             directory.delete();
         }
     }
+
+    /**
+     * Retaguarda contra órfão: apaga TODO staging (bepinex-import-*) do
+     * cache exceto os diretórios dos arquivos pendentes informados. Roda na
+     * abertura do Manager e cobre o caso que nenhum holder em memória cobre:
+     * processo morto pelo sistema com staged abandonado no cache.
+     * Devolve quantos diretórios órfãos apagou.
+     */
+    public static int sweep(File cacheDirectory, File... keepFiles) {
+        if (cacheDirectory == null || !cacheDirectory.isDirectory()) return 0;
+        File[] entries = cacheDirectory.listFiles();
+        if (entries == null) return 0;
+        int removed = 0;
+        for (File entry : entries) {
+            if (!entry.isDirectory() || !entry.getName().startsWith(DIRECTORY_PREFIX)) continue;
+            if (isKeepDirectory(entry, keepFiles)) continue;
+            File[] inner = entry.listFiles();
+            if (inner != null) {
+                for (File file : inner) file.delete();
+            }
+            if (entry.delete()) removed++;
+        }
+        return removed;
+    }
+
+    private static boolean isKeepDirectory(File directory, File... keepFiles) {
+        if (keepFiles == null) return false;
+        for (File keep : keepFiles) {
+            if (keep == null) continue;
+            File parent = keep.getParentFile();
+            if (parent != null && parent.equals(directory)) return true;
+        }
+        return false;
+    }
 }

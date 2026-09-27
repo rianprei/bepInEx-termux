@@ -69,10 +69,12 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private GameAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Uri mPendingIncomingUri;
-    // Fora da Activity: rotação destrói a tela mas o arquivo staged escolhido
-    // pelo usuário não pode virar órfão no cache. A instância nova herda no
-    // próximo refresh; se a saída for definitiva (isFinishing), apaga.
-    private final PendingStagedFile mPendingStagedFile = new PendingStagedFile();
+    // Escopo de PROCESSO (static): rotação cria Activity nova, e o arquivo
+    // staged escolhido pelo usuário tem que sobreviver à troca de instância —
+    // com campo de instância ele ficava órfão no cache (achado do Maestro).
+    // A instância nova herda no próximo refresh; saída definitiva apaga no
+    // onDestroy; staged de processo morto é coberto pelo sweep no onResume.
+    private final PendingStagedFile mPendingStagedFile = PendingStagedFile.SHARED;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,6 +130,10 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     @Override
     protected void onResume() {
         super.onResume();
+        // Retaguarda: staged órfão de processo morto (ou de rodadas antigas)
+        // não pode acumular no cache. O pendente de cada tela é preservado.
+        SelectedFileStager.sweep(getCacheDir(),
+                mPendingStagedFile.peek(), GameDetailActivity.pendingStaged());
         loadStatusAndApps();
     }
 

@@ -19,13 +19,14 @@ import android.widget.Toast;
 import io.github.rianprei.bepinex.manager.core.ConfManager;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 import io.github.rianprei.bepinex.manager.model.ModOption;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class ModOptionsActivity extends Activity {
+public class ModOptionsActivity extends Activity implements UiLiveness.ActivityLike {
     private String mPkg;
     private String mModId;
     private String mModName;
@@ -73,7 +74,10 @@ public class ModOptionsActivity extends Activity {
             if (mExistingConfContent == null) mExistingConfContent = "";
             Map<String, String> currentValues = ConfManager.parse(mExistingConfContent);
 
-            mMainHandler.post(() -> buildUi(currentValues));
+            mMainHandler.post(() -> {
+                if (!UiLiveness.alive(this)) return;
+                buildUi(currentValues);
+            });
         }).start();
     }
 
@@ -168,6 +172,7 @@ public class ModOptionsActivity extends Activity {
             String confPath = "/data/local/tmp/mods/" + mPkg + "/" + mModId + ".conf";
             boolean ok = SuHelper.writeTextFile(confPath, updatedContent);
             mMainHandler.post(() -> {
+                if (!UiLiveness.alive(this)) return;
                 if (ok) {
                     Toast.makeText(this, "Opções salvas com sucesso!", Toast.LENGTH_SHORT).show();
                     finish();

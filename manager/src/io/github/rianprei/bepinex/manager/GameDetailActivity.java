@@ -67,9 +67,15 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
     private final List<ModInfo> mMods = new ArrayList<>();
     private ModAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
-    // Fora da Activity: rotação não pode deixar o staged escolhido órfão;
-    // a instância nova herda e retoma o install no onResume.
-    private final PendingStagedFile mPendingStagedFile = new PendingStagedFile();
+    // Escopo de PROCESSO (static): a instância nova da rotação herda o
+    // staged e retoma o install no onResume — campo de instância deixava
+    // o arquivo órfão (achado do Maestro).
+    private final PendingStagedFile mPendingStagedFile = PendingStagedFile.DETAIL;
+
+    /** Pendente desta tela, para o sweep da MainActivity preservar. */
+    public static File pendingStaged() {
+        return PendingStagedFile.DETAIL.peek();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,6 +134,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
             new Thread(() -> {
                 boolean ok = SuHelper.restartGame(mPkg, activityComponent);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     if (ok) {
                         Toast.makeText(this, "Jogo reiniciado!", Toast.LENGTH_SHORT).show();
                     } else {
@@ -158,6 +165,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
             new Thread(() -> {
                 boolean ok = SuHelper.reactivateMods(mPkg);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mBtnReactivate.setEnabled(true);
                     if (ok) {
                         mCrashGuardBox.setVisibility(View.GONE);
@@ -415,6 +423,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
 
             final boolean temGadgetSo = gadgetSoFound;
             mMainHandler.post(() -> {
+                if (!UiLiveness.alive(this)) return;
                 if (cgMostrar) {
                     mTvCrashGuard.setText(CrashGuardState.describe(cg, System.currentTimeMillis() / 1000L));
                     mCrashGuardBox.setVisibility(View.VISIBLE);
@@ -518,7 +527,10 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
                         .setPositiveButton(R.string.btn_delete, (dialog, which) -> {
                             new Thread(() -> {
                                 SuHelper.deleteMod(mPkg, mod.id);
-                                mMainHandler.post(GameDetailActivity.this::loadMods);
+                                mMainHandler.post(() -> {
+                                    if (!UiLiveness.alive(GameDetailActivity.this)) return;
+                                    loadMods();
+                                });
                             }).start();
                         })
                         .setNegativeButton(R.string.btn_cancel, null)
