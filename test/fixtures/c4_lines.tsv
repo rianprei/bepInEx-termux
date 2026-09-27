@@ -1,6 +1,9 @@
 # C4 shared contract: <line> TAB <accept|reject>. Manager (uni/f5-manager)
 # generates field with 5 tokens (auto) or 7 (method + nargs >= 0) and rejects
 # negative nargs; u_patch must match. nargs -1 is auto-only (5 tokens).
+# nargs e inteiro: so digitos, >= 0 e <= 64 (mesmo teto do up_parse_nargs).
+return ComplexCreature HasAmmo 65 bool true	reject
+return ComplexCreature HasAmmo +3 bool true	reject
 return ComplexCreature HasAmmo 0 bool true	accept
 return ComplexCreature HasAmmo 0 int 5	accept
 return Projectile GetMovementSpeed 0 float 1.5	accept

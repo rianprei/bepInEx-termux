@@ -131,6 +131,10 @@ field   <Classe>  <campo>   <bool|int|float>           <valor>  [<Método> <narg
 ```
 - `field` = campo de **instância**: a cada chamada de `<Método>` (instância, da mesma `<Classe>`), escreve `this.<campo> = <valor>` antes de rodar o original (hook com thunk, `this` = x0, offset via `field_get_offset`). Sem `<Método>`, o u_patch escolhe sozinho até 8 métodos de instância da classe que passam na guarda de tamanho. Motivo (teste no device 2026-09-26): `return ComplexCreature HasAmmo 0 bool true` aplicou e foi chamado 12x (Frida), mas a munição acabou mesmo assim, porque o jogo decrementa e checa o campo direto; o que dá munição infinita é o campo `WeaponInfo.unlimitedAmmo` (o sa2ammo usa ele). Método patchado não cobre lógica que lê campo direto.
 - `<Classe>` = `Namespace.Nome`, ou só `Nome` sem namespace (o último `.` separa). Classe aninhada fica fora do v1.
+- O número de campos é **exato**: 6 em `return`/`mul`, 5 em `static`, 5 (auto) ou 7 (com `<Método> <nargs>`) em `field`. Token a mais ou a menos é linha inválida nos dois lados.
+- `<nargs>` é inteiro: só dígitos, `>= 0` e `<= 64` (teto do `up_parse_nargs` do u_patch). `field` com 5 tokens não leva `<nargs>`: é o modo "auto", e `nargs = -1` é **só** esse modo, nunca o explícito.
+- `<tipo>` sai do conjunto fechado `bool|int|float`; `mul` não aceita `bool` (o fator multiplica valor numérico).
+- Um mesmo arquivo de fixtures vale pros dois lados: `test/fixtures/c4_lines.tsv` (`<linha> TAB <accept|reject>`), lido pelo `PatchGenerator.parse` do Manager (teste JVM `C4FixtureTest`) e pelo harness do `u_patch`. Divergência = os dois lados falham, com a linha no erro; corrige-se o lado errado conforme este contrato, nunca a fixture.
 - `<valor>`/`<fator>` pode ser `$key`, e aí vem do `<id>.conf`.
 - Busca em todos os assemblies (`domain_get_assemblies` + `class_from_name`).
 - Exemplo (SA2): `return ComplexCreature HasAmmo 0 bool true`.
