@@ -25,13 +25,13 @@ import java.util.zip.ZipOutputStream;
 // metade de um .so no disco.
 public final class BmodInstaller {
 
-    // Tetos. Manifest e .patch sao texto: alguns KB bastam e sobra. O .so e
+    // Tetos. Manifest e .bpatch sao texto: alguns KB bastam e sobra. O .so e
     // binario: 64MB e o teto de um mod legitimo (o maior do repo, o
     // libdobby.a empacotado, tem 1,3MB).
     public static final long MAX_MANIFEST_BYTES = 64L * 1024;
     public static final long MAX_PAYLOAD_BYTES = 64L * 1024 * 1024;
-    // .patch e texto de regra (~70 bytes por linha): 256KB ja sao ~3000
-    // regras. Um .patch de 1MB nao e mod, e zip bomb.
+    // .bpatch e texto de regra (~70 bytes por linha): 256KB ja sao ~3000
+    // regras. Um .bpatch de 1MB nao e mod, e zip bomb.
     public static final long MAX_PATCH_BYTES = 256L * 1024;
     public static final int MAX_ENTRIES = 32;
 
@@ -118,11 +118,11 @@ public final class BmodInstaller {
                 throw e;
             }
 
-            // 2. payload (mod.so ou mod.patch), teto por tipo
+            // 2. payload (mod.so ou mod.bpatch), teto por tipo
             boolean nativePayload = "native".equals(manifest.type);
-            String entryName = nativePayload ? "mod.so" : "mod.patch";
+            String entryName = nativePayload ? "mod.so" : "mod.bpatch";
             long limit = nativePayload ? MAX_PAYLOAD_BYTES : MAX_PATCH_BYTES;
-            String destName = manifest.id + (nativePayload ? ".so" : ".patch");
+            String destName = manifest.id + (nativePayload ? ".so" : ".bpatch");
 
             ZipEntry payloadEntry = zip.getEntry(entryName);
             if (payloadEntry == null) {
@@ -221,8 +221,8 @@ public final class BmodInstaller {
             zos.write(ManifestParser.toJson(manifest).getBytes(StandardCharsets.UTF_8));
             zos.closeEntry();
 
-            // mod.patch ou mod.so
-            String entryName = "native".equals(manifest.type) ? "mod.so" : "mod.patch";
+            // mod.bpatch ou mod.so
+            String entryName = "native".equals(manifest.type) ? "mod.so" : "mod.bpatch";
             zos.putNextEntry(new ZipEntry(entryName));
             if (isContent) {
                 zos.write(payloadContentOrPath.getBytes(StandardCharsets.UTF_8));
@@ -248,7 +248,7 @@ public final class BmodInstaller {
     }
 
     // Zip-slip: entrada cujo NOME sai da pasta de extracao. Hoje o payload
-    // sai por nome fixo (mod.so/mod.patch), mas nada garante que um futuro
+    // sai por nome fixo (mod.so/mod.bpatch), mas nada garante que um futuro
     // fluxo use entry.getName() — e a defesa tem que morar onde o zip e
     // lido, nao na memoria de quem escreveu o extrator. Barra "../", ".."
     // isolado, caminho absoluto, disco de Windows e "./" disfarcado. O

@@ -154,8 +154,8 @@ public class SuHelperTest {
         SuHelper.requireChmodMode("0644");
         SuHelper.requireChmodMode("755");
         SuHelper.requirePath("/data/data/com.foo/files/bepinex/log.txt", "log");
-        check("modsFile monta o caminho", "/data/local/tmp/mods/com.foo/meu.patch".equals(
-                SuHelper.modsFile("com.foo", "meu.patch")));
+        check("modsFile monta o caminho", "/data/local/tmp/mods/com.foo/meu.bpatch".equals(
+                SuHelper.modsFile("com.foo", "meu.bpatch")));
         check("stateFile monta o caminho", "/data/data/com.foo/files/bepinex/crashguard".equals(
                 SuHelper.stateFile("com.foo", "crashguard")));
         // Um cache local (caminho do proprio app) tambem e aceito: e o

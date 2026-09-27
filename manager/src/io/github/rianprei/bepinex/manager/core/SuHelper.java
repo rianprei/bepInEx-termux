@@ -311,7 +311,7 @@ public final class SuHelper {
             // proprio app e so o caminho (validado) e copiado. Escrever por
             // stdin seria mais curto, mas se o su do device nao repassar o
             // stdin o `cat > destino` receberia EOF e deixaria o arquivo
-            // VAZIO sem dar erro — o .conf/.patch do mod sumiria em silencio.
+            // VAZIO sem dar erro — o .conf/.bpatch do mod sumiria em silencio.
             File tmp = File.createTempFile("bep_su_write_", ".tmp");
             try (FileOutputStream fos = new FileOutputStream(tmp)) {
                 fos.write(content.getBytes(StandardCharsets.UTF_8));

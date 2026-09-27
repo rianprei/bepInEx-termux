@@ -165,7 +165,11 @@ public class ShellExecTest {
         File mods = new File(root, "mods");
         // com.a.jogo: 2 ativos + 1 desligado; nome com espaço; .conf (não conta)
         write(new File(new File(mods, "com.a.jogo"), "x.so"), "s");
-        write(new File(new File(mods, "com.a.jogo"), "y.patch"), "p");
+        write(new File(new File(mods, "com.a.jogo"), "y.bpatch"), "p");
+        // Extensao ANTIGA: o glob do inventario passou a ser *.bpatch, e um
+        // .patch nao pode mais ser contado como mod ligado. Sem esta linha o
+        // teste passaria igual com o glob velho.
+        write(new File(new File(mods, "com.a.jogo"), "z_antigo.patch"), "p");
         write(new File(new File(mods, "com.a.jogo"), "z.so.off"), "o");
         write(new File(new File(mods, "com.a.jogo"), "w.conf"), "c");
         // com.b.jogo: só um arquivo com ESPAÇO no nome
@@ -185,7 +189,8 @@ public class ShellExecTest {
         check("3 pastas viraram 3 entradas", inv.size() == 3);
 
         ModInventory.Counts a = inv.get("com.a.jogo");
-        check("com.a.jogo: 3 no total (2 .so/.patch + 1 .off)", a != null && a.total == 3);
+        check("com.a.jogo: 3 no total (2 .so/.bpatch + 1 .off; o .patch antigo fora)",
+                a != null && a.total == 3);
         check("com.a.jogo: 2 ativos (o .off não conta)", a != null && a.active == 2);
         check("o .conf não conta como mod", a != null && a.total == 3);
 
@@ -584,7 +589,7 @@ public class ShellExecTest {
 
         File normal = new File(download, "mod com espaco.so");
         write(normal, "arquivo normal");
-        File hidden = new File(download, ".hidden-mod.patch");
+        File hidden = new File(download, ".hidden-mod.bpatch");
         write(hidden, "arquivo oculto");
         String hostileName = "quote ' $(touch injected); hostile.so";
         File hostile = new File(documents, hostileName);

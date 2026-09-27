@@ -532,7 +532,7 @@ public class ModMakerActivity extends Activity {
         }
     }
 
-    // 4. Salvar e Instalar Mod Declarativo (.patch + manifest)
+    // 4. Salvar e Instalar Mod Declarativo (.bpatch + manifest)
     private void saveAndInstallMod() {
         if (mCurrentRules.isEmpty()) {
             Toast.makeText(this, "Adicione ao menos uma regra antes de salvar.", Toast.LENGTH_LONG).show();
@@ -570,7 +570,7 @@ public class ModMakerActivity extends Activity {
             String dir = "/data/local/tmp/mods/" + mPkg + "/";
             SuHelper.ensureModDir(mPkg);
 
-            SuHelper.writeTextFile(dir + modId + ".patch", patchContent);
+            SuHelper.writeTextFile(dir + modId + ".bpatch", patchContent);
             SuHelper.writeTextFile(dir + modId + ".json", manifestJson);
 
             // Checa u_patch.so em assets/

@@ -31,7 +31,7 @@ public final class ModInventory {
     private static final String END = "bepinex-mods-end";
 
     public static final class Counts {
-        public final int total;    // .so/.patch, ligadas ou desligadas
+        public final int total;    // .so/.bpatch, ligadas ou desligadas
         public final int active;   // ligadas (sem o sufixo .off)
 
         Counts(int total, int active) {
@@ -63,7 +63,7 @@ public final class ModInventory {
         // Quatro globs explícitos em vez de "$d"* : nome com espaço continua
         // inteiro (o diretório está entre aspas e o globo é o sufixo), e
         // pasta vazia não vira o literal do padrão.
-        sb.append("for f in \"$d\"*.so \"$d\"*.patch \"$d\"*.so.off \"$d\"*.patch.off; do ");
+        sb.append("for f in \"$d\"*.so \"$d\"*.bpatch \"$d\"*.so.off \"$d\"*.bpatch.off; do ");
         sb.append("[ -f \"$f\" ] || continue; ");
         sb.append("case \"$f\" in *.off) t=$((t+1)) ;; *) t=$((t+1)); a=$((a+1)) ;; esac; ");
         sb.append("done; ");

@@ -19,7 +19,7 @@ public class ModInfo {
     }
 
     public String getMainFilename() {
-        String ext = "native".equals(type) ? ".so" : ".patch";
+        String ext = "native".equals(type) ? ".so" : ".bpatch";
         return id + ext + (isEnabled ? "" : ".off");
     }
 }
