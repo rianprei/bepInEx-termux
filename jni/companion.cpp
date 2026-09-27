@@ -26,7 +26,8 @@
 
 #include "zygisk.hpp"
 #include "bc_mods_conf.h"
-#include "bc_loader.h"  // BC_MODS_DIR + bc_loader_is_mod_filename() — validação de nome pro push_mod
+#include "bc_mods_fd.h" // protocolo de entrega por FD (SCM_RIGHTS)
+#include "bc_loader.h"  // BC_MODS_DIR + BC_MODS_ROOT + bc_loader_is_mod_filename() — validação de nome pro push_mod
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
 // Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
@@ -738,6 +739,10 @@ static void handle_push_mod(int fd, const char *name, long size) {
 // Retorna true se o fd foi "adotado" por outro dono (ex.: stream) e o
 // chamador (accept loop) NÃO deve fechar o client_fd — false = fluxo normal
 // request/response, chamador fecha como sempre.
+// Entrega por FD — definidos mais abaixo, junto do resto do transporte.
+static void handle_mod_fd(int fd, const char *path);
+static void handle_mod_txt(int fd, const char *path);
+
 bool handle_termux_request(int client_fd) {
     char buf[4096];
     ssize_t n = read_command(client_fd, buf, sizeof(buf));
@@ -789,6 +794,10 @@ bool handle_termux_request(int client_fd) {
             write_all(client_fd, response, strlen(response));
         } else if (strcmp(buf, "list_mods") == 0) {
             handle_list_mods(client_fd);
+        } else if (strncmp(buf, "mod_fd ", 7) == 0) {
+            handle_mod_fd(client_fd, buf + 7);
+        } else if (strncmp(buf, "mod_txt ", 8) == 0) {
+            handle_mod_txt(client_fd, buf + 8);
         } else if (strncmp(buf, "toggle_mod ", 11) == 0) {
             handle_toggle_mod(client_fd, buf + 11);
         } else if (strncmp(buf, "set_mod ", 8) == 0) {
@@ -903,6 +912,102 @@ bool handle_termux_request(int client_fd) {
 // função virou o corpo do processo daemonizado via double-fork, chamada
 // direto (sem pthread), mas o nome/assinatura ficou igual pra reaproveitar
 // via chamada de função comum em vez de thread.
+// ============================================================================
+// Entrega por FD (revisao de seguranca do freebuff)
+// ============================================================================
+// O jogo nao tem acesso a /data/adb/bepinex (root:root 0700) — e nao deve ter.
+// Quem abre o .so e o companion, como root; o que CRUZA a fronteira e o
+// DESCRITOR.
+//
+//   mod_fd  <caminho>  -> o companion abre com O_RDONLY|O_NOFOLLOW|O_CLOEXEC
+//                         e manda o FD por SCM_RIGHTS
+//   mod_txt <caminho>  -> o conteudo (conf/allowlist, que nao sao mapeaveis)
+//
+// O_NOFOLLOW e o que impede o root de abrir um link de dentro da arvore para
+// fora dela. A arvore e root-only e o migrador nao segue link, mas o open() e a
+// ultima linha: entre o lstat e o open() da um TOCTOU, e o alvo pode ter sido
+// trocado nesse intervalo.
+//
+// O caminho SO pode estar sob a raiz: um cliente (o jogo, ou o Termux via su)
+// nao ganha "abrir o que eu pedir" — ganha "abrir o que estiver na arvore de
+// mods, com o nome validado".
+
+// Confere que `path` esta DENTRO de BC_MODS_ROOT, sem resolver link no
+// caminho. Prefixo textual + '/' evita que /data/adb/bepinexX case com
+// /data/adb/bepinex.
+static bool bc_path_in_mods_root(const char *path) {
+    if (path == nullptr) return false;
+    const size_t root = strlen(BC_MODS_ROOT);
+    if (strncmp(path, BC_MODS_ROOT, root) != 0) return false;
+    if (path[root] == '\0') return true;
+    return path[root] == '/';
+}
+
+static void handle_mod_fd(int fd, const char *path) {
+    if (!bc_path_in_mods_root(path)) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        LOGE("mod_fd: caminho fora da raiz de mods: %s", path);
+        return;
+    }
+    int f = bc_fd_open_ro(path);
+    if (f < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        LOGE("mod_fd: open(%s) falhou: %s", path, strerror(errno));
+        return;
+    }
+    // 1 byte de payload, NAO 0: num SOCK_STREAM um send de 0 byte chega como
+    // EOF no outro lado, e o recvmsg do jogo acorda por dados que nao existem.
+    // O protocolo le o payload como ack e o FD vem na ancillary data.
+    static const char kAck = 'F';
+    if (bc_fd_send(fd, f, &kAck, 1) < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+    }
+    close(f);
+}
+
+static void handle_mod_txt(int fd, const char *path) {
+    if (!bc_path_in_mods_root(path)) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        return;
+    }
+    int f = bc_fd_open_ro(path);
+    if (f < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        return;
+    }
+    // Conteudo: primeiro o tamanho, depois os bytes, e o jogo aloca e le.
+    // Acima de BC_FD_TXT_MAX o cliente tem que pedir mod_fd.
+    char head[32];
+    off_t sz = lseek(f, 0, SEEK_END);
+    if (sz < 0 || sz > BC_FD_TXT_MAX) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), sz < 0 ? errno : EFBIG);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        close(f);
+        return;
+    }
+    int n2 = snprintf(head, sizeof(head), "%lld\n", (long long)sz);
+    if (n2 > 0) bc_fd_send_data(fd, head, (size_t)n2);
+    if (sz > 0 && lseek(f, 0, SEEK_SET) == (off_t)0) {
+        char buf[4096];
+        ssize_t got;
+        while ((got = read(f, buf, sizeof(buf))) > 0) {
+            if (bc_fd_send_data(fd, buf, (size_t)got) < 0) break;
+        }
+    }
+    close(f);
+}
+
 static void *termux_accept_loop(void *) {
     int termux_server = setup_abstract_socket(SOCKET_NAME);
     if (termux_server < 0) {

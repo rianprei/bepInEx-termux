@@ -25,19 +25,49 @@
 # aberto pelo root, o que o appdomain precisa e map/read/execute no .so. Nem
 # getattr nem open nem dir: sao de abrir por caminho.
 
-# --- 1/4: tipo proprio dos arquivos de mod ----------------------------------
+# --- 1/5: tipo proprio dos arquivos de mod ----------------------------------
 # Rotula a arvore em /data/adb/bepinex, que o companion (root) e o boot
 # escrevem. E o que da ao jogo o map/read/execute da regra 2/4.
 type bepinex_mod_file file_type
 
-# --- 2/4: o jogo so precisa mapear o .so -----------------------------------
-# map + read + execute. E o que o ANDROID_DLEXT_USE_LIBRARY_FD exige: o FD ja
-# vem aberto pelo root, e o kernel checa o rotulo do objeto no mmap.
-# SEM getattr/open/dir: nao ha mais acesso de caminho, e a pasta em /data/adb
-# nao e legivel pelo appdomain (parent root:root 0700).
+# --- 2/4: o que o jogo precisa do .so --------------------------------------
+# map + execute = o mmap PROT_EXEC do carregador. E o que o
+# ANDROID_DLEXT_USE_LIBRARY_FD exige: o FD ja vem aberto pelo root.
+# SEM open/dir: nao ha mais acesso por caminho, e a pasta em /data/adb nao e
+# legivel pelo appdomain (parent root:root 0700).
+#
+# read NAO e do mmap: e do hook file_receive. Ao receber o FD por SCM_RIGHTS o
+# kernel chama selinux_file_receive(), que faz
+# file_has_perm(cred, file, file_to_av(file)) — e file_to_av() traduz o MODO DE
+# ABERTURA em permissao. O companion abre O_RDONLY, entao o que o appdomain
+# precisa e `read`. Se o companion abrisse O_RDWR, o app precisaria de `write`
+# tambem. (Cited: security/selinux/hooks.c:4364 selinux_file_receive, e
+# hooks.c:7748 registering it as the file_receive hook.)
 allow appdomain bepinex_mod_file file { map read execute }
 
-# --- 3/4: mmap() anonimo PROT_EXEC ------------------------------------------
+# --- 2b/5: getattr. O CARREGADOR FAZ fstat() NO FD, e fstat passa pelo
+# inode_getattr, que exige file getattr.
+#
+# Verificado na fonte, nao de memoria:
+#   bionic/linker/linker.cpp:1180
+#     TEMP_FAILURE_RETRY(fstat(task->get_fd(), &file_stat))
+#   o resultado e usado em duas linhas seguintes:
+#     linker.cpp:1183  file_offset >= file_stat.st_size   (checagem de tamanho)
+#     linker.cpp:1194  find_loaded_library_by_inode(ns, file_stat, ...)
+#                      — que compara st_dev/st_ino para saber se o .so ja esta
+#                        carregado com outro nome
+#   linker.cpp:1210    fstatfs(task->get_fd(), &fs_stat)
+# E o fstat vai para o LSM:
+#   security/selinux/hooks.c:3335  selinux_inode_getattr()
+#     -> :3344  path_has_perm(current_cred(), path, FILE__GETATTR)
+#   hooks.c:7712  LSM_HOOK_INIT(inode_getattr, selinux_inode_getattr)
+#
+# Sem esta linha, android_dlopen_ext(..., USE_LIBRARY_FD) morre em Enforcing
+# com EPERM no fstat — e o dlopen reporta "unable to stat file for the library",
+# que parece .so corrompido em vez de permissao faltando.
+allow appdomain bepinex_mod_file file getattr
+
+# --- 3/5: mmap() anonimo PROT_EXEC ------------------------------------------
 # Sintaxe magiskpolicy: "allow <src> <tgt> <class> { <perms> }", com espaco —
 # NAO a forma "self:process" de .te/CIL, que o magiskpolicy nao entende
 # (ver tools/check_sepolicy_rule.sh, que amarra este arquivo na gramatica).

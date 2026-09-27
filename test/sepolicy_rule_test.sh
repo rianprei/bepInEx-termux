@@ -63,7 +63,7 @@ grep -qE '^type[[:space:]]+bepinex_mod_file[[:space:]]+file_type$' "$RULE" || {
 grep -qE '^allow appdomain bepinex_mod_file file \{ map read execute \}$' "$RULE" || {
     echo "sepolicy: falta 'allow appdomain bepinex_mod_file file { map read execute }'" >&2
     exit 1; }
-if grep -qE '^allow appdomain bepinex_mod_file (file|dir) .*(getattr|open|search)' "$RULE"; then
+if grep -qE '^allow appdomain bepinex_mod_file (file|dir) .*(open|search)' "$RULE"; then
     echo "sepolicy: sobrou acesso de CAMINHO para o jogo (getattr/open/search) — nao deve existir" >&2
     exit 1
 fi
@@ -80,9 +80,10 @@ if grep -qE '^allow .*appdomain.*shell_data_file' "$RULE"; then
     echo "sepolicy: sobrou regra de shell_data_file para appdomain" >&2; exit 1
 fi
 
-# 6) a contagem fecha em 4
+# 6) a contagem fecha em 5 (1 type + 4 allow: map/read/execute, getattr, execmem,
+#    execmod)
 n=$(grep -cE '^(allow|type) ' "$RULE")
-[ "$n" -eq 4 ] || {
-    echo "sepolicy: $n regras; a revisao fixou 4 (1 type + 3 allow)" >&2; exit 1; }
+[ "$n" -eq 5 ] || {
+    echo "sepolicy: $n regras; o esperado sao 5 (1 type + 4 allow)" >&2; exit 1; }
 
-echo "sepolicy_rule_test: PASS (gramatica + as 4 regras da revisao)"
+echo "sepolicy_rule_test: PASS (gramatica + as 5 regras, com getattr)"
