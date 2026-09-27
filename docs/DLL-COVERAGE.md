@@ -101,8 +101,7 @@ mas requer mudança no tradutor.
 
 O corpus foi baixado de fontes públicas (GitHub) com licença que permite
 baixar. Os .dll de terceiros NÃO foram commitados no repo. O manifest
-(`test/fixtures/dll_corpus/MANIFEST.tsv`) contém nome, URL, licença, sha256,
-jogo e backend de cada mod.
+(`MANIFEST.tsv`) contém nome, URL, licença, sha256, jogo e backend de cada mod.
 
 **Contagem de licenças no MANIFEST:**
 - Apache-2.0: 22 (Planet Crafter + Dyson Sphere Program)
