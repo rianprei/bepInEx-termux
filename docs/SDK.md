@@ -82,7 +82,7 @@ tools/deploy_mod.sh hello com.hyperdotstudios.swampattack2
 ```
 
 O script faz a cadeia toda: build → `adb push` (staging) → `su cp` pra
-`/data/local/tmp/mods/<pacote>/hello.so` → `chmod 644` →
+`/data/adb/bepinex/mods/<pacote>/hello.so` → `chmod 644` →
 `chcon u:object_r:bepinex_mod_file:s0` (sem isso o jogo não lê em SELinux
 Enforcing) → `am force-stop` (reinicia o processo do jogo).
 
@@ -110,7 +110,7 @@ vira stderr e os paths de device degradam em silêncio.
 | Função | O que faz |
 |---|---|
 | `mod_pkg()` | Pacote do jogo (`const char*`, ou `nullptr` cedo demais). Fonte: env `BEPINEX_PKG` que o loader seta antes do `dlopen`; fallback `/proc/self/cmdline` **só depois de sair de zygote*** — no constructor ele ainda vale `zygote64`. |
-| `mod_dir(out, size)` | `/data/local/tmp/mods/<pacote>/` em `out` (`false` se não souber o pacote). |
+| `mod_dir(out, size)` | `/data/adb/bepinex/mods/<pacote>/` em `out` (`false` se não souber o pacote). A pasta é root-only e o JOGO não a abre: pede a lista e o FD de cada `.so` ao companion. |
 | `mod_log(tag, fmt, ...)` | logcat **e** linha C1 no `log.txt` do jogo. Nunca derruba por falha de log. |
 | `mod_conf_get(id, key, def)` | Valor string do `<id>.conf` (C3), `def` se não achar. Buffer estático: copie se precisar sobreviver à próxima chamada. |
 | `mod_conf_bool/int/float(id, key, def)` | Igual, já convertido (`true/1/yes`, inteiro, double). Sujo/ausente = `def`. |

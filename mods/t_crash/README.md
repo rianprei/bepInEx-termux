@@ -3,7 +3,7 @@
 Mata o processo 2s depois de carregar, de propósito. Existe para provar a
 garantia G1 ("mod nunca derruba o jogo pra sempre") no device:
 
-1. `cp libs/arm64-v8a/libt_crash.so /data/local/tmp/mods/<pkg>/`
+1. `cp libs/arm64-v8a/libt_crash.so /data/adb/bepinex/mods/<pkg>/`
 2. abra o jogo 3x (reinicie o app entre as tentativas, não o celular)
 3. 1ª e 2ª: morre 2s depois de subir. 3ª: sobe limpo, **sem mod**, e o
    logcat/log.txt mostra

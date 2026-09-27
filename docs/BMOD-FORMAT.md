@@ -18,7 +18,7 @@ mas ainda não foi testada no celular (experimental). O
 ## Onde cada coisa vive no device (C1)
 
 ```
-/data/local/tmp/mods/<pacote-do-jogo>/
+/data/adb/bepinex/mods/<pacote-do-jogo>/
     <id>.so        mod nativo (SDK C++)          ← carregado pelo loader
     <id>.bpatch     regras declarativas (u_patch)
     <id>.conf      opções key=value (gerado do manifest)

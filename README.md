@@ -75,7 +75,7 @@ tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 - **`<pacote-do-jogo>`** é o identificador do jogo, tipo
   `com.hyperdotstudios.swampattack2`. Ele aparece no link da Play Store
   (`...?id=<pacote>`) e em apps que mostram detalhes de um app instalado.
-- O mod vai pra `/data/local/tmp/mods/<pacote>/` e o log dele aparece em
+- O mod vai pra `/data/adb/bepinex/mods/<pacote>/` (árvore root-only) e o log dele aparece em
   `/data/data/<pacote>/files/bepinex/log.txt` (o botão **Ação** já mostra as
   últimas linhas — nem precisa de terminal).
 - **Ligar/desligar na mão:** renomeie o arquivo — `abc.so` (ligado) vira
@@ -142,7 +142,7 @@ que gera o `dump.tsv` com todas as classes, métodos e campos do jogo
 `tools/deploy_mod.sh u_dump <pacote>` — builda, instala e reinicia o jogo; o
 dump sai em `/data/data/<pacote>/files/bepinex/dump.tsv` na primeira vez que
 o jogo abrir. Só gera se o arquivo não existir (refazer = apagar + reiniciar
-o jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar de
+o jogo); remova o `/data/adb/bepinex/mods/<pacote>/u_dump.so` quando terminar de
 usar. No Manager isso vira o botão "Escanear jogo" acima.
 
 **Aplicar regras à mão:** um `.bpatch` com regras declarativas simples
@@ -295,10 +295,10 @@ você copia na mão, aplique
 
 ### Como desinstalo sem perder meus mods?
 Remover o módulo pelo app Magisk **não apaga nada seu**: os mods
-(`/data/local/tmp/mods/`, `/data/local/tmp/bc_mods/`) e os logs
+(`/data/adb/bepinex/mods/`, `/data/adb/bepinex/bc_mods/`) e os logs
 (`/data/data/<pacote>/files/bepinex/`) continuam no lugar — o desinstalador
 só lista o que ficou. Reinstalar o módulo depois volta tudo a funcionar. Pra
-apagar de vez: `rm -rf /data/local/tmp/mods` (e as pastas listadas na
+apagar de vez: `rm -rf /data/adb/bepinex` (e as pastas listadas na
 mensagem de desinstalação).
 
 ### Instalei o mod e o jogo não carrega nada
@@ -448,7 +448,7 @@ DORMANT (log-only, sem crashar o processo do jogo). Ver
 ### 1.1. Loader de mods `.so` dinâmico (`jni/bc_loader.h` + `jni/bc_mod_api.h`)
 
 O que fecha o gap de "mod hardcoded" → "mod-loader de verdade": qualquer
-`.so` colocado em `/data/local/tmp/bc_mods/` (ordem alfabética do nome,
+`.so` colocado em `/data/adb/bepinex/bc_mods/` (ordem alfabética do nome,
 `strcmp`: use prefixo com zero à esquerda, `01_`, `02_`..., senão `10_`
 vem antes de `2_`; `requires` no manifest ainda reordena) é descoberto, `dlopen()`+`dlsym("bc_mod_register")` no
 boot, **depois** dos hooks estáticos (o mod já pode usar `resolve_symbol`
@@ -587,7 +587,7 @@ foreground (REPL) — o BepInEx no PC não tem input nenhum no console
 (confirmado no código-fonte: `ConsoleManager.cs`/`WindowsConsoleDriver.cs`
 não têm nenhum `Read`/`ReadLine`), então isso é além da paridade, não invenção.
 
-Log persistido em disco em `/data/local/tmp/bc_poc_LogOutput.log`
+Log persistido em disco no state dir do próprio app, `/data/data/<pkg>/files/bepinex/bc_poc_LogOutput.log` (derivado do `app_data_dir` que o zygote entrega — funciona em multiusuário)
 (equivalente ao `LogOutput.log` do BepInEx — trunca a cada boot por
 padrão, mesmo comportamento confirmado em `DiskLogListener.cs`). Log
 nativo do próprio jogo (não só do módulo) é unificado no mesmo arquivo via

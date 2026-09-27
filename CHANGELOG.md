@@ -19,6 +19,26 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 - A extensão dos arquivos de regras do motor declarativo passou de `.patch` para `.bpatch`, para não colidir com o arquivo de diff do git e confundir quem olha a pasta de mods. Nada muda para quem usa o Manager: ele reconhece o conteúdo do arquivo, não o nome, então um arquivo de regras com a extensão antiga ou sem extensão continua sendo identificado e instalado como `<id>.bpatch`. O formato ainda não saiu em release, então não há arquivo antigo para migrar. A mudança foi verificada em testes de host e no gate, não em aparelho. (`6589f2f`)
 
 
+- **A árvore de mods mudou de lugar, e o log do jogo junto.** Os arquivos de
+  mod foram de `/data/local/tmp/mods/` para `/data/adb/bepinex/mods/`: o
+  diretório antigo tem um pai que o root não controla (`/data/local/tmp` é
+  0777, `/data/local` é 0771 shell:shell), então o shell e qualquer appuid do
+  aparelho podiam trocar o diretório por um link simbólico antes de o root
+  tocar nele. `/data/adb` é root:root 0700. Como o processo do jogo não tem
+  acesso a `/data/adb`, ele passou a **não abrir caminho nenhum**: o companion
+  (root) abre o `.so` e entrega o descritor pelo socket, e o jogo carrega com
+  `android_dlopen_ext(..., ANDROID_DLEXT_USE_LIBRARY_FD)`. A lista de mods e o
+  `.conf`/allowlist vão pelo mesmo socket. Um mod instalado no lugar antigo é
+  migrado uma vez no boot; entrada que não é arquivo regular ou diretório real
+  (link, fifo) fica onde está e é registrada em `/data/adb/bepinex-migrate.log`.
+  O **log do jogo e o snapshot de patches** foram para o diretório de estado do
+  próprio app, `/data/data/<pacote>/files/bepinex/`, derivado do
+  `app_data_dir` que o zygote entrega (assim funciona em multiusuário, sem
+  `/data/data/<pacote>` montado à mão). Se você lia o log em
+  `/data/local/tmp/bc_poc_LogOutput.log`, o novo lugar é
+  `/data/data/<pacote>/files/bepinex/bc_poc_LogOutput.log`; o Manager lê de lá
+  via `su`.
+
 ### Correções
 - [HOST] Os mods passaram a compartilhar o mesmo caminho de log; a espera pelo pacote e as mensagens de timeout foram corrigidas para refletir o comportamento real. Os testes de host cobrem o helper de log, e o gate compila os componentes; não é uma nova validação em aparelho. (`df40b73`, `638b05f`, `09bcd74`)
 - [HOST] Foram corrigidos fluxos de root do Manager, incluindo chamadas repetidas, cadeias `chcon`, entrega de comandos por stdin e preservação de `resources.arsc` no APK para instalação em versões atuais do Android. Testes de shell/JVM e checagens do APK cobrem esses casos. (`3f1bdef`, `368406d`, `3884e54`, `ca4354b`)

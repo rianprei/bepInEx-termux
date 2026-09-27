@@ -33,7 +33,7 @@ for f in "$@"; do
 done
 GADGET_BIN="mods/u_frida/gadget/frida-gadget.bin"
 [ -f "$GADGET_BIN" ] || die "rode tools/fetch_frida_gadget.sh antes"
-MODS="/data/local/tmp/mods/$PKG"
+MODS="/data/local/tmp/mods/$PKG"   # arvore VELHA: o fixture do round2 ainda e deste lado
 STAGE="/data/local/tmp/frida-stage-$PKG"
 CTX="u:object_r:bepinex_mod_file:s0"
 

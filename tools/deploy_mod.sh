@@ -25,7 +25,10 @@ so="mods/$id/libs/arm64-v8a/lib$id.so"
 adb wait-for-device
 adb shell su -c true || { echo "su indisponível no device" >&2; exit 1; }
 
-mods=/data/local/tmp/mods
+mods=/data/adb/bepinex/mods   # arvore root-only; ver post-fs-data.sh
+# O adb NAO le /data/adb (root:root 0700), entao o arquivo e
+# empurrado para /data/local/tmp e movido com su. O /data/local/tmp aqui e
+# TRANSITO: o mod mora na arvore nova.
 stage=/data/local/tmp/.deploy.$id.$$
 # ENTREGA VIA STDIN (padrão do device_test.sh): `adb shell su -c "A && B"`
 # re-divide os args no device — o su roda só "A" como root e o resto roda como

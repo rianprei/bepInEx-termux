@@ -30,7 +30,7 @@ Teto de referência: Dancer Cat TF Lv30 (godfat), a unidade que a comunidade diz
 - Ela só escreve quando HP/ATK/área batem com o vanilla do `unit133.csv`.
 - Se o jogo recarregar os dados, ela reaplica.
 
-**Deploy:** `./deploy.sh` com o companion do jogo rodando. Com o jogo fechado, sobrescrever o conteúdo de `/data/local/tmp/bc_mods/02_kungfux.so` (o diretório é do root; o arquivo é shell 666).
+**Deploy:** `./deploy.sh` com o companion do jogo rodando. Com o jogo fechado, sobrescrever o conteúdo de `/data/adb/bepinex/bc_mods/02_kungfux.so` (o diretório é do root; o arquivo é shell 666).
 
 **Log esperado:** `[kungfux] #132 patch aplicado (#1): speed 10, KB 3, area, ciclo 90f, 1 golpe (TF atk …, fs 11), HP …, range …, custo …`.
 
