@@ -28,6 +28,7 @@ import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
+import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.ModInfo;
@@ -191,7 +192,15 @@ public class GameDetailActivity extends Activity {
             Uri uri = data.getData();
             if (uri != null) {
                 installSelectedFile(uri);
+                return;
             }
+        } else if (requestCode == REQUEST_PICK_BMOD_FOR_GAME && resultCode == RESULT_CANCELED) {
+            new AlertDialog.Builder(this)
+                    .setMessage("O seletor de arquivos deste celular não devolveu o arquivo. Quer escolher direto da pasta Download?")
+                    .setPositiveButton("Escolher da pasta Download",
+                            (dialog, which) -> DownloadFileDialog.show(this, this::installStagedFile))
+                    .setNegativeButton("Cancelar", null)
+                    .show();
         }
     }
 
@@ -200,33 +209,37 @@ public class GameDetailActivity extends Activity {
     // nome original so importa para virar o id do arquivo instalado.
     private void installSelectedFile(Uri uri) {
         String displayName = resolveDisplayName(uri);
-        File tmp = new File(getCacheDir(), "install_" + System.currentTimeMillis() + "_" + displayName);
+        File tmp = null;
         try {
+            tmp = SelectedFileStager.create(getCacheDir(), displayName);
             try (InputStream in = getContentResolver().openInputStream(uri);
                  FileOutputStream out = new FileOutputStream(tmp)) {
+                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
             }
 
-            LooseModInstaller.Result res = LooseModInstaller.installFromFile(tmp, mPkg, mEngine);
-            tmp.delete();
-
-            new AlertDialog.Builder(this)
-                    .setTitle(res.success ? "Sucesso" : "Nao instalado")
-                    .setMessage(res.message)
-                    .setPositiveButton("OK", null)
-                    .show();
-
-            loadMods();
+            installStagedFile(tmp);
         } catch (Exception e) {
-            tmp.delete();
+            SelectedFileStager.delete(tmp);
             new AlertDialog.Builder(this)
                     .setTitle("Nao instalado")
                     .setMessage("Erro ao ler o arquivo: " + e.getMessage())
                     .setPositiveButton("OK", null)
                     .show();
         }
+    }
+
+    private void installStagedFile(File file) {
+        LooseModInstaller.Result res = LooseModInstaller.installFromFile(file, mPkg, mEngine);
+        SelectedFileStager.delete(file);
+        new AlertDialog.Builder(this)
+                .setTitle(res.success ? "Sucesso" : "Não instalado")
+                .setMessage(res.message)
+                .setPositiveButton("OK", null)
+                .show();
+        loadMods();
     }
 
     private String resolveDisplayName(Uri uri) {

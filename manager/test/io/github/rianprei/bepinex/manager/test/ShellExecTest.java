@@ -1,6 +1,7 @@
 package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
+import io.github.rianprei.bepinex.manager.core.DownloadFilePicker;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
@@ -11,10 +12,12 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Os comandos shell que o Manager manda pro `su` EXECUTADOS DE VERDADE.
@@ -40,6 +43,7 @@ public class ShellExecTest {
         testProbeExecutado();
         testOutrosCompostos();
         testCadeiasComChcon();
+        testDownloadFileListingAndCopy();
         System.out.println("  [OK] ShellExecTest (comandos root executados em sh de verdade)");
     }
 
@@ -554,6 +558,7 @@ public class ShellExecTest {
                 cmd = SuHelper.toggleModCommand(inexistente.getPath(),
                         new File(ffRoot, "alvo.so.off").getPath());
             }
+
             Result rr = shWithPath(cmd, ffPath, ffRoot);
             check(nome + ": 1o comando falhando => cadeia sai != 0", rr.code != 0);
             check(nome + ": o chcon NÃO foi chamado (log do stub vazio)",
@@ -568,6 +573,98 @@ public class ShellExecTest {
         Result semi = shWithPathEnv(semiChain, path6, root6, "BEP_STUB_CHMOD_FAIL", "1");
         check("com `;` no lugar do `&&`, o chcon roda e a cadeia sai 0 (o bug)",
                 semi.code == 0 && chconLog(chconLog6).contains(dest6));
+    }
+
+    private static void testDownloadFileListingAndCopy() {
+        File root = tempDir("download-picker");
+        File download = new File(root, "Download");
+        File documents = new File(root, "Documents");
+        check("pasta Download temporária criada", download.mkdirs());
+        check("pasta Documents temporária criada", documents.mkdirs());
+
+        File normal = new File(download, "mod com espaco.so");
+        write(normal, "arquivo normal");
+        File hidden = new File(download, ".hidden-mod.patch");
+        write(hidden, "arquivo oculto");
+        String hostileName = "quote ' $(touch injected); hostile.so";
+        File hostile = new File(documents, hostileName);
+        write(hostile, "conteudo-hostil");
+        File outside = new File(root, "outside.so");
+        write(outside, "fora das pastas compartilhadas");
+        File symlink = new File(documents, "atalho.so");
+        try {
+            Files.createSymbolicLink(symlink.toPath(), outside.toPath());
+        } catch (Exception e) {
+            throw new AssertionError("não consegui criar link simbólico de teste: " + e);
+        }
+
+        String listingCommand = DownloadFilePicker.listCommand(download.getPath(), documents.getPath());
+        Result listing = sh(listingCommand, root);
+        check("listagem root executa em sh", listing.code == 0);
+        List<String> paths = DownloadFilePicker.parseListing(listing.out,
+                download.getPath(), documents.getPath());
+        check("arquivo com espaço aparece intacto", paths.contains(normal.getPath()));
+        check("arquivo oculto também aparece", paths.contains(hidden.getPath()));
+        check("nome com aspas, $(), e ; aparece intacto", paths.contains(hostile.getPath()));
+        check("links simbólicos não são listados", !paths.contains(symlink.getPath()));
+        check("nome hostil não executou substituição de comando",
+                !new File(root, "injected").exists());
+
+        File copied = new File(root, "copied.bin");
+        write(copied, "placeholder");
+        try {
+            Files.setPosixFilePermissions(copied.toPath(), Set.of(
+                    PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+        } catch (Exception e) {
+            throw new AssertionError("não consegui proteger o arquivo temporário: " + e);
+        }
+        Object inodeBefore = unixAttribute(copied, "ino");
+        String copyCommand = DownloadFilePicker.copyToCacheCommand(hostile.getPath(),
+                copied.getPath(), download.getPath(), documents.getPath());
+        Result copy = sh(copyCommand, root);
+        check("cópia root do nome hostil sai com código 0", copy.code == 0);
+        check("cópia mantém o inode temporário criado pelo app",
+                inodeBefore.equals(unixAttribute(copied, "ino")));
+        check("cópia deixa o arquivo privado", (int) unixAttribute(copied, "mode") % 4096 == 384);
+        check("cópia mantém o conteúdo exato",
+                "conteudo-hostil".equals(new String(readBytes(copied), StandardCharsets.UTF_8)));
+        check("nome hostil não executou comando durante a cópia",
+                !new File(root, "injected").exists());
+        File symlinkCopy = new File(root, "symlink-copy.bin");
+        Result symlinkCopyResult = sh(DownloadFilePicker.copyToCacheCommand(symlink.getPath(),
+                symlinkCopy.getPath(), download.getPath(), documents.getPath()), root);
+        check("cópia revalida e recusa links simbólicos", symlinkCopyResult.code != 0);
+
+        File empty = new File(root, "Empty");
+        check("pasta vazia criada", empty.mkdirs());
+        Result emptyListing = sh(DownloadFilePicker.listCommand(empty.getPath(),
+                new File(root, "Absent").getPath()));
+        check("pasta vazia e pasta ausente não causam erro", emptyListing.code == 0
+                && DownloadFilePicker.parseListing(emptyListing.out, empty.getPath(),
+                new File(root, "Absent").getPath()).isEmpty());
+        Result missingListing = sh(DownloadFilePicker.listCommand(
+                new File(root, "MissingDownload").getPath(),
+                new File(root, "MissingDocuments").getPath()));
+        check("ambas as pastas ausentes retornam lista vazia", missingListing.code == 0
+                && DownloadFilePicker.parseListing(missingListing.out,
+                new File(root, "MissingDownload").getPath(),
+                new File(root, "MissingDocuments").getPath()).isEmpty());
+    }
+
+    private static byte[] readBytes(File file) {
+        try {
+            return Files.readAllBytes(file.toPath());
+        } catch (Exception e) {
+            throw new AssertionError("não consegui ler " + file + ": " + e);
+        }
+    }
+
+    private static Object unixAttribute(File file, String attribute) {
+        try {
+            return Files.getAttribute(file.toPath(), "unix:" + attribute);
+        } catch (Exception e) {
+            throw new AssertionError("não consegui ler atributo unix:" + attribute + ": " + e);
+        }
     }
 
     /** Como shWithPath, com uma env extra no ambiente do processo. */

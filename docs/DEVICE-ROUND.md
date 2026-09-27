@@ -159,7 +159,7 @@ arquivos de terceiros.
 No Manager, usar **+ Instalar mod**, escolher um `.so` de teste e confirmar a
 mensagem `Instalado:` (`manager/src/io/github/rianprei/bepinex/manager/core/LooseModInstaller.java:104`).
 Escolher um `.bmod` compatível; confirmar a tela de confirmação e a mensagem
-`Deseja instalar o mod` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:279-294`).
+`Este pacote foi feito para o jogo` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:363`).
 
 Para `.patch`, usar um pacote produzido por F4 e confirmar que o arquivo chega
 em `/data/local/tmp/mods/$PKG/`.

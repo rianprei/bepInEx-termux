@@ -10,6 +10,8 @@ public class TestRunner {
             DumpParserTest.run();
             EngineDetectorTest.run();
             ModContentDetectorTest.run();
+            SelectedFileRouterTest.run();
+            SelectedFileStagerTest.run();
             CrashGuardStateTest.run();
             BuildVersionTest.run();
             SuHelperTest.run();
