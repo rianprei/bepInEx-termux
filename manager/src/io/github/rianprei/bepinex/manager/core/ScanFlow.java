@@ -16,7 +16,12 @@ public final class ScanFlow {
      * fallback é exatamente o tipo de comando que só quebra quando alguém roda.
      */
     public static String dumpProbeCommand(String path) {
-        return "[ -f '" + path + "' ] && wc -l < '" + path + "' || echo 'missing'";
+        // Builder público: tem que sobreviver sozinho a path hostil. Aspas
+        // simples no path FECHARIAM a citação (injeção real, pega pelo
+        // RootInjectionTableTest com canário touch) — o escape '\'' torna o
+        // apóstrofo literal dentro da citação.
+        String safe = path.replace("'", "'\\''");
+        return "[ -f '" + safe + "' ] && wc -l < '" + safe + "' || echo 'missing'";
     }
 
     public interface AssetSource {

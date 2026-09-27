@@ -89,6 +89,16 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
             return;
         }
 
+        // Hardening: o pkg monta caminho de comando root (chmod/copyFile/dumpProbe)
+        // em TODO o fluxo da tela — passa pela validação central uma vez, aqui.
+        try {
+            SuHelper.requirePkg(mPkg);
+        } catch (IllegalArgumentException e) {
+            Toast.makeText(this, "Pacote inválido: " + mPkg, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
         mLocalDumpFile = new File(getCacheDir(), "dump_" + mPkg + ".tsv");
 
         mTvGame = findViewById(R.id.mm_tv_game);
@@ -221,6 +231,10 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
             if (exists) {
                 // Copia para o cache local do app
                 SuHelper.copyFile(remoteDumpPath, mLocalDumpFile.getAbsolutePath(), "666");
+                // O caminho do cache entra em comando root: passa pela validação
+                // central (e o chmod roda só com o destino validado).
+                SuHelper.requirePath(mLocalDumpFile.getAbsolutePath(), "dump local");
+                SuHelper.requirePath(remoteDumpPath, "dump remoto");
                 SuHelper.exec("chmod 666 '" + mLocalDumpFile.getAbsolutePath() + "' 2>/dev/null");
 
                 mMainHandler.post(() -> {
