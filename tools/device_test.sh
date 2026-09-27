@@ -1,6 +1,7 @@
 #!/bin/sh
 # T1 kit de validação no device. QUEM EXECUTA É O USUÁRIO (agente não usa adb):
 #   tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run] [--force]
+#       [--hold-after-pass=seconds]
 #   (flags sempre DEPOIS dos dois posicionais)
 #
 # Faz: recuperação de run interrompido (com o estado atual de mods na mão
@@ -28,18 +29,30 @@
 # inicial. O que volta é o estado de ARQUIVOS (mods e files/bepinex).
 set -eu
 
-PKG=${1:?uso: tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run]}
-TDIR=${2:?uso: tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run]}
+PKG=${1:?uso: tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run] [--hold-after-pass=seconds]}
+TDIR=${2:?uso: tools/device_test.sh <pkg> <dir-de-teste> [timeout_s] [--no-frida] [--dry-run] [--hold-after-pass=seconds]}
 shift 2
 TIMEOUT=120
 NO_FRIDA=0
 DRY=0
 FORCE=0
+HOLD_AFTER_PASS=0
 for a in "$@"; do
     case "$a" in
         --no-frida) NO_FRIDA=1;;
         --dry-run) DRY=1;;
         --force) FORCE=1;;
+        --hold-after-pass=*)
+            HOLD_AFTER_PASS=${a#*=}
+            case "$HOLD_AFTER_PASS" in
+                ''|*[!0-9]*) echo "FAIL: duração inválida: $a"; exit 1;;
+            esac
+            HOLD_AFTER_PASS=$(printf '%s' "$HOLD_AFTER_PASS" | sed 's/^0*//')
+            [ -n "$HOLD_AFTER_PASS" ] || HOLD_AFTER_PASS=0
+            if [ "$HOLD_AFTER_PASS" -lt 1 ] || [ "$HOLD_AFTER_PASS" -gt 600 ]; then
+                echo "FAIL: --hold-after-pass deve estar entre 1 e 600 segundos"; exit 1
+            fi
+            ;;
         ''|*[!0-9]*) echo "FAIL: arg inválido: $a"; exit 1;;
         *) TIMEOUT=$a;;
     esac
@@ -609,6 +622,9 @@ if [ "$DRY" = 1 ]; then
         case "$re" in ''|\#*) continue;; esac
         echo "DRY-WOULD-CHECK: $re"
     done < "$EXPECT"
+    if [ "$HOLD_AFTER_PASS" -gt 0 ]; then
+        echo "DRY: manteria o jogo aberto por ${HOLD_AFTER_PASS}s depois das expectativas para a ação manual"
+    fi
     [ "$SKIP_JS" = 0 ] && [ "$NEED_JS" = 1 ] && echo "DRY-WOULD-CHECK: frida_ok.txt + frida_count.txt"
     echo "DRY-RUN OK (nada executado, nada alterado)"
     rm -rf "$HOST_TMP"   # dry-run também limpa o temp do host
@@ -647,6 +663,24 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
     ELAPSED=$((ELAPSED + 3))
 done
 
+echo "--- expectativas ($EXPECT) ---"
+FAIL_N=0
+while IFS= read -r re || [ -n "$re" ]; do
+    case "$re" in ''|\#*) continue;; esac
+    if echo "$LOG" | grep -Eq "$re"; then
+        echo "PASS: $re"
+    else
+        echo "FAIL: $re"
+        FAIL_N=$((FAIL_N + 1))
+    fi
+done < "$EXPECT"
+
+if [ "$FAIL_N" -eq 0 ] && [ "$HOLD_AFTER_PASS" -gt 0 ]; then
+    echo "MANUAL: expectativas satisfeitas; faça agora a ação de jogo. Mantendo aberto por ${HOLD_AFTER_PASS}s."
+    sleep "$HOLD_AFTER_PASS"
+    LOG=$(dev "cat $OUT/log.txt 2>/dev/null" | tr -d '\r' || true)
+fi
+
 CRASH=0
 NEWPID=$(do_adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)
 if [ -z "$NEWPID" ]; then
@@ -665,18 +699,6 @@ if [ -n "$FATAL" ]; then
     echo "$FATAL" | head -5
     CRASH=1
 fi
-
-echo "--- expectativas ($EXPECT) ---"
-FAIL_N=0
-while IFS= read -r re || [ -n "$re" ]; do
-    case "$re" in ''|\#*) continue;; esac
-    if echo "$LOG" | grep -Eq "$re"; then
-        echo "PASS: $re"
-    else
-        echo "FAIL: $re"
-        FAIL_N=$((FAIL_N + 1))
-    fi
-done < "$EXPECT"
 
 if [ "$NEED_JS" = 1 ] && [ "$SKIP_JS" = 0 ]; then
     if dev "test -f $OUT/frida_ok.txt"; then

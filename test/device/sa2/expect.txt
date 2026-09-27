@@ -17,3 +17,4 @@
 \[u_patch\] t1_bad\.bpatch:1:.*classe NoSuchClass_xyz não encontrada
 \[u_patch\] t1_bad\.bpatch:2:.*linha inválida, ignorando
 \[u_patch\] t1_bad\.bpatch[|].*[|]get_IsFinished[|].*metodo curto demais
+\[u_frida\] gadget ativo
