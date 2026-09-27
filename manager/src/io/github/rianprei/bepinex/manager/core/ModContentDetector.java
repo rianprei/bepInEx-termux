@@ -1,8 +1,11 @@
 package io.github.rianprei.bepinex.manager.core;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 // Contrato C7 — o Manager aceita mod de QUALQUER origem: o tipo vem do
@@ -20,13 +23,23 @@ import java.util.Set;
 //   - texto JS   -> vira <id>.js, lido pelo frida-gadget em modo script (F11)
 //   - .dll       -> NAO roda agora: .NET IL2CPP e F12, .NET Mono e F13, e
 //                   .dll Mono em jogo IL2CPP nao roda de jeito nenhum
+//   - APK/OBB/XAPK, asset UnityFS, .pak de Unreal, save do jogador ->
+//                   NUNCA modifica: e arquivo do jogo, nao mod
 //
-// Nenhum caminho escreve no APK/OBB/arquivos do jogo: tudo em runtime.
+// O CONTEUDO manda sobre a extensao (o corpus de test/fixtures/modtypes
+// prova os dois lados): ELF com nome .png instala, zip com nome .so e
+// recusado como zip, .apk so e container do jogo se o nome diz isso — um
+// .zip com classes.dex dentro cai no aviso comum de zip, e um .apk sem
+// nada de Android la dentro seria so um zip. Nenhum caminho escreve no
+// APK/OBB/arquivos do jogo: tudo em runtime.
 public final class ModContentDetector {
 
     public enum Kind {
-        BMOD,             // zip com manifest.json (C2)
-        ZIP_PLAIN,        // zip sem manifest.json
+        BMOD,             // zip com manifest.json do formato C2 (pelo CONTEUDO)
+        ZIP_PLAIN,        // zip sem manifest.json de pacote .bmod
+        ZIP_GAME_CONTAINER, // APK/OBB/XAPK: pacote do jogo, nunca mod
+        BEPINEX_PC,       // zip de mod de PC com layout BepInEx: dll do PC;
+                          // traducao para .patch e o futuro (dll2patch)
         ELF_ARM64,        // ELF E_AARCH64 (183): mod nativo Android arm64
         ELF_MALFORMED,    // ELF arm64 com cabecalho/PT_LOAD incoerente
         ELF_OTHER_ARCH,   // ELF de outra arquitetura
@@ -39,6 +52,8 @@ public final class ModContentDetector {
         PE_NATIVE,        // .exe/.dll nativo do Windows (sem runtime .NET)
         MACHO,            // .dylib de iOS/macOS
         CHEAT_ENGINE,     // tabela do Cheat Engine
+        GAME_DATA,        // UnityFS / .pak de Unreal: dado do jogo, nao mod
+        SAVE_GAME,        // save do jogador (progresso em JSON)
         BINARY_UNKNOWN,   // binario que nao e nada disso
         TEXT_OTHER        // texto que nao e .patch nem script
     }
@@ -63,7 +78,7 @@ public final class ModContentDetector {
         }
     }
 
-    // Tudo que a detecco precisa saber sobre o arquivo. Quem le o arquivo
+    // Tudo que a deteccao precisa saber sobre o arquivo. Quem le o arquivo
     // preenche (LooseModInstaller); a deteccao aqui e PURA e testavel no host.
     public static final class Sample {
         public final String fileName;
@@ -72,20 +87,31 @@ public final class ModContentDetector {
         public final boolean zipHasManifest;
         public final boolean fridaMarker;  // assinatura do gadget no conteudo
         public final long length;          // tamanho REAL do arquivo em bytes
+        public final byte[] zipManifestBytes; // conteudo de manifest.json, se zip
+        public final List<String> zipEntryNames; // nomes das entradas, se zip
 
         public Sample(String fileName, byte[] head, String text,
                       boolean zipHasManifest, boolean fridaMarker) {
-            this(fileName, head, text, zipHasManifest, fridaMarker, (head != null) ? head.length : 0L);
+            this(fileName, head, text, zipHasManifest, fridaMarker,
+                    (head != null) ? head.length : 0L);
         }
 
         public Sample(String fileName, byte[] head, String text,
                       boolean zipHasManifest, boolean fridaMarker, long length) {
+            this(fileName, head, text, zipHasManifest, fridaMarker, length, null, null);
+        }
+
+        public Sample(String fileName, byte[] head, String text,
+                      boolean zipHasManifest, boolean fridaMarker, long length,
+                      byte[] zipManifestBytes, List<String> zipEntryNames) {
             this.fileName = (fileName != null) ? fileName : "";
             this.head = (head != null) ? head : new byte[0];
             this.text = text;
             this.zipHasManifest = zipHasManifest;
             this.fridaMarker = fridaMarker;
             this.length = length;
+            this.zipManifestBytes = zipManifestBytes;
+            this.zipEntryNames = (zipEntryNames != null) ? zipEntryNames : java.util.Collections.emptyList();
         }
     }
 
@@ -116,29 +142,61 @@ public final class ModContentDetector {
     public static Detection detect(Sample s, boolean engineIl2cpp) {
         byte[] h = s.head;
 
+        // Arquivo vazio (0 byte): nenhuma magica de extensao pode inventar
+        // um tipo para ele. E o download que falhou inteiro.
+        if (s.length <= 0) {
+            return new Detection(Kind.BINARY_UNKNOWN, "arquivo vazio", false,
+                    "Este arquivo está vazio (0 byte). Não é mod de tipo nenhum: foi um "
+                            + "download que falhou ou uma cópia que não copiou nada. Baixe o "
+                            + "mod de novo e confira que o arquivo tem conteúdo.", null, null);
+        }
+
         if (isZip(h)) {
-            if (s.zipHasManifest) {
-                return new Detection(Kind.BMOD, "pacote .bmod", true,
-                        "Pacote .bmod (zip com manifest.json): instalar pelo fluxo C2.",
+            // manifest.json pelo CONTEUDO (formato 1 + id C2), nao pela
+            // existencia: o .xapk tambem traz um manifest.json, mas e o do
+            // instalador de APK (xapk_version), nao o de pacote .bmod. Sem
+            // essa leitura, um APK renomeado .bmod seria "instalado" e o
+            // erro so apareceria quebrado, depois, dentro do fluxo C2.
+            if (isBmodManifest(s.zipManifestBytes)) {
+                return new Detection(Kind.BMOD, "pacote de mod (.bmod)", true,
+                        "Pacote de mod (.bmod), no formato do projeto: pode instalar.",
                         null, null);
             }
+            // Layout de mod de PC (pasta BepInEx com plugins .dll): dizemos a
+            // verdade — o .dll e do computador e não roda no celular; a
+            // conversao de mods simples e o que vem por cima disso.
+            if (isBepInExLayout(s)) {
+                return new Detection(Kind.BEPINEX_PC, "mod da versão de PC (BepInEx)", false,
+                        "Isto é um mod da versão de PC do jogo, embalado para o BepInEx do "
+                                + "computador (a pasta BepInEx com plugins está aí dentro). O .dll "
+                                + "dele é feito para o jogo rodando no computador e não funciona "
+                                + "no celular. Em breve vai dar para converter mods simples para o "
+                                + "formato que o celular roda (.patch); por enquanto, procure a "
+                                + "versão para Android deste mod.", null, null);
+            }
+            if (looksLikeGameContainer(s)) {
+                String what = gameContainerName(s);
+                return new Detection(Kind.ZIP_GAME_CONTAINER, what, false,
+                        "Isto é o " + what + " do próprio jogo, não um mod. O Manager nunca "
+                                + "modifica arquivo do jogo: nem pacote do aplicativo, nem expansão. "
+                                + "Para instalar mod, escolha o arquivo de mod em si (.so, .patch "
+                                + "ou .js).", null, null);
+            }
             return new Detection(Kind.ZIP_PLAIN, "arquivo compactado (.zip)", false,
-                    "Isto e um .zip comum, sem manifest.json dentro. O Manager so instala "
-                            + "pacote .bmod (o zip que tem manifest.json) ou arquivo solto "
-                            + "com codigo de mod. Descompacte e instale o arquivo de dentro.", null, null);
+                    "Isto é um arquivo compactado (.zip) comum, sem pacote de mod dentro. O "
+                            + "Manager só instala pacote de mod (.bmod) ou arquivo de mod avulso. "
+                            + "Descompacte no gerenciador de arquivos e volte aqui com o arquivo "
+                            + "de dentro.", null, null);
         }
 
         if (isElf(h)) {
             if (isFridaGadgetName(s.fileName) || s.fridaMarker) {
-                return new Detection(Kind.FRIDA_GADGET, "frida-gadget (runtime do Frida)", false,
-                        "Isto e o frida-gadget, e NAO e um mod. Ele nao pode virar <id>.so: o "
-                                + "loader abre qualquer .so da pasta direto, sem o frida-gadget.config, "
-                                + "e o gadget sem config cai no modo padrao (listen), que abre uma "
-                                + "porta e segura o jogo esperando um PC conectar. O jeito certo e "
-                                + "instalar o binario como frida-gadget.bin (SEM .so) e escrever o "
-                                + "frida-gadget.config com interaction script-directory apontando "
-                                + "para esta mesma pasta. Assim o .js da pasta roda sem porta e sem PC.",
-                        null, null);
+                return new Detection(Kind.FRIDA_GADGET, "ferramenta Frida, não mod", false,
+                        "Isto é o programa do Frida (a ferramenta que roda os scripts), não um "
+                                + "mod. Se ele entrar como mod, o jogo abre e fica travado esperando "
+                                + "um computador conectar. O Manager sabe cuidar dele: toque em "
+                                + "instalar e ele vai para o lugar certo, junto com a configuração "
+                                + "que faz os scripts .js da pasta rodarem sozinhos.", null, null);
             }
             int machine = elfMachine(h);
             if (machine == 183) { // E_AARCH64: o unico que o loader da dlopen no Android
@@ -149,85 +207,117 @@ public final class ModContentDetector {
                 // motivo, em vez de o jogo fechar ao tentar abrir.
                 ElfCheck elf = validateElf64Arm64(h, s.length);
                 if (!elf.ok) {
-                    return new Detection(Kind.ELF_MALFORMED, "ELF arm64 invalido", false,
-                            "O arquivo e arm64, mas esta corrompido ou adulterado: " + elf.reason
-                                    + ". O Manager nao instala .so pela metade — o jogo tentaria abrir "
-                                    + "isso e fecharia junto. Baixe o mod de novo.", null, null);
+                    return new Detection(Kind.ELF_MALFORMED, "mod para Android estragado", false,
+                            "O arquivo é um mod para Android, mas está estragado: " + elf.reason
+                                    + ". Instalar mod pela metade fecha o jogo. Baixe o mod de novo "
+                                    + "e tente outra vez.", null, null);
                 }
-                return installAs(s, ".so", Kind.ELF_ARM64, "mod nativo .so (arm64)");
+                return installAs(s, ".so", Kind.ELF_ARM64, "mod nativo para Android");
             }
-            return new Detection(Kind.ELF_OTHER_ARCH, "binario ELF de outra arquitetura", false,
-                    "E um binario ELF, mas nao arm64 (" + archName(machine) + "). Celular Android "
-                            + "de 64 bits roda mod compilado para arm64-v8a; este arquivo nao serve "
-                            + "aqui.", null, null);
+            return new Detection(Kind.ELF_OTHER_ARCH, "mod para outro aparelho", false,
+                    "É um mod de verdade, mas feito para outro tipo de aparelho (" + archName(machine)
+                            + "). O seu celular só roda a versão para ARM de 64 bits; procure o "
+                            + "download para ARM 64 deste mod.", null, null);
         }
 
         if (h.length >= 2 && h[0] == 'M' && h[1] == 'Z') {
-            String t = (s.text != null) ? s.text : "";
+            // PE de verdade e binario (zeros no proprio header DOS), entao o
+            // "texto" do Sample vem vazio. As marcas de .NET (mscorlib,
+            // mscoree, Il2CppInterop) moram em strings ASCII dentro do
+            // binario: lemos como o strings do Unix le, senao todo .dll .NET
+            // seria "binario de Windows" — a mentira classica.
+            String t = (s.text != null && !s.text.isEmpty()) ? s.text : asciiStrings(h);
             if (t.contains("mscorlib") || t.contains("_CorDllMain") || t.contains("mscoree")) {
                 boolean il2cpp = t.contains("Il2CppInterop") || t.contains("UnhollowerBaseLib")
                         || t.contains("Il2CppDomain") || t.contains("BepInEx.Unity.IL2CPP");
                 if (il2cpp) {
-                    return new Detection(Kind.DOTNET_IL2CPP, "assembly .NET para IL2CPP", false,
-                            "Este .dll e um mod .NET de IL2CPP (BepInEx 6 / MelonLoader IL2CPP). "
-                                    + "Ele precisa do runtime .NET dentro do processo do jogo, que o "
-                                    + "bepInEx-termux ainda nao tem (F12, nao implementado). O "
-                                    + "Manager instala, mas o mod nao roda: use o Mod Maker (regras "
-                                    + ".patch) ou espere a F12.", null, null);
+                    return new Detection(Kind.DOTNET_IL2CPP, "mod .dll (versão nova do jogo)", false,
+                            "Este .dll é um mod feito para a versão do jogo compilada com IL2CPP "
+                                    + "(tipo novo de build). O celular ainda não roda esse formato: não "
+                                    + "há como instalar agora. Em breve a conversão de mods simples para "
+                                    + "regras .patch vai cuidar dos casos fáceis; por enquanto, use o "
+                                    + "mod maker ou procure outra versão do mod.", null, null);
                 }
                 if (engineIl2cpp) {
-                    return new Detection(Kind.DOTNET_MONO, "assembly .NET de PC (Mono)", false,
-                            "Este .dll e mod de PC (BepInEx 5 / MelonLoader Mono, o formato dos "
-                                    + "mods de PC) e o jogo deste celular e IL2CPP. NAO RODA: jogo "
-                                    + "IL2CPP nao tem runtime Mono, entao o .dll nem carrega. Para "
-                                    + "mudar esse jogo Use o Mod Maker (regras .patch) ou procure a "
-                                    + "versao IL2CPP do mod (F12).", null, null);
+                    return new Detection(Kind.DOTNET_MONO, "mod .dll da versão de PC", false,
+                            "Este .dll é um mod da versão de PC do jogo (feita com Mono). O jogo do "
+                                    + "seu celular não foi feito nesse formato: o arquivo não roda "
+                                    + "aqui, de jeito nenhum. Em breve a conversão de mods simples para "
+                                    + "regras .patch vai cuidar dos casos fáceis; por enquanto, use o "
+                                    + "mod maker ou procure a versão para Android do mod.", null, null);
                 }
-                return new Detection(Kind.DOTNET_MONO, "assembly .NET (Mono)", false,
-                        "Este .dll e mod .NET de Mono (BepInEx 5 / MelonLoader Mono). Para rodar "
-                                + "precisa do runtime Mono carregado no processo do jogo (F13, nao "
-                                + "implementado). Em jogo Unity Mono o caminho existe; em IL2CPP nao.",
-                        null, null);
+                return new Detection(Kind.DOTNET_MONO, "mod .dll da versão de PC", false,
+                        "Este .dll é um mod da versão de PC do jogo (feita com Mono). Não roda em "
+                                + "nenhum jogo aqui hoje: o celular ainda não tem esse suporte. Em "
+                                + "breve a conversão de mods simples para regras .patch vai cuidar dos "
+                                + "casos fáceis; por enquanto, use o mod maker.", null, null);
             }
-            return new Detection(Kind.PE_NATIVE, "executavel/binario de Windows", false,
-                    "Isto e um binario de Windows (PE), nao Android. Nao roda no celular de "
-                            + "nenhum jeito, mesmo com root.", null, null);
+            return new Detection(Kind.PE_NATIVE, "programa de Windows", false,
+                    "Isto é um programa de Windows, não um mod para Android. Não roda no celular "
+                            + "de jeito nenhum, nem com root.", null, null);
         }
 
         if (isMachO(h)) {
-            return new Detection(Kind.MACHO, "binario de iOS/macOS (Mach-O)", false,
-                    "Isto e um binario Mach-O (iOS/macOS). Nao roda em Android.", null, null);
+            return new Detection(Kind.MACHO, "mod de iPhone/Mac", false,
+                    "Isto é um mod para iPhone ou Mac, não para Android. Não roda no seu "
+                            + "celular; procure a versão para Android deste mod.", null, null);
+        }
+
+        // Asset de engine: magic no comeco manda; a extensao e pista apenas
+        // quando o conteudo nao diz nada (todo .pak de Unreal comeca com um
+        // numero de versao cru, que e igual a lixo qualquer).
+        if (startsWith(h, UNITYFS_MAGIC)) {
+            return new Detection(Kind.GAME_DATA, "dado do jogo (Unity)", false,
+                    "Isto é um arquivo de dados do próprio jogo (uma cena, imagem ou som "
+                            + "empacotado pelo Unity — formato UnityFS). Não é mod: é uma peça do "
+                            + "jogo. O Manager nunca modifica arquivo do jogo.", null, null);
+        }
+        if (isUnrealPak(s)) {
+            return new Detection(Kind.GAME_DATA, "dado do jogo (Unreal)", false,
+                    "Isto é um arquivo de dados do próprio jogo (formato .pak, do Unreal "
+                            + "Engine): imagens, mapas e sons que já vieram com o jogo. Não é mod; "
+                            + "o Manager nunca modifica arquivo do jogo.", null, null);
         }
 
         if (s.text != null) {
             String t = s.text;
             if (t.contains("Auto Assembler") || t.contains("<CheatEngine") || t.contains("Cheat Engine")) {
                 return new Detection(Kind.CHEAT_ENGINE, "tabela do Cheat Engine", false,
-                        "Isto e uma tabela do Cheat Engine (formato de PC). Para usar no celular "
-                                + "precisa de GameGuardian ou do engine emulado; o Manager nao "
-                                + "instala esse formato.", null, null);
+                        "Isto é uma tabela do Cheat Engine, ferramenta de computador. Não é um "
+                                + "formato que o celular aproveite aqui; procure um mod para Android "
+                                + "do jogo.", null, null);
             }
             if (!PatchGenerator.parse(t).isEmpty()) {
-                return installAs(s, ".patch", Kind.PATCH, "regras declarativas (.patch)");
+                return installAs(s, ".patch", Kind.PATCH, "regras de mod (.patch)");
             }
             if (hasJsMarker(t)) {
                 return installAs(s, ".js", Kind.FRIDA_JS, "script Frida (.js)");
             }
             if (t.contains("gg.") && t.contains("function") ) {
-                return new Detection(Kind.LUA_GG, "script GameGuardian (lua)", false,
-                        "Isto e script do GameGuardian (gg.). O caminho de script GameGuardian e "
-                                + "F10 e ainda nao esta implementado. Para Frida, use script .js "
-                                + "(com frida-gadget na pasta).", null, null);
+                return new Detection(Kind.LUA_GG, "script do GameGuardian", false,
+                        "Isto é um script do GameGuardian, que roda em outro aplicativo, não "
+                                + "aqui. O Manager ainda não instala esse tipo de script; os scripts "
+                                + "que rodam aqui são os .js do Frida.", null, null);
             }
-            return new Detection(Kind.TEXT_OTHER, "texto", false,
-                    "Isto e um arquivo de texto, mas nao tem regra C4 (.patch) nem script Frida "
-                            + "(.js) reconhecivel. O Manager so instala .so arm64, .patch e .js.",
-                    null, null);
+            // Save do jogador: JSON sem nenhuma regra C4 nem script, mas com
+            // cara de progresso. A extensao aqui e so o empate final, e a
+            // recusa diz a verdade: save nao e mod.
+            if (looksLikeSaveJson(t, s.fileName)) {
+                return new Detection(Kind.SAVE_GAME, "save do jogo", false,
+                        "Isto é o save do jogo (o progresso do jogador), não um mod. O save "
+                                + "guarda onde você parou; não adiciona nada ao jogo. O Manager só "
+                                + "instala mod, então não há o que fazer com ele aqui.", null, null);
+            }
+            return new Detection(Kind.TEXT_OTHER, "arquivo de texto", false,
+                    "Isto é um arquivo de texto, mas não é um mod: não tem regras de .patch nem "
+                            + "é um script .js. O Manager instala mod em arquivo .so (para Android), "
+                            + ".patch e .js.", null, null);
         }
 
-        return new Detection(Kind.BINARY_UNKNOWN, "binario desconhecido", false,
-                "Nao da para dizer o que e este arquivo: nao e .bmod, nem .so arm64, nem .dll, nem "
-                        + "texto de .patch/.js.", null, null);
+        return new Detection(Kind.BINARY_UNKNOWN, "arquivo desconhecido", false,
+                "Não dá para dizer o que é este arquivo: não é pacote de mod (.bmod), nem mod "
+                        + "para Android (.so), nem mod de computador (.dll), nem texto de mod "
+                        + "(.patch ou .js).", null, null);
     }
 
     // Monta a Detection de um tipo que instala como <id><ext>. Nome invalido
@@ -236,20 +326,20 @@ public final class ModContentDetector {
         String id = baseId(s.fileName);
         if (id == null) {
             return new Detection(kind, label, false,
-                    "O nome do arquivo nao serve como id de mod: use so letras, numeros, ponto, "
-                            + "hifen e underscore, ate 48 caracteres (ex: meu_mod.so).", null, null);
+                    "O nome do arquivo não serve como nome de mod: use só letras, números, "
+                            + "ponto, hífen e underscore, até 48 caracteres (exemplo: meu_mod.so).",
+                    null, null);
         }
         if (RESERVED_IDS.contains(id.toLowerCase(Locale.ROOT))) {
             if ("frida-gadget".equals(id.toLowerCase(Locale.ROOT))) {
                 return new Detection(Kind.FRIDA_GADGET, label, false,
-                        "Isto e o frida-gadget. Ele nao pode ser instalado como mod: o loader abre "
-                                + "qualquer .so da pasta direto, sem o frida-gadget.config, e o gadget "
-                                + "sem config cai no modo padrao (listen), que abre uma porta e segura "
-                                + "o jogo esperando um PC conectar.", null, null);
+                        "Isto é o programa do Frida, não um mod. Se entrar como mod, o jogo abre "
+                                + "e fica travado esperando um computador conectar. Instale-o pelo "
+                                + "Manager, que coloca cada coisa no seu lugar.", null, null);
             }
             return new Detection(kind, label, false,
-                    "'" + id + "' e nome de componente interno do bepInEx (u_patch/u_dump/u_frida). "
-                            + "Renomeie o arquivo para nao sobrescrever o motor do sistema.", null, null);
+                    "'" + id + "' é o nome de uma peça interna do próprio Manager. Renomeie o "
+                            + "arquivo para não sobrescrever uma peça do sistema.", null, null);
         }
         return new Detection(kind, label, true, "", ext, id);
     }
@@ -279,6 +369,122 @@ public final class ModContentDetector {
         return id;
     }
 
+    // Extrai as sequencias de ASCII imprimivel (>= 4 chars) de um binario,
+    // separadas por \n — a mesma ideia do strings(1). E o que permite ler
+    // marcas de .NET/PE dentro de um arquivo binario de verdade.
+    public static String asciiStrings(byte[] h) {
+        if (h == null) return "";
+        StringBuilder sb = new StringBuilder();
+        int run = 0;
+        for (byte b : h) {
+            if (b >= 0x20 && b < 0x7F) {
+                sb.append((char) b);
+                run++;
+            } else {
+                if (run >= 4) sb.append('\n');
+                run = 0;
+            }
+        }
+        if (run >= 4) sb.append('\n');
+        return sb.toString();
+    }
+
+    // --- pistas de container/asset/save (o CONTEUDO manda; extensao e pista)
+
+    public static final byte[] UNITYFS_MAGIC = {'U', 'n', 'i', 't', 'y', 'F', 'S', 0};
+
+    private static boolean startsWith(byte[] h, byte[] magic) {
+        if (h.length < magic.length) return false;
+        for (int i = 0; i < magic.length; i++) {
+            if (h[i] != magic[i]) return false;
+        }
+        return true;
+    }
+
+    // manifest.json de pacote .bmod (C2): formato 1 e id no padrao do
+    // contrato. O parser completo roda no instalador; aqui so o suficiente
+    // para nao confundir .bmod com manifest de .xapk (xapk_version) ou de
+    // save (campos de progresso).
+    public static boolean isBmodManifest(byte[] raw) {
+        if (raw == null || raw.length == 0 || raw.length > 64 * 1024) return false;
+        Map<String, Object> json;
+        try {
+            json = MiniJson.parseObject(new String(raw, StandardCharsets.UTF_8));
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (!(json.get("format") instanceof Number) || ((Number) json.get("format")).intValue() != 1) {
+            return false;
+        }
+        Object id = json.get("id");
+        if (!(id instanceof String)) return false;
+        return ((String) id).matches("[a-z0-9-]{3,48}");
+    }
+
+    private static final String[] GAME_CONTAINER_EXTS = {".apk", ".obb", ".xapk", ".apks"};
+
+    // APK/OBB/XAPK: so e container do jogo se o NOME diz isso. O conteudo
+    // de um zip nao prova nada (um mod de PC zipado tambem e zip); o nome
+    // .apk/.obb e a pista do que o pacote e. Um .zip com classes.dex dentro
+    // e rarissimo fora de APK — mas se acontecer, cai no aviso comum de zip,
+    // que manda descompactar: mensagem honesta nos dois casos.
+    private static boolean looksLikeGameContainer(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        for (String ext : GAME_CONTAINER_EXTS) {
+            if (lower.endsWith(ext)) return true;
+        }
+        for (String name : s.zipEntryNames) {
+            if (name.endsWith(".apk")) return true;
+        }
+        return false;
+    }
+
+    private static String gameContainerName(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".obb")) return "arquivo de expansão (OBB)";
+        if (lower.endsWith(".xapk")) return "pacote XAPK";
+        if (lower.endsWith(".apks")) return "pacote de aplicativo dividido";
+        return "pacote do aplicativo (APK)";
+    }
+
+    // Layout de mod de PC: zip com a pasta BepInEx (plugins/patchers) dentro,
+    // ou qualquer .dll dentro de uma pasta plugins. E CONTEUDO, nao extensao:
+    // o zip podia estar com qualquer nome.
+    private static boolean isBepInExLayout(Sample s) {
+        for (String name : s.zipEntryNames) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("bepinex/")) return true;
+            if (lower.contains("plugins/") && lower.endsWith(".dll")) return true;
+        }
+        return false;
+    }
+
+    // .pak de Unreal: o magic e so um numero de versao cru (igual a lixo
+    // qualquer); sem a extensao, nao ha como dizer. Conteudo + extensao
+    // juntos e que dao a certeza honesta.
+    private static boolean isUnrealPak(Sample s) {
+        String lower = s.fileName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".pak")) return false;
+        return s.head.length >= 8 && s.text == null;   // binario nao-texto
+    }
+
+    // Save do jogador: JSON (o comeco tem cara de objeto/array) sem nenhuma
+    // regra C4 nem script, com nome de save (ou campos tipicos de progresso).
+    private static boolean looksLikeSaveJson(String text, String fileName) {
+        String t = text.trim();
+        if (t.isEmpty()) return false;
+        char c = t.charAt(0);
+        if (c != '{' && c != '[') return false;
+        String lower = (fileName != null) ? fileName.toLowerCase(Locale.ROOT) : "";
+        if (lower.endsWith(".json")) return true;
+        String[] saveFields = {"\"save\"", "\"player\"", "\"inventory\"", "\"gold\"",
+                "\"xp\"", "\"level\"", "\"save_version\"", "\"progress\""};
+        for (String f : saveFields) {
+            if (t.contains(f)) return true;
+        }
+        return false;
+    }
+
     // --- validacao de ELF64 (so o que o loader vai mesmo abrir) -------------
 
     public static final class ElfCheck {
@@ -302,52 +508,52 @@ public final class ModContentDetector {
     // A partir dai, ok/reason dizem se da para tratar como .so arm64.
     public static ElfCheck validateElf64Arm64(byte[] h, long fileLength) {
         if (h.length < 24) {
-            return new ElfCheck(false, "cabecalho cortado (" + h.length + " bytes lidos, ELF64 precisa de 64)");
+            return new ElfCheck(false, "cabeçalho cortado (" + h.length + " bytes lidos, eram precisos 64)");
         }
         if ((h[EI_CLASS] & 0xFF) != ELFCLASS64) {
-            return new ElfCheck(false, "nao e ELF64 (classe " + (h[EI_CLASS] & 0xFF) + ")");
+            return new ElfCheck(false, "não é o formato de 64 bits esperado");
         }
         if ((h[EI_DATA] & 0xFF) != ELFDATA2LSB) {
-            return new ElfCheck(false, "nao e little-endian (EI_DATA " + (h[EI_DATA] & 0xFF) + ")");
+            return new ElfCheck(false, "não está na ordem de bytes esperada");
         }
 
         int eType = u16(h, 16);
         if (eType == ET_EXEC) {
-            return new ElfCheck(false, "e_type e ET_EXEC (executavel); mod tem que ser ET_DYN (biblioteca)");
+            return new ElfCheck(false, "é um programa fechado nele mesmo, não uma biblioteca (ET_EXEC em vez de ET_DYN)");
         }
         if (eType != ET_DYN) {
-            return new ElfCheck(false, "e_type " + eType + " diferente de ET_DYN (3)");
+            return new ElfCheck(false, "tipo de arquivo fora do esperado (" + eType + ")");
         }
         if (elfMachine(h) != EM_AARCH64) {
-            return new ElfCheck(false, "e_machine " + elfMachine(h) + " nao e arm64 (183)");
+            return new ElfCheck(false, "foi feito para outro tipo de aparelho (código " + elfMachine(h) + ")");
         }
         if (fileLength < EH_SIZE_64) {
-            return new ElfCheck(false, "arquivo de " + fileLength + " bytes nao cabe um ELF64");
+            return new ElfCheck(false, "o arquivo tem " + fileLength + " bytes, pequeno demais");
         }
 
         int eEhsize = u16(h, 52);
         if (eEhsize != EH_SIZE_64) {
-            return new ElfCheck(false, "e_ehsize " + eEhsize + " (esperado 64)");
+            return new ElfCheck(false, "cabeçalho com tamanho fora do padrão (" + eEhsize + ")");
         }
         int ePhentsize = u16(h, 54);
         if (ePhentsize != PH_ENT_SIZE_64) {
-            return new ElfCheck(false, "e_phentsize " + ePhentsize + " (esperado 56)");
+            return new ElfCheck(false, "tabela interna com tamanho fora do padrão (" + ePhentsize + ")");
         }
         int ePhnum = u16(h, 56);
         if (ePhnum == 0) {
-            return new ElfCheck(false, "e_phnum 0: sem programa carregavel, nao e .so utilizavel");
+            return new ElfCheck(false, "sem nenhuma parte carregável por dentro");
         }
         if (ePhnum > PH_NUM_MAX) {
-            return new ElfCheck(false, "e_phnum " + ePhnum + " absurdo (teto " + PH_NUM_MAX + ")");
+            return new ElfCheck(false, "tabela interna com " + ePhnum + " partes, um absurdo");
         }
         long ePhoff = u64(h, 32);
         if (ePhoff < EH_SIZE_64 || ePhoff + (long) ePhnum * ePhentsize > fileLength) {
-            return new ElfCheck(false, "tabela de programas fora do arquivo (e_phoff " + ePhoff
-                    + ", e_phnum " + ePhnum + ", arquivo " + fileLength + " bytes)");
+            return new ElfCheck(false, "a tabela interna fica fora do arquivo (posição " + ePhoff
+                    + ", " + ePhnum + " partes, arquivo de " + fileLength + " bytes)");
         }
         if (ePhoff + (long) ePhnum * ePhentsize > h.length) {
-            return new ElfCheck(false, "tabela de programas cortada: o arquivo tem " + h.length
-                    + " bytes lidos e a tabela precisa de " + (ePhoff + (long) ePhnum * ePhentsize));
+            return new ElfCheck(false, "tabela interna cortada: o arquivo tem " + h.length
+                    + " bytes lidos e a tabela precisaria de " + (ePhoff + (long) ePhnum * ePhentsize));
         }
 
         boolean sawLoad = false;
@@ -359,12 +565,12 @@ public final class ModContentDetector {
             if (pType != PT_LOAD) continue;
             sawLoad = true;
             if (pFilesz == 0 || pOffset < 0 || pOffset > fileLength || pFilesz > fileLength - pOffset) {
-                return new ElfCheck(false, "PT_LOAD nao cabe no arquivo (offset " + pOffset
-                        + " + " + pFilesz + " bytes, arquivo " + fileLength + ")");
+                return new ElfCheck(false, "uma parte do código fica fora do arquivo (posição "
+                        + pOffset + ", " + pFilesz + " bytes, arquivo de " + fileLength + ")");
             }
         }
         if (!sawLoad) {
-            return new ElfCheck(false, "nenhum PT_LOAD: a biblioteca nao tem codigo para o linker mapear");
+            return new ElfCheck(false, "não tem nenhuma parte de código para o sistema carregar");
         }
         return new ElfCheck(true, null);
     }
@@ -447,15 +653,18 @@ public final class ModContentDetector {
                 || (b0 == 0xCA && b1 == 0xFE && b2 == 0xBA && b3 == 0xBE);
     }
 
+    // Nome do processador para o qual o arquivo foi feito. Texto que vai
+    // aparecer para o usuario: sem codigo de maquina, so o nome que ele
+    // reconhece da pagina de download do mod.
     private static String archName(int machine) {
         switch (machine) {
-            case 3: return "x86 (32 bits)";
-            case 40: return "ARM (32 bits, armeabi-v7a)";
-            case 62: return "x86-64";
-            case 183: return "arm64";
+            case 3: return "computador de 32 bits";
+            case 40: return "celular ARM de 32 bits";
+            case 62: return "computador de 64 bits (x86-64)";
+            case 183: return "ARM de 64 bits";
             case 243: return "RISC-V";
             case 258: return "LoongArch";
-            default: return "e_machine " + machine;
+            default: return "um tipo de aparelho não listado (código " + machine + ")";
         }
     }
 }

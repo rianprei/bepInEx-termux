@@ -41,7 +41,8 @@ java -cp "${BUILD_DIR}" io.github.rianprei.bepinex.manager.test.TestRunner
 if git -C "${SCRIPT_DIR}/.." rev-parse --git-dir >/dev/null 2>&1; then
     echo "[*] Conferindo que nenhum binario/segredo esta versionado..."
     TRACKED="$(git -C "${SCRIPT_DIR}/.." ls-files \
-        | grep -iE '\.(apk|idsig|jks|keystore|p12|pfx|der)$' || true)"
+        | grep -iE '\.(apk|idsig|jks|keystore|p12|pfx|der)$' \
+        | grep -v '^test/fixtures/' || true)"
     if [ -n "${TRACKED}" ]; then
         echo "ERRO: arquivo de APK/keystore versionado no git:" >&2
         echo "${TRACKED}" >&2

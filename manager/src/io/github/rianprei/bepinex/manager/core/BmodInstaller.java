@@ -42,7 +42,7 @@ public final class BmodInstaller {
 
         LimitExceededException(String what, long limit, long real) {
             super(what + " passa do limite de " + human(limit) + " (o .bmod declara "
-                    + "tamanho menor do que entrega: " + human(real) + " lidos). Instalacao abortada, "
+                    + "tamanho menor do que entrega: " + human(real) + " lidos). Instalação abortada, "
                     + "nada foi instalado.");
             this.what = what;
             this.limit = limit;
@@ -74,14 +74,15 @@ public final class BmodInstaller {
     // Inspeciona um arquivo .bmod e le seu manifest.json (com teto de 64KB)
     public static ModManifest inspect(File bmodFile) throws IOException {
         if (bmodFile == null || !bmodFile.exists()) {
-            throw new IOException("Arquivo .bmod nao encontrado");
+            throw new IOException("Arquivo .bmod não encontrado");
         }
 
         try (ZipFile zip = new ZipFile(bmodFile)) {
             requireEntryCount(zip);
+            requireSafeEntryNames(zip);
             ZipEntry manifestEntry = zip.getEntry("manifest.json");
             if (manifestEntry == null) {
-                throw new IOException("Arquivo .bmod invalido: manifest.json ausente");
+                throw new IOException("Arquivo .bmod inválido: manifest.json ausente");
             }
 
             try (InputStream is = zip.getInputStream(manifestEntry)) {
@@ -96,17 +97,18 @@ public final class BmodInstaller {
     // Se estourar qualquer limite, apaga o parcial e lanca.
     public static File extractBmod(File bmodFile, ModManifest manifest, File tmpDir) throws IOException {
         if (!tmpDir.exists() && !tmpDir.mkdirs()) {
-            throw new IOException("Nao deu para criar " + tmpDir);
+            throw new IOException("Não deu para criar " + tmpDir);
         }
 
         try (ZipFile zip = new ZipFile(bmodFile)) {
             requireEntryCount(zip);
+            requireSafeEntryNames(zip);
 
             // 1. manifest.json -> <id>.json
             File jsonFile = new File(tmpDir, manifest.id + ".json");
             ZipEntry manifestEntry = zip.getEntry("manifest.json");
             if (manifestEntry == null) {
-                throw new IOException("Arquivo .bmod invalido: manifest.json ausente");
+                throw new IOException("Arquivo .bmod inválido: manifest.json ausente");
             }
             try (InputStream is = zip.getInputStream(manifestEntry);
                  FileOutputStream fos = new FileOutputStream(jsonFile)) {
@@ -151,18 +153,18 @@ public final class BmodInstaller {
 
         if (!manifest.matchesGame(targetPkg)) {
             return new InstallResult(false,
-                    "Incompatibilidade: Este mod foi feito para '" + manifest.game + "', mas o jogo selecionado e '" + targetPkg + "'.",
+                    "Incompatibilidade: este mod foi feito para '" + manifest.game + "', mas o jogo selecionado é '" + targetPkg + "'.",
                     manifest);
         }
 
         if (detectedEngine != null && !manifest.matchesEngine(detectedEngine)) {
             return new InstallResult(false,
-                    "Incompatibilidade de Engine: Mod requer '" + manifest.engine + "', mas o jogo usa '" + detectedEngine + "'.",
+                    "Incompatibilidade: o mod pede a versão '" + manifest.engine + "' do jogo, mas a instalada é '" + detectedEngine + "'.",
                     manifest);
         }
 
         if (!SuHelper.isRootAvailable()) {
-            return new InstallResult(false, "Permissao root nao disponivel. Impossivel instalar o mod.", manifest);
+            return new InstallResult(false, "Permissão root não disponível. Impossível instalar o mod.", manifest);
         }
 
         File tmpDir = new File(bmodFile.getParentFile(), "tmp_bmod_" + manifest.id);
@@ -197,7 +199,7 @@ public final class BmodInstaller {
 
             return new InstallResult(true, "Mod '" + manifest.name + "' instalado com sucesso!", manifest);
         } catch (Exception e) {
-            return new InstallResult(false, "Falha na instalacao: " + e.getMessage(), manifest);
+            return new InstallResult(false, "Falha na instalação: " + e.getMessage(), manifest);
         } finally {
             // Limpa arquivos temporarios
             File[] files = tmpDir.listFiles();
@@ -240,8 +242,32 @@ public final class BmodInstaller {
     private static void requireEntryCount(ZipFile zip) throws IOException {
         int entries = zip.size();
         if (entries > MAX_ENTRIES) {
-            throw new IOException("O .bmod tem " + entries + " entradas; o limite e " + MAX_ENTRIES
-                    + ". Instalacao abortada.");
+            throw new IOException("O .bmod tem " + entries + " entradas; o limite é " + MAX_ENTRIES
+                    + ". Instalação abortada.");
+        }
+    }
+
+    // Zip-slip: entrada cujo NOME sai da pasta de extracao. Hoje o payload
+    // sai por nome fixo (mod.so/mod.patch), mas nada garante que um futuro
+    // fluxo use entry.getName() — e a defesa tem que morar onde o zip e
+    // lido, nao na memoria de quem escreveu o extrator. Barra "../", ".."
+    // isolado, caminho absoluto, disco de Windows e "./" disfarcado. O
+    // id do manifest tem regex propria ([a-z0-9-]{3,48}), que ja impede o
+    // MESMO ataque via manifest.id nos caminhos <id>.json/tmp_bmod_<id>.
+    private static void requireSafeEntryNames(ZipFile zip) throws IOException {
+        java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            String normalized = name.replace('\\', '/');
+            boolean unsafe = normalized.contains("../")
+                    || normalized.equals("..")
+                    || normalized.startsWith("/")
+                    || normalized.matches("[A-Za-z]:.*");
+            if (unsafe) {
+                throw new IOException("O .bmod tem entrada com caminho perigoso ('" + name
+                        + "', que sairia da pasta de instalação: ataque zip-slip). "
+                        + "Instalação abortada, nada foi instalado.");
+            }
         }
     }
 

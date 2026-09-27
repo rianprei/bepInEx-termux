@@ -4,7 +4,36 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
-## Unreleased
+## [Não lançado]
+
+### Para o usuário
+- [HOST] O Manager agora lista e identifica mais engines de jogos, explica em português o que cada tipo de jogo permite fazer e evita tratar qualquer app com bibliotecas nativas como jogo. O app compila e a detecção tem testes JVM; instalação e uso no celular ainda não foram verificados. (`59fe913`, `5ed8019`)
+- [HOST] O Manager reúne instalação de mods `.bmod` e arquivos compatíveis, controles para ativar/desativar, opções, logs e criação de regras sem código; o fluxo de leitura do jogo gera e limpa o scanner automaticamente, inclusive ao falhar. APK e testes JVM cobrem esses caminhos, mas o fluxo ainda não foi executado no celular. (`59fe913`, `9bc95f8`, `368406d`, `3884e54`, `ca4354b`)
+- Foi adicionado o motor de regras IL2CPP para alterar retornos, multiplicar valores e fixar campos; o formato é compartilhado entre o Manager e o carregador para evitar divergências. Os testes de host incluem harnesses e execução de thunks em QEMU; `return`/`mul`/`static` ainda não foram testados no aparelho; `field` falhou no 1º teste. (`6589f2f`, `bf9eee3`)
+- [HOST] `u_noads` tenta fechar anúncios forçados usando o callback de fechamento do SDK, cobrindo seis SDKs conhecidos. Os testes verificam alvos e fechadores, mas o uso no SA2 não foi confirmado em aparelho. (`f08164b`)
+- [HOST] O carregador aceita scripts `.js` do Frida apenas em modo script; o instalador e a checagem do binário do gadget têm testes de host. A execução no celular continua experimental e não foi validada. (`023e4c9`, `744bb6d`)
+
+### Correções
+- [HOST] Os mods passaram a compartilhar o mesmo caminho de log; a espera pelo pacote e as mensagens de timeout foram corrigidas para refletir o comportamento real. Os testes de host cobrem o helper de log, e o gate compila os componentes; não é uma nova validação em aparelho. (`df40b73`, `638b05f`, `09bcd74`)
+- [HOST] Foram corrigidos fluxos de root do Manager, incluindo chamadas repetidas, cadeias `chcon`, entrega de comandos por stdin e preservação de `resources.arsc` no APK para instalação em versões atuais do Android. Testes de shell/JVM e checagens do APK cobrem esses casos. (`3f1bdef`, `368406d`, `3884e54`, `ca4354b`)
+- [HOST] A instalação do APK passou a ser verificada por alinhamento e estrutura instalável antes de ser aceita pelo gate. (`368406d`, `3884e54`)
+- [HOST] O simulador do teste de restauração ganhou relógio falso e não fica preso ao stdin herdado; os limites de timeout separam a simulação dos testes no aparelho. (`c3da4cc`, `2b3d8c6`)
+
+### Segurança/robustez
+- [HOST] Antes de carregar mods, o loader confere o ELF e recusa bibliotecas com SONAME do Frida Gadget, mesmo se forem renomeadas; outra checagem confirma o símbolo necessário no loader de Battle Cats. Os casos são cobertos pelo harness, não por um teste em aparelho. (`744bb6d`, `81efee2`)
+- [HOST] O kit de teste de aparelho agora exige backup verificável antes de restaurar dados, valida o hash de cada arquivo restaurado e informa divergências. Os testes de restauração são simulações de host, não uma rodada no celular. (`1224346`, `05b7138`)
+- [HOST] O gate universal reúne builds, testes do Manager e dos mods, verificações de shell e análise estática pinada; também detecta IDs duplicados no harness e valida referências documentais a arquivos, linhas e trechos citados. (`ad46276`, `aa33ac1`, `66280c0`, `73e45b5`)
+
+### Para desenvolvedores
+- [HOST] Há um comando local de release que gera o zip Magisk, o APK do Manager e os módulos distribuídos, com `SHA256SUMS`, metadados de build e dependências externas pinadas. A reprodutibilidade foi verificada em builds de host; publicar ou etiquetar uma release não faz parte desta mudança. (`f36c650`)
+- [HOST] O Manager pode ser assinado com uma chave fixa fornecida pelo usuário, sem expor a senha do keystore na lista de processos; o teste usa chaves temporárias e não inclui keystore no repositório. (`192e967`)
+- [HOST] Foram adicionados documentação do SDK e do formato `.bmod`, fixture C4 compartilhada, scanner empacotado a partir do fonte e roteiro/gate de referências em documentação. (`0d989c3`, `bf9eee3`, `9bc95f8`, `73e45b5`)
+- [HOST] O roadmap recebeu sincronizações com evidência por item e o parecer do spike de runtime .NET; esses registros não significam que a execução ou medição em aparelho foi feita. (`ea957ae`, `7c66679`)
+
+### Problemas conhecidos
+- A regra de campo (`field`) pode fechar o jogo. Não a use até a correção entrar; ela falhou no primeiro teste em aparelho. (`6589f2f`)
+
+### Histórico preservado do Unreleased anterior
 
 ### Added
 - sa2content (new mod, Swamp Attack 2 1.3.9): content through the game's own balance system, memory only (no `OnReceivedBalanceFromGrid`, which writes a local patch file). 31 embedded patches (`tools/gen_patches.py` from a runtime snapshot): one unused primary weapon unlocked per redneck at level 1 (9), effect fusions (Shotgun frost, DoubleShotgun poison, Kalashnikov electric, TankBusterRifle radioactive), L05/L10/L15 of chapters 2+ end with the previous chapter's boss (18), forced interstitial ads between levels blocked (rewarded ads untouched). Reapplied after `GameBalancer.TryApplyPendingPatches`. Applied on device 2026-09-25 (ld 18 / red 9 / wep 4, Apply ok); in-game look not yet confirmed.
