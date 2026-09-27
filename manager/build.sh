@@ -121,7 +121,11 @@ with zipfile.ZipFile(source, "r") as zin, zipfile.ZipFile(
 ) as zout:
     for old in zin.infolist():
         info = zipfile.ZipInfo(old.filename, date_time=date_time)
-        info.compress_type = zipfile.ZIP_DEFLATED
+        # Android 11+ (R) recusa APK com resources.arsc comprimido (e exige
+        # alinhamento 4 bytes — o zipalign -p -f 4 de depois cuida disso):
+        # achado ao instalar de verdade no POCO C75 (INSTALL_PARSE_FAILED
+        # -124). Tudo o mais continua DEFLATE.
+        info.compress_type = zipfile.ZIP_STORED if old.filename == "resources.arsc" else zipfile.ZIP_DEFLATED
         info.create_system = old.create_system
         info.external_attr = old.external_attr
         info.flag_bits = old.flag_bits & 0x800
