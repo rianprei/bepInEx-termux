@@ -24,14 +24,12 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import io.github.rianprei.bepinex.manager.core.InFlightFlag;
-import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
 import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
+import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
-import io.github.rianprei.bepinex.manager.core.SelectedFileWork;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.ModInfo;
@@ -67,15 +65,9 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
     private final List<ModInfo> mMods = new ArrayList<>();
     private ModAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
-    // Escopo de PROCESSO (static): a instância nova da rotação herda o
-    // staged e retoma o install no onResume — campo de instância deixava
-    // o arquivo órfão (achado do Maestro).
-    private final PendingStagedFile mPendingStagedFile = PendingStagedFile.DETAIL;
-
-    /** Pendente desta tela, para o sweep da MainActivity preservar. */
-    public static File pendingStaged() {
-        return PendingStagedFile.DETAIL.peek();
-    }
+    // Estado do arquivo escolhido: por tela e estático — rotação herda o
+    // pendente e a flag de install (o duplo toque é recusado pela própria API).
+    private final SelectedFileFlow.Flow mFlow = SelectedFileFlow.of(SelectedFileFlow.DETAIL);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -204,7 +196,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
         super.onResume();
         // Herança de rotação: o staged da instância anterior retoma o install
         // (aqui o jogo de destino é fixo, definido quando o usuário escolheu).
-        File pending = mPendingStagedFile.take();
+        File pending = mFlow.pending().take();
         if (pending != null) {
             installStagedFile(pending);
             return;
@@ -218,7 +210,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
         // Saída definitiva: nenhum staged pendente sobra no cache. Em rotação
         // (isFinishing == false) o arquivo fica pendente para a nova instância.
         if (isFinishing()) {
-            File pending = mPendingStagedFile.take();
+            File pending = mFlow.pending().take();
             if (pending != null) SelectedFileStager.delete(pending);
         }
     }
@@ -246,49 +238,48 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
     // conteudo o que e (.bmod, .so arm64, .patch, .js, .dll de PC...). O
     // nome original so importa para virar o id do arquivo instalado.
     private void installSelectedFile(Uri uri) {
-        SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
-                () -> getContentResolver().openInputStream(uri), (staged, error) ->
-                        mMainHandler.post(() -> {
-                            if (!UiLiveness.alive(this)) {
-                                // Tela morreu no meio da cópia (rotação etc.):
-                                // fica pendente para a instância nova.
-                                if (staged != null && !mPendingStagedFile.set(staged)) {
-                                    SelectedFileStager.delete(staged);
-                                }
-                                return;
-                            }
-                            if (error != null) {
-                                SelectedFileStager.delete(staged);
-                                new AlertDialog.Builder(this)
-                                        .setTitle("Não instalado")
-                                        .setMessage("Erro ao ler o arquivo: " + error.getMessage())
-                                        .setPositiveButton("OK", null)
-                                        .show();
-                            } else {
-                                installStagedFile(staged);
-                            }
-                        }));
-    }
-
-    private void installStagedFile(File file) {
-        // Duplo toque não repete o install do mesmo arquivo (o segundo su
-        // pode falhar por concorrência e sobrepor "Sucesso" com falha).
-        final InFlightFlag installInFlight = new InFlightFlag();
-        if (!installInFlight.begin()) return;
-        SelectedFileWork.install(FILE_EXECUTOR, file, mPkg, mEngine, (result, error) ->
-                mMainHandler.post(() -> {
-                    installInFlight.end();
+        mFlow.stage(FILE_EXECUTOR, mMainHandler::post,
+                () -> SelectedFileStager.copyIntoStaging(getCacheDir(), resolveDisplayName(uri),
+                        () -> getContentResolver().openInputStream(uri)),
+                (staged, error) -> {
                     if (!UiLiveness.alive(this)) {
-                        // Morreu com o install em voo: se instalou, o staged
-                        // cumpriu o papel; se não, a instância nova retenta.
-                        if (error == null && result != null && result.success) {
-                            SelectedFileStager.delete(file);
-                        } else if (!mPendingStagedFile.set(file)) {
-                            SelectedFileStager.delete(file);
+                        // Tela morreu no meio da cópia (rotação etc.):
+                        // fica pendente para a instância nova.
+                        if (staged != null && !mFlow.pending().set(staged)) {
+                            SelectedFileStager.delete(staged);
                         }
                         return;
                     }
-                    SelectedFileStager.delete(file);
+                    if (error != null) {
+                        mFlow.consume(staged);
+                        new AlertDialog.Builder(this)
+                                .setTitle("Não instalado")
+                                .setMessage("Erro ao ler o arquivo: " + error.getMessage())
+                                .setPositiveButton("OK", null)
+                                .show();
+                    } else {
+                        installStagedFile(staged);
+                    }
+                });
+    }
+
+    private void installStagedFile(File file) {
+        // A flag vive no ESTADO da tela: o segundo toque chama a mesma API
+        // e é recusado enquanto o primeiro roda (bug A, agora na raiz).
+        boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
+                () -> LooseModInstaller.installFromFile(file, mPkg, mEngine),
+                (result, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Morreu com o install em voo: se instalou, o staged
+                        // cumpriu o papel; se não, a instância nova retoma.
+                        if (error == null && result != null && result.success) {
+                            mFlow.consume(file);
+                        } else if (!mFlow.pending().set(file)) {
+                            mFlow.consume(file);
+                        }
+                        return;
+                    }
+                    mFlow.consume(file);
                     if (isFinishing()) return;
                     String title = error != null || !result.success ? "Não instalado" : "Sucesso";
                     String message = error != null
@@ -299,7 +290,8 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
                             .setPositiveButton("OK", null)
                             .show();
                     loadMods();
-                }));
+                });
+        if (!started) return;   // duplo toque: o primeiro install continua
     }
 
     private String resolveDisplayName(Uri uri) {

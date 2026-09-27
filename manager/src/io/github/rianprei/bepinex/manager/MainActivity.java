@@ -28,9 +28,10 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import io.github.rianprei.bepinex.manager.core.InFlightFlag;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
+import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
+import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
@@ -69,12 +70,10 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private GameAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Uri mPendingIncomingUri;
-    // Escopo de PROCESSO (static): rotação cria Activity nova, e o arquivo
-    // staged escolhido pelo usuário tem que sobreviver à troca de instância —
-    // com campo de instância ele ficava órfão no cache (achado do Maestro).
-    // A instância nova herda no próximo refresh; saída definitiva apaga no
-    // onDestroy; staged de processo morto é coberto pelo sweep no onResume.
-    private final PendingStagedFile mPendingStagedFile = PendingStagedFile.SHARED;
+    // Estado do arquivo escolhido: fora da Activity e por tela (estático) —
+    // rotação herda o pendente e a flag de install; a JVM testa o fluxo
+    // inteiro (SelectedFileFlowTest) pela mesma API que daqui é chamada.
+    private final SelectedFileFlow.Flow mFlow = SelectedFileFlow.of(SelectedFileFlow.MAIN);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -131,9 +130,9 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     protected void onResume() {
         super.onResume();
         // Retaguarda: staged órfão de processo morto (ou de rodadas antigas)
-        // não pode acumular no cache. O pendente de cada tela é preservado.
-        SelectedFileStager.sweep(getCacheDir(),
-                mPendingStagedFile.peek(), GameDetailActivity.pendingStaged());
+        // não pode acumular no cache. Stage/install em voo e pendentes são
+        // preservados; a rodada é pulada enquanto há stage em voo (bug B).
+        SelectedFileFlow.sweepOrphans(getCacheDir());
         loadStatusAndApps();
     }
 
@@ -144,7 +143,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
         // pendente sobra no cache. Em rotação (isFinishing == false) o arquivo
         // fica pendente e a instância nova herda no próximo refresh.
         if (isFinishing()) {
-            File pending = mPendingStagedFile.take();
+            File pending = mFlow.pending().take();
             if (pending != null) SelectedFileStager.delete(pending);
         }
     }
@@ -289,7 +288,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
                     processSelectedUri(pending);
                 } else {
                     // Herança de rotação: arquivo staged da instância anterior.
-                    File pending = mPendingStagedFile.take();
+                    File pending = mFlow.pending().take();
                     if (pending != null) processSelectedFile(pending);
                 }
             });
@@ -323,30 +322,31 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     }
 
     private void processSelectedUri(Uri uri) {
-        SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
-                () -> getContentResolver().openInputStream(uri), (staged, error) ->
-                        mMainHandler.post(() -> {
-                            if (!UiLiveness.alive(this)) {
-                                // Tela morreu (rotação/tema/idioma) com a cópia em voo:
-                                // fica pendente para a instância nova, não vira órfão.
-                                if (staged != null && !mPendingStagedFile.set(staged)) {
-                                    SelectedFileStager.delete(staged);
-                                }
-                                return;
-                            }
-                            if (error != null) {
-                                SelectedFileStager.delete(staged);
-                                new AlertDialog.Builder(this)
-                                        .setTitle("Não foi possível abrir o arquivo")
-                                        .setMessage("Erro ao ler o arquivo escolhido:\n" + error.getMessage())
-                                        .setPositiveButton("OK", null)
-                                        .show();
-                            } else if (mAllGames.isEmpty()) {
-                                if (!mPendingStagedFile.set(staged)) SelectedFileStager.delete(staged);
-                            } else {
-                                processSelectedFile(staged);
-                            }
-                        }));
+        mFlow.stage(FILE_EXECUTOR, mMainHandler::post,
+                () -> SelectedFileStager.copyIntoStaging(getCacheDir(), resolveDisplayName(uri),
+                        () -> getContentResolver().openInputStream(uri)),
+                (staged, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Tela morreu (rotação/tema/idioma) com a cópia em voo:
+                        // fica pendente para a instância nova, não vira órfão.
+                        if (staged != null && !mFlow.pending().set(staged)) {
+                            SelectedFileStager.delete(staged);
+                        }
+                        return;
+                    }
+                    if (error != null) {
+                        mFlow.consume(staged);
+                        new AlertDialog.Builder(this)
+                                .setTitle("Não foi possível abrir o arquivo")
+                                .setMessage("Erro ao ler o arquivo escolhido:\n" + error.getMessage())
+                                .setPositiveButton("OK", null)
+                                .show();
+                    } else if (mAllGames.isEmpty()) {
+                        if (!mFlow.pending().set(staged)) SelectedFileStager.delete(staged);
+                    } else {
+                        processSelectedFile(staged);
+                    }
+                });
     }
 
     private String resolveDisplayName(Uri uri) {
@@ -368,28 +368,27 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
 
     private void processSelectedFile(File file) {
         if (mAllGames.isEmpty()) {
-            if (!mPendingStagedFile.set(file)) SelectedFileStager.delete(file);
+            if (!mFlow.pending().set(file)) SelectedFileStager.delete(file);
             return;
         }
-        SelectedFileWork.inspect(FILE_EXECUTOR, file, (inspection, error) ->
-                mMainHandler.post(() -> {
-                    if (!UiLiveness.alive(this)) {
-                        // Rotação no meio da inspeção: a instância nova re-pergunta
-                        // com o mesmo arquivo (ele continua pendente).
-                        if (!mPendingStagedFile.set(file)) SelectedFileStager.delete(file);
-                        return;
-                    }
-                    if (error != null) {
-                        SelectedFileStager.delete(file);
-                        showImportMessage("Não foi possível abrir o arquivo",
-                                "O arquivo não pôde ser identificado: " + error.getMessage());
-                        return;
-                    }
-                    showInspectionResult(file, inspection);
-                }));
+        mFlow.inspect(FILE_EXECUTOR, mMainHandler::post, file, (inspection, error) -> {
+            if (!UiLiveness.alive(this)) {
+                // Rotação no meio da inspeção: a instância nova re-pergunta
+                // com o mesmo arquivo (ele continua pendente).
+                if (!mFlow.pending().set(file)) SelectedFileStager.delete(file);
+                return;
+            }
+            if (error != null) {
+                mFlow.consume(file);
+                showImportMessage("Não foi possível abrir o arquivo",
+                        "O arquivo não pôde ser identificado: " + error.getMessage());
+                return;
+            }
+            showInspectionResult(file, inspection);
+        });
     }
 
-    private void showInspectionResult(File file, SelectedFileWork.Inspection inspection) {
+    private void showInspectionResult(File file, SelectedFileFlow.Inspection inspection) {
         SelectedFileRouter.Decision decision = inspection.decision();
         ModManifest manifest = inspection.manifest();
         if (decision.action == SelectedFileRouter.Action.REJECT) {
@@ -448,24 +447,22 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     }
 
     private void installSelectedFile(File file, String packageName, String engine) {
-        // Duplo toque no mesmo diálogo não pode disparar o segundo install
-        // enquanto o primeiro está em voo (dois su + resultado sobreposto).
-        final InFlightFlag installInFlight = new InFlightFlag();
-        if (!installInFlight.begin()) return;
-        SelectedFileWork.install(FILE_EXECUTOR, file, packageName, engine, (result, error) ->
-                mMainHandler.post(() -> {
-                    installInFlight.end();
+        // A flag vive no ESTADO da tela (SelectedFileFlow.of): cada toque
+        // chama a mesma API e o segundo é recusado enquanto o primeiro roda.
+        boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
+                () -> LooseModInstaller.installFromFile(file, packageName, engine),
+                (result, error) -> {
                     if (!UiLiveness.alive(this)) {
                         // Morreu com o install em voo: se instalou, o staged
                         // cumpriu o papel; se não, a instância nova tenta de novo.
                         if (error == null && result != null && result.success) {
-                            SelectedFileStager.delete(file);
-                        } else if (!mPendingStagedFile.set(file)) {
-                            SelectedFileStager.delete(file);
+                            mFlow.consume(file);
+                        } else if (!mFlow.pending().set(file)) {
+                            mFlow.consume(file);
                         }
                         return;
                     }
-                    SelectedFileStager.delete(file);
+                    mFlow.consume(file);
                     if (error != null) {
                         showImportMessage("Não instalado", "Falha ao instalar o arquivo: "
                                 + error.getMessage());
@@ -473,7 +470,8 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
                     }
                     showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
                     loadStatusAndApps();
-                }));
+                });
+        if (!started) return;   // duplo toque: o primeiro install continua
     }
 
     private void showImportMessage(String title, String message) {

@@ -1,11 +1,36 @@
 package io.github.rianprei.bepinex.manager.core;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 
 public final class SelectedFileStager {
     private static final String DIRECTORY_PREFIX = "bepinex-import-";
+
+    /** Fonte do conteúdo (Uri do provedor, aberto pela Activity). */
+    public interface InputStreamProvider {
+        InputStream open() throws IOException;
+    }
+
+    /** Cria o staged e copia o stream; apaga o staged se a cópia falhar. */
+    public static File copyIntoStaging(File cacheDirectory, String originalName,
+                                       InputStreamProvider provider) throws IOException {
+        File staged = create(cacheDirectory, originalName);
+        try (InputStream input = provider.open()) {
+            if (input == null) throw new IOException("O provedor não abriu o arquivo.");
+            try (FileOutputStream output = new FileOutputStream(staged)) {
+                byte[] buffer = new byte[16 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            }
+            return staged;
+        } catch (Exception e) {
+            delete(staged);
+            throw e;
+        }
+    }
 
     private SelectedFileStager() {}
 
