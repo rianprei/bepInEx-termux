@@ -404,7 +404,7 @@ if [ -f "$ROOT/MANIFEST.tsv" ] && [ -f "$ROOT/docs/DLL-COVERAGE.md" ]; then
 
         # Verifica 375+3=378 e 0/378 entre doc e README
         doc_refusals=$(grep -oP "Recusas .* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
-        doc_nested=$(grep -oP "classe aninhada \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_nested=$(grep -oP "classe aninhada.* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
         doc_total_patches=$(grep -oP "Total de patches Harmony \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
         doc_translated=$(grep -oP "\*\*0/\K[0-9]+" "$doc" | head -1 | tr -d " " || true)
         readme_translated=$(grep -oP "\K0 de [0-9]+" "$readme" | grep -oP "^0" || true)
