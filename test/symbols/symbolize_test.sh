@@ -43,8 +43,17 @@ BID=$(symbols_add "$SO" "$SYMDIR" "u_patch")
 echo "  build-id: $BID"
 
 # --- tombstone sintético ----------------------------------------------------
-# Offsets reais deste build, tirados do backtrace que o próprio código gera:
-# o ponto de entrada do thread do mod e um ponto dentro de up_line_apply.
+# Offsets DERIVADOS do .so recém-construído: pega o endereço de up_field_type_name
+# e soma um deslocamento pequeno para cair dentro da função. Assim o teste não
+# depende de offset fixo — se o layout do binário mudar, o teste acompanha.
+FN_ADDR=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
+          awk '$4=="FUNC" && $8=="up_field_type_name" {print $2; exit}')
+[ -n "$FN_ADDR" ] || { echo "symbolize_test: up_field_type_name não encontrado no .so" >&2; exit 1; }
+# Converte hex para decimal, soma 16 (0x10), volta para hex
+OFFSET=$(printf '0x%x' $(( FN_ADDR + 0x10 )) )
+echo "  up_field_type_name em $FN_ADDR, offset derivado: $OFFSET"
+
+# o ponto de entrada do thread do mod
 ENTRY=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
         awk '$4=="FUNC" && $8=="up_worker" {print $2; exit}')
 [ -n "$ENTRY" ] || ENTRY=0x1a5f0
@@ -57,7 +66,7 @@ signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0000000000000135
 Cause: null pointer dereference
 backtrace:
       #00 pc 0000000000000000  /system/bin/app_process64 (BuildId: 0000)
-      #01 pc 000000000001bb34  /data/local/tmp/mods/com.synthetic.app/u_patch.so (BuildId: $BID)
+      #01 pc $OFFSET  /data/local/tmp/mods/com.synthetic.app/u_patch.so (BuildId: $BID)
       #02 pc $ENTRY  /data/local/tmp/mods/com.synthetic.app/u_patch.so (BuildId: $BID)
 EOF
 
@@ -79,14 +88,14 @@ check "não inventa símbolos para o app_process64" \
 
 # --- modo --offset ----------------------------------------------------------
 echo "symbolize_test: (1b) modo --offset"
-out2=$(bash "$SYMBOLIZE" --symbols "$SYMDIR" --build-id "$BID" --offset 0x1bb34 2>&1)
+out2=$(bash "$SYMBOLIZE" --symbols "$SYMDIR" --build-id "$BID" --offset "$OFFSET" 2>&1)
 printf '%s\n' "$out2" | sed 's/^/    /'
 check "--offset imprime arquivo:linha" \
     "$(grep -qE '\.[ch]+:[0-9]+' <<<"$out2" && echo 0 || echo 1)"
 
 # --- build-id desconhecido: tem que dizer, não adivinhar -------------------
 echo "symbolize_test: (2) build-id sem símbolos guardados"
-out3=$(bash "$SYMBOLIZE" --symbols "$SYMDIR" --build-id 041d9b51c6f23ecc253d2bc33401a9c1f5835ba9 --offset 0x1bb34 2>&1)
+out3=$(bash "$SYMBOLIZE" --symbols "$SYMDIR" --build-id 041d9b51c6f23ecc253d2bc33401a9c1f5835ba9 --offset "$OFFSET" 2>&1)
 printf '%s\n' "$out3" | sed 's/^/    /'
 check "diz que faltam os símbolos daquele build-id" \
     "$(grep -q 'SEM SÍMBOLOS' <<<"$out3" && echo 0 || echo 1)"
@@ -123,7 +132,7 @@ echo "symbolize_test: (5) tombstone sem BuildId (casado por nome)"
 mkdir -p "$WORK/nobid"
 # uma build só com este nome
 ONE=$(symbols_add "$SO" "$WORK/nobid" "u_patch")
-printf 'backtrace:\n      #04 pc 000000000001bb34  /data/local/tmp/mods/com.x/u_patch.so (up_field_type_name+24)\n' \
+printf 'backtrace:\n      #04 pc %s  /data/local/tmp/mods/com.x/u_patch.so (up_field_type_name+24)\n' "$OFFSET" \
     >"$WORK/nobid1.txt"
 out5=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" "$WORK/nobid1.txt" 2>&1)
 printf '%s\n' "$out5" | sed 's/^/    /'
@@ -157,7 +166,7 @@ if [ -n "$OTHER" ]; then
     check "e diz como escolher (--offset/--build-id)" \
         "$(grep -qF 'offset <build-id>' <<<"$out5b" && echo 0 || echo 1)"
     # e o caminho de escolha explicita tem que funcionar
-    out5c=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" --build-id "$ONE" --offset 0x1bb34 u_patch 2>&1)
+    out5c=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" --build-id "$ONE" --offset "$OFFSET" u_patch 2>&1)
     check "com --build-id explicito resolve SEM a marca de palpite" \
         "$(grep -qE '\.[ch]+:[0-9]+' <<<"$out5c" \
             && ! grep -q 'NAO VERIFICADO' <<<"$out5c" && echo 0 || echo 1)"
@@ -186,14 +195,22 @@ echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
     if [ -f "$HSO" ]; then
         HSYMD="$WORK/symbols_hist"
         HBID=$(symbols_add "$HSO" "$HSYMD" "u_patch")
-        # tombstone sintético no build-id histórico, com o offset do device
+        # Deriva o offset do .so histórico (não usa offset fixo)
+        HFN_ADDR=$("$BINDIR/llvm-readelf" -sW "$HSO" 2>/dev/null |
+                   awk '$4=="FUNC" && $8=="up_field_type_name" {print $2; exit}')
+        if [ -n "$HFN_ADDR" ]; then
+            HOFFSET=$(printf '0x%x' $(( HFN_ADDR + 0x10 )) )
+        else
+            HOFFSET=0x1bb34  # fallback: commit histórico pode não ter a função
+        fi
+        # tombstone sintético no build-id histórico, com o offset derivado
         cat >"$WORK/hist.txt" <<EOF
 backtrace:
-      #00 pc 000000000001bb34  /data/local/tmp/mods/com.hyperdotstudios.swampattack2/u_patch.so (BuildId: $HBID)
+      #00 pc $HOFFSET  /data/local/tmp/mods/com.hyperdotstudios.swampattack2/u_patch.so (BuildId: $HBID)
 EOF
         hout=$(bash "$SYMBOLIZE" --symbols "$HSYMD" "$WORK/hist.txt" 2>&1)
         printf '%s\n' "$hout" | sed 's/^/    /'
-        check "0x1bb34 = up_field_type_name (a função que chamou o crash)" \
+        check "offset derivado = up_field_type_name (a função que chamou o crash)" \
             "$(grep -q 'up_field_type_name' <<<"$hout" && echo 0 || echo 1)"
         check "e a linha é a 375, a linha que o fix tocou" \
             "$(grep -q 'u_patch_mod\.cpp:375' <<<"$hout" && echo 0 || echo 1)"
