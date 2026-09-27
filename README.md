@@ -52,7 +52,7 @@ Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
 
 ## Instalar um mod
 
-> **Pelo Manager (em desenvolvimento — ainda não existe):** quando chegar,
+> **Pelo Manager (em desenvolvimento, experimental):** quando chegar,
 > você vai abrir o arquivo `.bmod` (baixado, recebido no WhatsApp, de onde
 > for) e ele mostra o que o mod faz, instala com um toque e oferece
 > liga/desliga e opções. Nada disso funciona hoje. O que segue é o caminho
@@ -80,6 +80,16 @@ tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 - **Remover:** apague os arquivos do mod da pasta e reinicie o jogo. Nada
   fica dentro do jogo.
 
+### Se o seletor de arquivos do celular falhar
+
+Alguns celulares têm problemas com o seletor de arquivos padrão do Android.
+Se isso acontecer ao tentar instalar um mod pelo Manager:
+
+1. Abra o **gerenciador de arquivos** do celular.
+2. Mova o arquivo do mod para a pasta **Download**.
+3. No Manager, toque em **Escolher da pasta Download**.
+4. Selecione o arquivo.
+
 Pra criar um mod seu do zero (C++), veja [docs/SDK.md](docs/SDK.md). O
 formato dos arquivos (`.bmod`, `.patch`, `.conf`) está em
 [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
@@ -92,7 +102,7 @@ A árvore Git precisa estar limpa. Sem
 externamente. A reprodução pode ser conferida com
 `VERIFY_RELEASE=1 tools/verify_all.sh`.
 
-## Criar mod sem código (Mod Maker) — em desenvolvimento
+## Criar mod sem código (Mod Maker) — em desenvolvimento (experimental)
 
 A meta (fase F6 do roadmap): no Manager, você toca em **"Escanear jogo"**,
 o jogo roda uma vez e devolve a lista de classes/métodos/campos (`dump.tsv`);
@@ -114,10 +124,10 @@ Hoje isso já funciona por partes, sem Manager:
   No Manager isso vira o botão "Escanear jogo".
 - **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
   `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em
-  integração** (fase F4): o contrato das regras já está fixado no roadmap e
-  a lição que criou o verbo `field` veio de teste real no device, mas nada
-  de `.patch` é instalável até o F4 mergear. De propósito não há instrução
-  operacional aqui — quando mergear, esta seção e o
+  integração** (fase F4, experimental): o contrato das regras já está fixado
+  no roadmap e a lição que criou o verbo `field` veio de teste real no
+  device, mas nada de `.patch` é instalável até o F4 mergear. De propósito não
+  há instrução operacional aqui — quando mergear, esta seção e o
   [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md) ganham o passo a passo.
 
 ## Que mods rodam
@@ -129,17 +139,69 @@ não pela extensão, e dizer em português se roda. A tabela honesta:
 |---|---|---|
 | `.bmod` (nosso pacote) | **sim** | zip com manifest + mod |
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
-| `.patch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
+| `.patch` (regras declarativas) | **em integração** (experimental) | precisa do `u_patch` (F4, ainda não mergeado) |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
-| `.js` script Frida | em desenvolvimento (F11) | via frida-gadget |
+| `.js` script Frida | em desenvolvimento (F11) (experimental) | via frida-gadget |
 | `.dll` de BepInEx/MelonLoader **IL2CPP** | depois (F12) | exige runtime .NET no processo |
 | `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois (F13) | Harmony roda nativo em Mono |
 | `.dll` Mono de PC em jogo **IL2CPP** (ex.: mods de TABS PC) | **não automático** | os dois binários falam línguas diferentes; use o Mod Maker/SDK pra recriar |
 | `.exe`, `.dylib` iOS, `.CT` Cheat Engine | não | outra plataforma/binário |
 | `.lua` GameGuardian | depois (F10) | fora do caminho crítico |
 
-O tipo de engine é detectado pelas libs do jogo (Unity IL2CPP, Unity Mono,
-Cocos2d-x, outros → "nativo"). Nenhum caminho modifica arquivo do jogo.
+### Tipos de arquivo que NÃO funcionam (e por quê)
+
+- **`.dll` de BepInEx (mod de PC):** é um mod da versão de PC do jogo,
+  embalado para o BepInEx do computador (a pasta `BepInEx` com plugins está
+  aí dentro). O `.dll` dele é feito para o jogo rodando no computador e
+  não funciona no celular. Em breve vai dar para converter mods simples
+  para o formato que o celular roda (`.patch`); por enquanto, procure a
+  versão para Android deste mod.
+
+- **`.apk`:** é o instalador do jogo, não um mod. O Manager nunca modifica
+  arquivo do jogo: nem pacote do aplicativo, nem expansão. Para instalar
+  mod, escolha o arquivo de mod em si (`.so`, `.patch` ou `.js`).
+
+- **`.xapk`:** é um pacote de expansão do jogo, não um mod. O Manager nunca
+  modifica arquivo do jogo.
+
+- **`.zip` comum:** é um arquivo compactado sem pacote de mod dentro. O
+  Manager só instala pacote de mod (`.bmod`) ou arquivo de mod avulso.
+  Descompacte no gerenciador de arquivos e volte aqui com o arquivo de
+  dentro.
+
+- **`.so` de outra arquitetura (arm32, x86):** é um mod de verdade, mas
+  feito para outro tipo de aparelho. O seu celular só roda a versão para
+  ARM de 64 bits; procure o download para ARM 64 deste mod.
+
+- **`.so` estragado:** o arquivo é um mod para Android, mas está estragado
+  (download cortado ou corrompido). Instalar mod pela metade fecha o jogo.
+  Baixe o mod de novo e tente outra vez.
+
+- **Frida Gadget:** é o programa do Frida (a ferramenta que roda os scripts),
+  não um mod. Se ele entrar como mod, o jogo abre e fica travado esperando
+  um computador conectar. O Manager sabe cuidar dele: toque em instalar e
+  ele vai para o lugar certo, junto com a configuração que faz os scripts
+  `.js` da pasta rodarem sozinhos.
+
+### Suporte por engine
+
+O tipo de engine é detectado pelas libs do jogo. O que cada engine suporta:
+
+- **Unity IL2CPP:** você pode escanear o jogo para criar mods de valores
+  sem programar e instalar mods prontos feitos para este jogo. O uso de
+  scripts JavaScript pelo carregador no celular é experimental; mods de
+  outro jogo não têm compatibilidade garantida.
+
+- **Unity Mono:** você pode instalar mods prontos feitos para este jogo e
+  usar scripts JavaScript pelo carregador (experimental no celular). Ainda
+  não é possível criar mods sem programar para Unity Mono.
+
+- **Outras engines (Cocos2d-x, Unreal, Godot, etc.):** você pode instalar
+  mods prontos feitos para este jogo e usar scripts JavaScript pelo
+  carregador (experimental no celular). Ainda não é possível criar mods
+  sem programar para estas engines.
+
+Nenhum caminho modifica arquivo do jogo.
 
 ## FAQ
 
