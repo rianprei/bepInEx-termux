@@ -36,9 +36,9 @@ while read -r PID NAME; do
     [ -n "$PID" ] || continue
     printf 'processo encontrado: %s pid=%s\n' "$NAME" "$PID"
     MAPS=$(printf 'grep -F %s /proc/%s/maps\n' \
-        "/data/local/tmp/mods/$PKG/$MOD" "$PID" | "$ADB" shell su 2>/dev/null | tr -d '\r') \
+        "/data/adb/bepinex/mods/$PKG/$MOD" "$PID" | "$ADB" shell su 2>/dev/null | tr -d '\r') \
         || MAPS=
-    if printf '%s\n' "$MAPS" | grep -Fq "/data/local/tmp/mods/$PKG/$MOD"; then
+    if printf '%s\n' "$MAPS" | grep -Fq "/data/adb/bepinex/mods/$PKG/$MOD"; then
         echo "PASS: $MOD está mapeado no processo $NAME"
         FOUND=1
     else

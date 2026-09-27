@@ -37,15 +37,20 @@ BINDIR="$ROOT/bin"
 mkdir -p "$BINDIR"
 
 # device limpo por cenário: estado inicial = 1 mod + 1 lib do usuário + log.txt
+# Divisao transito/arvore: MODS (o que o mod E) fica em /data/adb/bepinex/mods
+# (root-only); transito (STAGE/BAK/MARK/LOCK) fica em /data/local/tmp porque
+# o adb nao le /data/adb.
 new_device() {
     export DEV="$ROOT/dev-$$-$1"
     rm -rf "$DEV"
-    mkdir -p "$DEV/data/local/tmp/mods/$PKG" "$DEV/data/data/$PKG/files/bepinex"
-    printf 'mod do usuario\n' > "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so"
+    mkdir -p "$DEV/data/adb/bepinex/mods/$PKG" \
+             "$DEV/data/local/tmp" \
+             "$DEV/data/data/$PKG/files/bepinex"
+    printf 'mod do usuario\n' > "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so"
     printf '11:00:00 [loader] mod carregado\n' > "$DEV/data/data/$PKG/files/bepinex/log.txt"
     printf 'lib do usuario\n' > "$DEV/data/data/$PKG/files/bepinex/libu_noads.so"
     printf '0 0\n' > "$DEV/data/data/$PKG/files/bepinex/crashguard"
-    touch "$DEV/data/local/tmp/mods/$PKG/u_patch.so"
+    touch "$DEV/data/adb/bepinex/mods/$PKG/u_patch.so"
     export FAKE_LOGCAT="$ROOT/logcat-$$.txt"; : > "$FAKE_LOGCAT"
     export FAKE_PID=4242
 }
@@ -147,7 +152,7 @@ done
 scen "(a) run anterior interrompido: backup sem a pasta de mods"
 # simula o pior caso: o run morreu ENTRE o rm -rf e o mv, então os mods do
 # usuário existem só no backup.
-rm -rf "$DEV/data/local/tmp/mods/$PKG"
+rm -rf "$DEV/data/adb/bepinex/mods/$PKG"
 mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
 printf 'mod do usuario (so no backup)\n' > "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so"
 touch "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so"
@@ -155,8 +160,8 @@ printf 'before_sha=deadbeef\n' > "$DEV/data/local/tmp/t1-inprogress-$PKG"
 printf '10:00:00 [u_patch] log antigo do run morto\n' > "$DEV/data/data/$PKG/files/bepinex/log.txt"
 OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1 || true)
 echo "$OUT" | grep -q "run anterior interrompido detectado" && ok "aviso de run interrompido" || bad "aviso de run interrompido"
-[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mods voltaram do backup" || bad "mods voltaram do backup"
-grep -q "so no backup" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null && ok "conteudo do backup preservado" || bad "conteudo do backup preservado"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" ] && ok "mods voltaram do backup" || bad "mods voltaram do backup"
+grep -q "so no backup" "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" 2>/dev/null && ok "conteudo do backup preservado" || bad "conteudo do backup preservado"
 [ ! -f "$DEV/data/local/tmp/t1-inprogress-$PKG" ] && ok "marcador removido" || bad "marcador removido"
 # o run novo tambem tem que ter restaurado o estado final
 if echo "$OUT" | grep -q "device restaurado"; then ok "estado final = inicial"; else bad "estado final = inicial" ; echo "$OUT" | tail -5; fi
@@ -205,13 +210,13 @@ scen "(5) interrupção: restaura uma vez, saída != 0, device volta ao inicial"
 new_device e
 # arquivo do USUÁRIO que já estava no estado inicial: tem que continuar lá
 # depois do restore (o restore volta ao inicial, não a um mods vazio)
-printf '12:00:00 [u_patch] patch do usuario\n' > "$DEV/data/local/tmp/mods/$PKG/meu_mod.bpatch"
+printf '12:00:00 [u_patch] patch do usuario\n' > "$DEV/data/adb/bepinex/mods/$PKG/meu_mod.bpatch"
 T1_SIM_EXIT=espera sh "$KIT" "$PKG" "$SA2" 60 > "$ROOT/out.txt" 2>&1 && RC=0 || RC=$?
 [ "$RC" != 0 ] && ok "saida != 0 na interrupcao (foi $RC)" || bad "saida != 0 na interrupcao (veio $RC)"
 n=$(grep -c "restaurando device" "$ROOT/out.txt" || true)
 [ "$n" = 1 ] && ok "restore rodou uma vez só" || bad "restore rodou uma vez só (rodou $n)"
-[ -f "$DEV/data/local/tmp/mods/$PKG/meu_mod.bpatch" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
-[ -f "$DEV/data/local/tmp/mods/$PKG/t1_return.bpatch" ] && bad "artefato do teste sobrou" || ok "artefato do teste removido"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/meu_mod.bpatch" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/t1_return.bpatch" ] && bad "artefato do teste sobrou" || ok "artefato do teste removido"
 [ -d "$DEV/data/data/$PKG/files/bepinex" ] && ok "files/bepinex existe no final" || bad "files/bepinex existe no final"
 grep -q "log inicial\|11:00:00 \[loader\]" "$DEV/data/data/$PKG/files/bepinex/log.txt" 2>/dev/null \
     && ok "log.txt voltou ao inicial" || bad "log.txt voltou ao inicial"
@@ -223,8 +228,8 @@ T1_SIM_EXIT=instalado sh "$KIT" "$PKG" "$SA2" 60 > "$ROOT/out2.txt" 2>&1 && RC=0
 [ "$RC" != 0 ] && ok "saida != 0 (foi $RC)" || bad "saida != 0 (veio $RC)"
 n=$(grep -c "restaurando device" "$ROOT/out2.txt" || true)
 [ "$n" = 1 ] && ok "restore rodou uma vez só" || bad "restore rodou uma vez só (rodou $n)"
-[ -f "$DEV/data/local/tmp/mods/$PKG/t1_static.bpatch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
-[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/t1_static.bpatch" ] && bad "patch instalado sobrou" || ok "patch instalado removido"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário preservado" || bad "mod do usuário preservado"
 
 scen "(1) sem backup verificado de files/bepinex: a pasta do usuario NAO e apagada"
 # O risco do achado: o restore fazia 'rm -rf files/bepinex' e so depois tentava
@@ -512,8 +517,8 @@ export FAKE_PKG="$PKG" MODS_HASH_STATE="$ROOT/r1-state-$$"
 RC=0
 OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
 echo "$OUT" | grep -q "não consegui hashear mods" && ok "recusou com hash ilegível" || bad "recusou com hash ilegível"
-[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário intacto (nada apagado)" || bad "mod do usuário intacto (nada apagado)"
-grep -q "mod do usuario" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null && ok "conteúdo do mod preservado" || bad "conteúdo do mod preservado"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário intacto (nada apagado)" || bad "mod do usuário intacto (nada apagado)"
+grep -q "mod do usuario" "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" 2>/dev/null && ok "conteúdo do mod preservado" || bad "conteúdo do mod preservado"
 [ "$RC" != 0 ] && ok "saída != 0 (foi $RC)" || bad "saída != 0 (veio $RC)"
 write_base_su
 unset FAKE_PKG MODS_HASH_STATE
@@ -528,11 +533,11 @@ mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
 printf 'mod do usuario (so no backup)\n' > "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so"
 touch "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so"
 printf 'before_sha=deadbeef\n' > "$DEV/data/local/tmp/t1-inprogress-$PKG"
-printf 'mod do usuario EDITADO depois do crash\n' > "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so"
+printf 'mod do usuario EDITADO depois do crash\n' > "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so"
 RC=0
 OUT=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1) || RC=$?
 echo "$OUT" | grep -q "DIFERE" && ok "detectou conflito (mod atual != backup)" || bad "detectou conflito (mod atual != backup)"
-grep -q "EDITADO depois do crash" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/dev/null \
+grep -q "EDITADO depois do crash" "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" 2>/dev/null \
     && ok "mod editado pelo usuário preservado" || bad "mod editado pelo usuário preservado"
 [ -f "$DEV/data/local/tmp/t1-bak-$PKG.conflict/sa2ammo.so" ] && ok "cópia de segurança em .conflict" || bad "cópia de segurança em .conflict"
 [ -f "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so" ] && ok "backup original intacto" || bad "backup original intacto"
@@ -543,7 +548,7 @@ grep -q "EDITADO depois do crash" "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" 2>/
 # backup NOVO (do estado quebrado) destruía o único backup bom no rm do .part.
 scen "(r3) recuperação não confere = aborta com backup bom preservado"
 new_device r3
-rm -rf "$DEV/data/local/tmp/mods/$PKG"
+rm -rf "$DEV/data/adb/bepinex/mods/$PKG"
 mkdir -p "$DEV/data/local/tmp/t1-bak-$PKG"
 printf 'mod do usuario (so no backup)\n' > "$DEV/data/local/tmp/t1-bak-$PKG/sa2ammo.so"
 printf 'componente que o cp falho nao copia\n' > "$DEV/data/local/tmp/t1-bak-$PKG/u_patch.so"
@@ -623,7 +628,7 @@ OUT2=$(sh "$KIT" "$PKG" "$SA2" 6 2>&1 || true)
 echo "$OUT2" | grep -q "run anterior interrompido detectado" \
     && bad "2º run sem caminho de recuperação" || ok "2º run sem caminho de recuperação"
 echo "$OUT2" | grep -q "device restaurado" && ok "2º run restaurou" || bad "2º run restaurou"
-[ -f "$DEV/data/local/tmp/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário segue lá" || bad "mod do usuário segue lá"
+[ -f "$DEV/data/adb/bepinex/mods/$PKG/sa2ammo.so" ] && ok "mod do usuário segue lá" || bad "mod do usuário segue lá"
 [ ! -d "$DEV/data/local/tmp/t1-bak-$PKG" ] && ok "sem BAK órfão no fim" || bad "sem BAK órfão no fim"
 
 # --- armadilha do adb "real": o marcador NUNCA pode existir no fim ----------

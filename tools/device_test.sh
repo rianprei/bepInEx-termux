@@ -58,7 +58,12 @@ for a in "$@"; do
     esac
 done
 
-MODS="/data/local/tmp/mods/$PKG"   # arvore VELHA: o restore do kit ainda nao foi trocado (ver o resto do item 1)
+# DIVISÃO TRÂNSITO/ÁRVORE:
+# - O QUE O MOD É (MODS) vai para /data/adb/bepinex/mods/<pkg> (root-only) via su -c mv.
+# - TRÂNSITO (STAGE, BAK, BAK_OUT, MARK, LOCK) fica em /data/local/tmp porque o adb
+#   não lê /data/local/tmp. O restore volta o que era do mod para a árvore e mantém
+#   o trânsito em /data/local/tmp.
+MODS="/data/adb/bepinex/mods/$PKG"
 STAGE="/data/local/tmp/t1-stage-$PKG"
 BAK="/data/local/tmp/t1-bak-$PKG"
 BAK_OUT="/data/local/tmp/t1-bak-out-$PKG"
