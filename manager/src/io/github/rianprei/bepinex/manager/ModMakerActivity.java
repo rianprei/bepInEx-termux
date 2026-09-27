@@ -24,6 +24,7 @@ import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
 import io.github.rianprei.bepinex.manager.core.ScanFlow;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.model.DumpEntry;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 import io.github.rianprei.bepinex.manager.model.PatchRule;
@@ -38,7 +39,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ModMakerActivity extends Activity {
+public class ModMakerActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int PAGE_SIZE = 25;
 
     private String mPkg;
@@ -600,6 +601,9 @@ public class ModMakerActivity extends Activity {
 
             final String finalWarning = missingWarning;
             mMainHandler.post(() -> {
+                // Callback longo (su): a tela pode ter morrido (rotação) —
+                // dialog em Activity destruída é BadTokenException.
+                if (!UiLiveness.alive(this)) return;
                 new AlertDialog.Builder(this)
                         .setTitle("Mod Salvo!")
                         .setMessage("O mod '" + modName + "' foi salvo e ativado para " + mPkg + "!" + finalWarning)
@@ -645,6 +649,7 @@ public class ModMakerActivity extends Activity {
                 File bmod = BmodInstaller.createBmod(manifest, patchContent, true, downloadDir);
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     new AlertDialog.Builder(this)
                             .setTitle("Mod Exportado!")
                             .setMessage("Arquivo criado com sucesso:\n\n" + bmod.getAbsolutePath())

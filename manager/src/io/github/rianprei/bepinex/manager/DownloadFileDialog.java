@@ -22,7 +22,9 @@ final class DownloadFileDialog {
         new Thread(() -> {
             DownloadFilePicker.Listing listing = SuHelper.listDownloadFiles();
             MAIN.post(() -> {
-                if (activity.isFinishing()) return;
+                // Mesma regra de UiLiveness (testada): isFinishing() OU
+                // isDestroyed() — rotação destrói a tela sem isFinishing().
+                if (activity.isFinishing() || activity.isDestroyed()) return;
                 if (!listing.success()) {
                     showMessage(activity, "Não foi possível listar os arquivos", listing.error);
                     return;
@@ -65,7 +67,7 @@ final class DownloadFileDialog {
             File resultFile = staged;
             String resultError = error;
             MAIN.post(() -> {
-                if (activity.isFinishing()) {
+                if (activity.isFinishing() || activity.isDestroyed()) {
                     SelectedFileStager.delete(resultFile);
                     return;
                 }

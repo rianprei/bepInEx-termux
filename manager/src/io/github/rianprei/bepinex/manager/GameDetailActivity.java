@@ -25,6 +25,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.InFlightFlag;
+import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
@@ -42,7 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
-public class GameDetailActivity extends Activity {
+public class GameDetailActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int REQUEST_PICK_BMOD_FOR_GAME = 1002;
     private static final Executor FILE_EXECUTOR =
             command -> new Thread(command, "mod-file-import").start();
@@ -65,6 +67,9 @@ public class GameDetailActivity extends Activity {
     private final List<ModInfo> mMods = new ArrayList<>();
     private ModAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    // Fora da Activity: rotação não pode deixar o staged escolhido órfão;
+    // a instância nova herda e retoma o install no onResume.
+    private final PendingStagedFile mPendingStagedFile = new PendingStagedFile();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -189,7 +194,25 @@ public class GameDetailActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Herança de rotação: o staged da instância anterior retoma o install
+        // (aqui o jogo de destino é fixo, definido quando o usuário escolheu).
+        File pending = mPendingStagedFile.take();
+        if (pending != null) {
+            installStagedFile(pending);
+            return;
+        }
         loadMods();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Saída definitiva: nenhum staged pendente sobra no cache. Em rotação
+        // (isFinishing == false) o arquivo fica pendente para a nova instância.
+        if (isFinishing()) {
+            File pending = mPendingStagedFile.take();
+            if (pending != null) SelectedFileStager.delete(pending);
+        }
     }
 
     @Override
@@ -218,8 +241,12 @@ public class GameDetailActivity extends Activity {
         SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
                 () -> getContentResolver().openInputStream(uri), (staged, error) ->
                         mMainHandler.post(() -> {
-                            if (isFinishing()) {
-                                SelectedFileStager.delete(staged);
+                            if (!UiLiveness.alive(this)) {
+                                // Tela morreu no meio da cópia (rotação etc.):
+                                // fica pendente para a instância nova.
+                                if (staged != null && !mPendingStagedFile.set(staged)) {
+                                    SelectedFileStager.delete(staged);
+                                }
                                 return;
                             }
                             if (error != null) {
@@ -242,8 +269,18 @@ public class GameDetailActivity extends Activity {
         if (!installInFlight.begin()) return;
         SelectedFileWork.install(FILE_EXECUTOR, file, mPkg, mEngine, (result, error) ->
                 mMainHandler.post(() -> {
-                    SelectedFileStager.delete(file);
                     installInFlight.end();
+                    if (!UiLiveness.alive(this)) {
+                        // Morreu com o install em voo: se instalou, o staged
+                        // cumpriu o papel; se não, a instância nova retenta.
+                        if (error == null && result != null && result.success) {
+                            SelectedFileStager.delete(file);
+                        } else if (!mPendingStagedFile.set(file)) {
+                            SelectedFileStager.delete(file);
+                        }
+                        return;
+                    }
+                    SelectedFileStager.delete(file);
                     if (isFinishing()) return;
                     String title = error != null || !result.success ? "Não instalado" : "Sucesso";
                     String message = error != null

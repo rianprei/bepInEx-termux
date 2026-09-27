@@ -30,6 +30,8 @@ import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.InFlightFlag;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
+import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
@@ -46,7 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int REQUEST_PICK_FILE = 1001;
     private static final Executor FILE_EXECUTOR =
             command -> new Thread(command, "mod-file-import").start();
@@ -67,7 +69,10 @@ public class MainActivity extends Activity {
     private GameAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Uri mPendingIncomingUri;
-    private File mPendingImportFile;
+    // Fora da Activity: rotação destrói a tela mas o arquivo staged escolhido
+    // pelo usuário não pode virar órfão no cache. A instância nova herda no
+    // próximo refresh; se a saída for definitiva (isFinishing), apaga.
+    private final PendingStagedFile mPendingStagedFile = new PendingStagedFile();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -124,6 +129,18 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         loadStatusAndApps();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Saída definitiva da tela (usuário fechou/voltou): nenhum staged
+        // pendente sobra no cache. Em rotação (isFinishing == false) o arquivo
+        // fica pendente e a instância nova herda no próximo refresh.
+        if (isFinishing()) {
+            File pending = mPendingStagedFile.take();
+            if (pending != null) SelectedFileStager.delete(pending);
+        }
     }
 
     @Override
@@ -264,10 +281,10 @@ public class MainActivity extends Activity {
                     Uri pending = mPendingIncomingUri;
                     mPendingIncomingUri = null;
                     processSelectedUri(pending);
-                } else if (mPendingImportFile != null) {
-                    File pending = mPendingImportFile;
-                    mPendingImportFile = null;
-                    processSelectedFile(pending);
+                } else {
+                    // Herança de rotação: arquivo staged da instância anterior.
+                    File pending = mPendingStagedFile.take();
+                    if (pending != null) processSelectedFile(pending);
                 }
             });
         }).start();
@@ -303,8 +320,12 @@ public class MainActivity extends Activity {
         SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
                 () -> getContentResolver().openInputStream(uri), (staged, error) ->
                         mMainHandler.post(() -> {
-                            if (isFinishing()) {
-                                SelectedFileStager.delete(staged);
+                            if (!UiLiveness.alive(this)) {
+                                // Tela morreu (rotação/tema/idioma) com a cópia em voo:
+                                // fica pendente para a instância nova, não vira órfão.
+                                if (staged != null && !mPendingStagedFile.set(staged)) {
+                                    SelectedFileStager.delete(staged);
+                                }
                                 return;
                             }
                             if (error != null) {
@@ -315,7 +336,7 @@ public class MainActivity extends Activity {
                                         .setPositiveButton("OK", null)
                                         .show();
                             } else if (mAllGames.isEmpty()) {
-                                mPendingImportFile = staged;
+                                if (!mPendingStagedFile.set(staged)) SelectedFileStager.delete(staged);
                             } else {
                                 processSelectedFile(staged);
                             }
@@ -341,13 +362,15 @@ public class MainActivity extends Activity {
 
     private void processSelectedFile(File file) {
         if (mAllGames.isEmpty()) {
-            mPendingImportFile = file;
+            if (!mPendingStagedFile.set(file)) SelectedFileStager.delete(file);
             return;
         }
         SelectedFileWork.inspect(FILE_EXECUTOR, file, (inspection, error) ->
                 mMainHandler.post(() -> {
-                    if (isFinishing()) {
-                        SelectedFileStager.delete(file);
+                    if (!UiLiveness.alive(this)) {
+                        // Rotação no meio da inspeção: a instância nova re-pergunta
+                        // com o mesmo arquivo (ele continua pendente).
+                        if (!mPendingStagedFile.set(file)) SelectedFileStager.delete(file);
                         return;
                     }
                     if (error != null) {
@@ -425,8 +448,18 @@ public class MainActivity extends Activity {
         if (!installInFlight.begin()) return;
         SelectedFileWork.install(FILE_EXECUTOR, file, packageName, engine, (result, error) ->
                 mMainHandler.post(() -> {
-                    SelectedFileStager.delete(file);
                     installInFlight.end();
+                    if (!UiLiveness.alive(this)) {
+                        // Morreu com o install em voo: se instalou, o staged
+                        // cumpriu o papel; se não, a instância nova tenta de novo.
+                        if (error == null && result != null && result.success) {
+                            SelectedFileStager.delete(file);
+                        } else if (!mPendingStagedFile.set(file)) {
+                            SelectedFileStager.delete(file);
+                        }
+                        return;
+                    }
+                    SelectedFileStager.delete(file);
                     if (error != null) {
                         showImportMessage("Não instalado", "Falha ao instalar o arquivo: "
                                 + error.getMessage());
