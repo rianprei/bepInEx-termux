@@ -18,7 +18,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BC_GENERIC_ALLOWLIST_PATH "/data/local/tmp/bc_generic_allowlist.conf"
+#include "bc_loader.h"   // BC_GENERIC_ALLOWLIST_FILE: fonte unica da raiz
+#define BC_GENERIC_ALLOWLIST_PATH BC_GENERIC_ALLOWLIST_FILE
 #define BC_GENERIC_ALLOWLIST_MAX_LINE 256
 
 // Pura, host-testável: dado o conteúdo do arquivo já lido pra memória,

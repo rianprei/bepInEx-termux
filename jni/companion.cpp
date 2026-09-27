@@ -1072,14 +1072,24 @@ void companion_handler(int zygisk_socket) {
     LOGI("companion process started");
     launch_termux_console();
 
-    // Achado real (device, 2026-09-15): /data/local/tmp é drwxrwx--x dono
-    // shell:shell — "outros" (onde cai o UID do app do jogo) só tem --x
-    // (atravessa, NÃO cria arquivo). write_patches_snapshot() no game
-    // process usa mkstemp() nesse dir pra escrita atômica do snapshot do
-    // list_patches — falhava silenciosamente (sem log) porque o processo
-    // do jogo não tinha permissão de escrita ali. Companion roda como
-    // root: relaxa a permissão 1x por spawn (idempotente, custo zero).
-    chmod("/data/local/tmp", 0777);
+    // O chmod("/data/local/tmp", 0777) QUE ESTAVA AQUI FOI REMOVIDO.
+    //
+    // Ele existia por um motivo real (device, 2026-09-15): o processo do jogo
+    // escrevia o snapshot bc_patches.txt com mkstemp() nesse diretório, e o
+    // AOSP cria /data/local/tmp como 0771 shell:shell — o uid do jogo só tem
+    // --x, não escreve. O companion rodava como root e relaxava 0771 -> 0777
+    // uma vez por spawn.
+    //
+    // Esse relaxamento ERA o achado de seguranca, nao um detalhe: 0777 em
+    // /data/local/tmp significa que QUALQUER appuid do aparelho — inclusive o
+    // jogo — escreve, cria e TROCA o diretorio. Foi o que permitia a arvore de
+    // mods ser desviada por link simbolico antes de o root tocar nela.
+    //
+    // Com a arvore de mods em /data/adb/bepinex (root:root 0700) e o jogo
+    // recebendo FD em vez de abrir caminho, nao ha mais nada que o jogo
+    // precise escrever em /data/local/tmp. Se o snapshot voltar a faltar, o
+    // sintoma e log do lado do companion, e nao um chmod que abre o
+    // diretorio para o aparelho inteiro.
 
     // zygisk_socket é o outro lado do fd que main.cpp guarda em
     // g_stream_fd (mesmo connectCompanion(), duas pontas). Não fazemos

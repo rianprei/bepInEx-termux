@@ -6,80 +6,51 @@
 # "allow <src> <tgt> <class> { <perms> }" e "type <nome> <atributo>". Linhas
 # vazias e linhas comecadas em "#" sao ignoradas pelo parser (statement.rs:606).
 #
-# CONTEXTO DE ROTULO (AOSP platform/system/sepolicy/private/file_contexts):
-#   /data/local/tmp(/.*)?  -> shell_data_file   (linha 626)
-#   /data/(.*)?            -> system_data_file  (linha 589) — appdomain e
-#     zygote ja tem search/getattr nessa arvore, logo /data/local nao e gargalo.
-# Entao o unico obstaculo de travessia ate os mods e o /data/local/tmp, e o
-# unico obstaculo depois dele e o tipo dos arquivos em si (da pra isso um tipo
-# proprio: nao queremos dar leitura de shell_data_file:file pra todo app).
+# ESTE ARQUIVO TEVE 9 REGRAS E TEM 4 (revisao de seguranca do freebuff).
 #
-# TIPOS DE CONTEXTO (dois, e nao se misturam):
-#   zygote    -> o preAppSpecialize roda aqui, antes do dyntransition pro app
-#                (AOSP private/zygote.te: "allow zygote appdomain:process
-#                dyntransition"). O que o loader faz nessa fase: 1 stat() da
-#                pasta de mods (F1 decide_path) e, so se ela nao existir, a
-#                leitura da allowlist legada.
-#   appdomain -> o processo do jogo depois de specialize (atributo que todo
-#                app recebe, AOSP private/app.te). Aqui rodam o scandir() da
-#                pasta de mods e o dlopen() dos .so, na thread de carga.
+# A arvore de mods foi de /data/local/tmp para /data/adb/bepinex porque o PAI
+# antigo nao era controlado pelo root: /data/local/tmp e 0777 e /data/local e
+# 0771 shell:shell, entao o shell e qualquer appuid podiam trocar o diretorio
+# por um link simbolico antes de o root tocar nele. Em /data/adb (root:root
+# 0700) o SO ROOT escreve.
+#
+# E, por isso, o PROCESSO DO JOGO DEIXOU DE ABRIR O CAMINHO. Ele nao tem (nem
+# deve ter) acesso a /data/adb. O companion (root) abre o .so e entrega o FD
+# pelo socket (SCM_RIGHTS), e o jogo abre com android_dlopen_ext(...,
+# ANDROID_DLEXT_USE_LIBRARY_FD). Consequencia direta: SEIS das nove regras
+# antigas nao tem mais objeto — elas davam ao jogo acesso de CAMINHO em
+# /data/local/tmp, e nao ha mais caminho para abrir.
+#
+# O kernel confere o rotulo do arquivo no mmap, e nao no open(): com o FD ja
+# aberto pelo root, o que o appdomain precisa e map/read/execute no .so. Nem
+# getattr nem open nem dir: sao de abrir por caminho.
 
-# --- tipo proprio dos arquivos de mod -----------------------------------------
+# --- 1/4: tipo proprio dos arquivos de mod ----------------------------------
+# Rotula a arvore em /data/adb/bepinex, que o companion (root) e o boot
+# escrevem. E o que da ao jogo o map/read/execute da regra 2/4.
 type bepinex_mod_file file_type
 
-# --- zygote: o stat() que decide o caminho ------------------------------------
-# search em shell_data_file:dir = entrar em /data/local/tmp.
-#
-# zygote64 entra na lista porque ate o Android 11 existia um segundo dominio de
-# zygote, e em API <= 30 e o que roda o preAppSpecialize. No AOSP atual o tipo
-# zygote64 nao existe mais, e isso NAO quebra o arquivo: magiskpolicy expande
-# "allow { a b }" no produto cartesiano e chama add_rule() uma vez por par; um
-# tipo inexistente so faz aquele par falhar com um LOGW
-# (sepolicy.cpp:244 "target type ... does not exist" + api.cpp:59 expand) — o
-# resto do sepolicy.rule continua sendo aplicado.
-allow { zygote zygote64 } shell_data_file dir search
-# getattr + search em bepinex_mod_file:dir = stat() do /mods/<pkg>/ e olhar o
-# nome dentro de /mods/ (o stat e do objeto final; o search, do diretorio pai).
-allow { zygote zygote64 } bepinex_mod_file dir { getattr search }
-# getattr/open/read no conf da allowlist legada (experimento Cocos): o post-fs-data
-# chcona esse arquivo pro tipo novo, entao ele nao e mais shell_data_file:file e o
-# zygote consegue access() + fopen() nele. Sem isto a allowlist fica muda em
-# Enforcing (todo app cairia em DLCLOSE por causa de um conf opcional).
-allow { zygote zygote64 } bepinex_mod_file file { getattr open read }
+# --- 2/4: o jogo so precisa mapear o .so -----------------------------------
+# map + read + execute. E o que o ANDROID_DLEXT_USE_LIBRARY_FD exige: o FD ja
+# vem aberto pelo root, e o kernel checa o rotulo do objeto no mmap.
+# SEM getattr/open/dir: nao ha mais acesso de caminho, e a pasta em /data/adb
+# nao e legivel pelo appdomain (parent root:root 0700).
+allow appdomain bepinex_mod_file file { map read execute }
 
-# --- appdomain: scandir() + dlopen() dos mods ---------------------------------
-# search em shell_data_file:dir = chegar em /data/local/tmp/mods a partir do
-# processo do jogo. Nada de shell_data_file:file: o jogo nao le nada dali, so
-# desce na arvore.
-allow appdomain shell_data_file dir search
-# search/read/open na pasta: scandir() = opendir() (open) + readdir() (read) e
-# lookup do nome dos .so (search). getattr cobre o fstat() que o scandir() faz
-# no dirfd — preventative, para nao depender da libc do device.
-allow appdomain bepinex_mod_file dir { getattr search read open }
-# getattr/open/read/map/execute no .so: dlopen() abre e le o arquivo, mmap com
-# PROT_EXEC (map) e o SO precisa ser executavel (execute).
-allow appdomain bepinex_mod_file file { getattr open read map execute }
-
-# --- W+X: o que Dobby e o u_patch exigem para hookar/patchar ---------------------
-# Duas verificacoes SELinux diferentes, e o AOSP ja cobre a primeira.
+# --- 3/4: mmap() anonimo PROT_EXEC ------------------------------------------
 # Sintaxe magiskpolicy: "allow <src> <tgt> <class> { <perms> }", com espaco —
 # NAO a forma "self:process" de .te/CIL, que o magiskpolicy nao entende
-# (ver tools/check_sepolicy_rule.sh, que amarra este arquivo na gramática).
-#  - mmap() anonimo PROT_EXEC (pagina de trampoline do Dobby, pagina de thunks
-#    do u_patch) => self:process execmem. O AOSP JA da isso pro appdomain
-#    (private/app.te:189, "WebView and other application-specific JIT
-#    compilers"). Repetido aqui porque ROM OEM (HyperOS deste device) pode
-#    tirar a permissao, e mmap falhando nao deixa log nenhum no jogo.
+# (ver tools/check_sepolicy_rule.sh, que amarra este arquivo na gramatica).
+# Pagina de trampoline do Dobby e de thunks do u_patch. O AOSP JA da execmem
+# ao appdomain (private/app.te:189, "WebView and other application-specific
+# JIT compilers"). Repetido aqui porque ROM OEM (HyperOS do device deste
+# projeto) pode tirar a permissao, e mmap falhando nao deixa log nenhum no
+# jogo.
 allow appdomain appdomain process execmem
-#  - mprotect() com +PROT_EXEC na pagina de codigo do jogo => execmod no tipo do
-#    arquivo mapeado. As libs do jogo sao apk_data_file
-#    (private/file_contexts:611, "/data/app(/.*)?"), e o AOSP da map+execute
-#    nelas (private/app.te:443, x_file_perms) mas NAO execmod. Sem esta linha o
-#    DobbyHook e o patch in-place do u_patch morrem com EACCES em Enforcing.
+
+# --- 4/4: mprotect() com +PROT_EXEC na pagina de codigo do jogo ------------
+# execmod no tipo do arquivo mapeado. As libs do jogo sao apk_data_file
+# (private/file_contexts:611, "/data/app(/.*)?"), e o AOSP da map+execute
+# nelas (private/app.te:443, x_file_perms) mas NAO execmod. Sem esta linha o
+# DobbyHook e o patch in-place do u_patch morrem com EACCES em Enforcing.
 allow appdomain apk_data_file file execmod
-# Travessia de /data e /data/local (system_data_file:dir) ate /data/local/tmp:
-# o zygote ja tem r_dir_perms nisso (private/zygote.te:36). Para o appdomain o
-# AOSP nao tem neverallow cobrindo (o de private/app.te:608 so proibe o grupo
-# {create write setattr ...}, o que implica que o resto ja existe), mas nao achei
-# a linha que concede — e search e o minimo, custo zero.
-allow appdomain system_data_file dir search

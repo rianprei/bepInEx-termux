@@ -10,14 +10,14 @@ import java.util.Map;
  * Inventário de mods de TODOS os apps instalados, com UMA chamada root.
  *
  * Por que isso existe (achado de device, 2026-09-27): a tela de jogos fazia
- * {@code SuHelper.listFiles("/data/local/tmp/mods/" + pkg)} dentro do laço por
+ * {@code SuHelper.listFiles(SuHelper.modsDir(pkg))} dentro do laço por
  * app instalado. Cada listFiles abre um processo {@code su} novo, e um celular
  * com centenas de apps esgotava a memória — o Manager travou o aparelho do
  * usuário. A contagem de chamadas root na tela inicial não pode depender do
  * número de apps: é 1, sempre.
  *
  * O trabalho acontece DENTRO do shell do device (um {@code for} sobre
- * /data/local/tmp/mods/*), e o resultado volta como texto delimitado. O
+ * /data/adb/bepinex/mods/*), e o resultado volta como texto delimitado. O
  * parse é puro, então o teste de host conta as chamadas com um fake.
  */
 public final class ModInventory {
@@ -46,7 +46,7 @@ public final class ModInventory {
     public static final String OFF_SUFFIX = ".off";
 
     /**
-     * Um arquivo de mod de /data/local/tmp/mods/&lt;pkg&gt;/ lido do NOME.
+     * Um arquivo de mod de /data/adb/bepinex/mods/&lt;pkg&gt;/ lido do NOME.
      *
      * @param id      nome do mod (sem extensao, sem .off)
      * @param type    "native" (.so) ou "patch" (regras)
@@ -120,7 +120,12 @@ public final class ModInventory {
      * todo jogo com 0 mods, sem erro nenhum na tela.
      */
     public static String command() {
-        return command("/data/local/tmp/mods");
+        // MODS_ROOT tem barra final (é prefixo de concatenação); o for do
+        // shell quer o caminho SEM a barra, senão vira /data/adb/bepinex/mods//*/.
+        String root = SuHelper.MODS_ROOT.endsWith("/")
+                ? SuHelper.MODS_ROOT.substring(0, SuHelper.MODS_ROOT.length() - 1)
+                : SuHelper.MODS_ROOT;
+        return command(root);
     }
 
     public static String command(String modsRoot) {

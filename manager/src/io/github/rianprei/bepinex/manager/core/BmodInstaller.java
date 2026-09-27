@@ -143,7 +143,7 @@ public final class BmodInstaller {
         }
     }
 
-    // Instala o .bmod no diretorio /data/local/tmp/mods/<targetPkg>/
+    // Instala o .bmod no diretorio /data/adb/bepinex/mods/<targetPkg>/
     public static InstallResult install(File bmodFile, String targetPkg, String detectedEngine) {
         ModManifest manifest;
         try {
@@ -188,7 +188,7 @@ public final class BmodInstaller {
                 }
             }
 
-            // 4. Copiar para /data/local/tmp/mods/<targetPkg>/
+            // 4. Copiar para /data/adb/bepinex/mods/<targetPkg>/
             String destDir = SuHelper.modsDir(targetPkg);
             SuHelper.ensureModDir(targetPkg);
 

@@ -13,7 +13,7 @@ import java.util.zip.ZipFile;
 // realmente roda neste celular.
 //
 // Nada aqui abre o jogo, nada aqui escreve no APK/OBB/arquivos do jogo: o
-// arquivo vai para /data/local/tmp/mods/<pkg>/ (C1), via su, com 644 e o
+// arquivo vai para /data/adb/bepinex/mods/<pkg>/ (C1), via su, com 644 e o
 // contexto bepinex_mod_file (F1c) — quem escreve no device e o SuHelper.
 public final class LooseModInstaller {
 
@@ -98,7 +98,7 @@ public final class LooseModInstaller {
         }
 
         String destName = det.targetId + det.targetExt;
-        String destPath = "/data/local/tmp/mods/" + pkg + "/" + destName;
+        String destPath = SuHelper.modsDir(pkg) + destName;
         if (!SuHelper.ensureModDir(pkg)) {
             return new Result(false,
                     "Não deu para preparar a pasta de mods do jogo (sem root?).",
@@ -121,7 +121,7 @@ public final class LooseModInstaller {
             return new Result(false, "Permissão root não disponível. Impossível instalar o mod.",
                     ModContentDetector.Kind.FRIDA_GADGET, null);
         }
-        String dir = "/data/local/tmp/mods/" + pkg + "/";
+        String dir = SuHelper.modsDir(pkg);
         if (!SuHelper.ensureModDir(pkg)) {
             return new Result(false, "Não deu para preparar a pasta de mods do jogo (sem root?).",
                     ModContentDetector.Kind.FRIDA_GADGET, null);

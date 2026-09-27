@@ -29,7 +29,8 @@
 #include <string.h>
 #include <stdio.h>
 
-#define BC_MODS_CONF_PATH "/data/local/tmp/bc_mods.conf"
+#include "bc_loader.h"   // BC_MODS_CONF_FILE: fonte unica da raiz
+#define BC_MODS_CONF_PATH BC_MODS_CONF_FILE
 #define BC_MODS_CONF_MAX 16   // máx. de entradas no arquivo
 #define BC_MODS_VAL_MAX 32    // máx. de bytes do valor (string)
 
