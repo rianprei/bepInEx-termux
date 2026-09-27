@@ -32,6 +32,7 @@ public final class Dll2PatchTest {
         byte[] dll = Files.readAllBytes(fixture);
         DllReader reader = DllReader.parse(dll);
         testFacts(reader);
+        testReturnParameterMetadata(reader);
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);
@@ -167,6 +168,12 @@ public final class Dll2PatchTest {
         check("fixture exercita cabeçalho IL fat", transpiler != null && transpiler.fatHeader());
     }
 
+    private static void testReturnParameterMetadata(DllReader reader) throws Exception {
+        DllReader.MethodInfo method = findMethod(reader, "ReturnParameterMetadataCase", "ReturnAnnotated");
+        check("Param com sequência zero é metadado de retorno, não argumento",
+                method != null && "bool".equals(method.returnType()) && method.parameters().isEmpty());
+    }
+
     private static void testFacts(DllReader reader) throws Exception {
         List<String> facts = Files.readAllLines(findPath("test/fixtures/dll2patch/pe_facts.tsv"),
                 StandardCharsets.UTF_8);
@@ -207,8 +214,8 @@ public final class Dll2PatchTest {
                     DllReader.MethodInfo method = reader.getMethodByRid(rid);
                     check("MethodDef PEReader #" + rid, method.name().equals(name)
                             && method.rva() == rva);
-                    check("método PEReader #" + rid + " tem " + params + " Param rows",
-                            params <= method.parameters().size());
+                    check("método PEReader #" + rid + " tem Param rows válidas",
+                            params <= method.parameters().size() + 1);
                     methodCount++;
                 }
                 default -> throw new AssertionError("fact PEReader desconhecido: " + line);

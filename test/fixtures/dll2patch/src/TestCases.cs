@@ -176,6 +176,16 @@ namespace Dll2PatchFixture
         public static int Double(int x) { return x * 2; }
     }
 
+    public static class ReturnParameterMetadataCase
+    {
+        [return: System.Runtime.InteropServices.MarshalAs(
+            System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static bool ReturnAnnotated()
+        {
+            return true;
+        }
+    }
+
     public class Outer
     {
         public class Inner
