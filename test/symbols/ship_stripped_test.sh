@@ -312,11 +312,12 @@ VAZ=0
 # prebuilt cru, e a primeira sabotagem passou justamente por isso.
 DOBBY_MOD="${SYMBOLS_DOBBY_MOD:-u_noads}"
 DOBBY_SO="$ROOT/mods/$DOBBY_MOD/libs/arm64-v8a/lib$DOBBY_MOD.so"
-if [ ! -f "$DOBBY_SO" ] || [ "$ROOT/mods/$DOBBY_MOD/jni/Android.mk" -nt "$DOBBY_SO" ] ||
-   [ "$ROOT/jni/repro.mk" -nt "$DOBBY_SO" ] || [ "$ROOT/jni/lib/arm64-v8a/libdobby.a" -nt "$DOBBY_SO" ]; then
-    ( cd "$ROOT/mods/$DOBBY_MOD" && "$NDK/ndk-build" -B -j4 ) >"$WORK/dobby.log" 2>&1 ||
-        { tail -5 "$WORK/dobby.log" >&2; die "build de mods/$DOBBY_MOD (que usa Dobby) falhou"; }
-fi
+# SEMPRE builda, sem condição de mtime. A versão com guarda por mtime usava
+# .so de build anterior quando o mtime do fonte era mais velho — o que acontecia
+# numa worktree copiada — e o check (5c) acusava um vazamento que já não
+# existia. Gate de 10s nao é custo; verificar que o build é o de agora, é.
+( cd "$ROOT/mods/$DOBBY_MOD" && "$NDK/ndk-build" -B -j4 ) >"$WORK/dobby.log" 2>&1 ||
+    { tail -5 "$WORK/dobby.log" >&2; die "build de mods/$DOBBY_MOD (que usa Dobby) falhou"; }
 [ -f "$DOBBY_SO" ] || die "mods/$DOBBY_MOD nao gerou $DOBBY_SO: o check (5c) nao prova nada"
 # e o símbolo guardado DESTE .so, que é o arquivo que sai na release
 DOBBY_SYM="$WORK/symbols-dobby"
