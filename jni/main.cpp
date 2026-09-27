@@ -47,6 +47,7 @@
 static inline const char *bc_app_state_dir(char *out, size_t cap);
 static int bc_mod_fd_request(const char *path, char *why, size_t whycap);
 static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap);
+static int bc_mod_text_request(const char *rel, char *out, size_t cap, char *why, size_t whycap);
 static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
 static const char *bc_app_state_dir_impl(char *out, size_t cap);
 
@@ -239,6 +240,68 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
     pthread_mutex_unlock(&g_companion_io);
     return total;
+}
+
+// O CONTEUDO de um texto da arvore (conf, allowlist): o jogo pede, o companion
+// (root) le e manda. Mesmo timeout e mesmo mutex do FD — o socket e o mesmo.
+//
+// A arvore e root-only, entao o jogo nao pode abrir esses arquivos: e para
+// isso que eles viajam por conteudo em vez de por descritor (o .so precisa
+// ser MAPEAVEL e vem por FD; um .conf so precisa do texto).
+static int bc_mod_text_request(const char *rel, char *out, size_t cap,
+                               char *why, size_t whycap) {
+    out[0] = '\0';
+    why[0] = '\0';
+    int sock = bc_fd_socket();
+    if (sock < 0) { snprintf(why, whycap, "sem canal com o companion"); return -1; }
+    pthread_mutex_lock(&g_companion_io);
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, "TX", rel);
+    long total = -1;
+    if (n <= 0) {
+        snprintf(why, whycap, "caminho invalido para o pedido de conteudo");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        snprintf(why, whycap, "companion nao recebeu o pedido de conteudo");
+    } else {
+        char buf[16384];
+        size_t used = 0, head = 0;
+        char *nl = NULL;
+        for (;;) {
+            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
+            if (r < 0) {
+                if (errno == EINTR) continue;
+                snprintf(why, whycap, "companion nao respondeu o conteudo em 5s");
+                break;
+            }
+            if (r == 0) { snprintf(why, whycap, "companion fechou antes do conteudo"); break; }
+            used += (size_t)r;
+            buf[used] = '\0';
+            nl = (char *)memchr(buf, '\n', used);
+            if (nl != NULL) break;
+            if (used >= sizeof(buf) - 1) { snprintf(why, whycap, "conteudo maior que o buffer"); break; }
+        }
+        if (nl != NULL) {
+            *nl = '\0';
+            head = (size_t)(nl - buf) + 1;
+            total = atol(buf);
+            if (total < 0) { snprintf(why, whycap, "resposta de conteudo invalida"); total = -1; }
+            else if ((size_t)total >= cap) { snprintf(why, whycap, "conteudo maior que o buffer (%ld)", total); total = -1; }
+            else {
+                size_t rlen = used - head;
+                if ((size_t)total > rlen) rlen = (size_t)total;   // pode vir em partes
+                if (rlen > 0) memcpy(out, buf + head, rlen);
+                out[rlen < cap ? rlen : cap - 1] = '\0';
+            }
+        }
+    }
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    pthread_mutex_unlock(&g_companion_io);
+    return (int)total;
 }
 
 // dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
@@ -2313,8 +2376,22 @@ public:
             // legado, não é mais pré-requisito de nada. Decisão pura em
             // bc_path_decide.h (testada no harness), I/O fica aqui.
             bool dir_exists = has_pkg_mods_dir(pkg_copy);
-            g_path_kind = bc_decide_path(pkg_copy, dir_exists,
-                                         !dir_exists && bc_generic_allowlist_contains(pkg_copy));
+            // A allowlist vem por CONTEUDO, nao por caminho: a arvore e
+            // root-only e o jogo nao a abre. O companion (root) le e manda pelo
+            // socket. Sem companion, a allowlist nao esta disponivel — e o
+            // mod continua carregando pela pasta, que e o caminho principal.
+            bool na_allowlist = false;
+            if (!dir_exists) {
+                char buf[8192];
+                char why[160] = {0};
+                if (bc_mod_text_request("bc_generic_allowlist.conf", buf, sizeof(buf),
+                                        why, sizeof(why)) >= 0) {
+                    na_allowlist = bc_generic_allowlist_contains_buf(buf, pkg_copy);
+                } else {
+                    LOGI("%s: allowlist indisponivel (%s) — segue sem ela", pkg_copy, why);
+                }
+            }
+            g_path_kind = bc_decide_path(pkg_copy, dir_exists, na_allowlist);
             be_generic_candidate = g_path_kind != BC_PATH_NONE;
             if (be_generic_candidate) {
                 if (!bc_process_copy_package(pkg_copy, strlen(pkg_copy),

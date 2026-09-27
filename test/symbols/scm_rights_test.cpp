@@ -300,6 +300,26 @@ int main() {
                              code.find("android_dlopen_ext") != std::string::npos &&
                              code.find("android/dlext.h") != std::string::npos;
             check("o dlopen e por android_dlopen_ext + DLEXT_USE_LIBRARY_FD", usa_dlext);
+            // (2) CONF/ALLOWLIST por CONTEUDO: o jogo nao abre esses arquivos
+            // (a arvore e root-only), e o companion (root) devolve o texto.
+            bool pede_texto = code.find("bc_mod_text_request(") != std::string::npos;
+            check("o jogo pede o CONTEUDO do conf/allowlist ao companion", pede_texto);
+            // e nao ha leitor por caminho da allowlist em lugar nenhum do jogo
+            bool tem_fopen = code.find("bc_generic_allowlist_contains(") != std::string::npos;
+            check("o jogo nao le a allowlist por caminho", !tem_fopen);
+            // e o companion tem o verbo de conteudo (mod_txt) e o de lista
+            FILE *cf = fopen((self + "/../../jni/companion.cpp").c_str(), "r");
+            if (cf == nullptr) {
+                check("abri jni/companion.cpp para conferir os verbos", false);
+            } else {
+                char cbuf[262144] = {};
+                size_t cn = fread(cbuf, 1, sizeof(cbuf) - 1, cf);
+                fclose(cf);
+                std::string ccode(cbuf, cn);
+                check("o companion tem mod_txt (conteudo) e mod_list (lista)",
+                      ccode.find("mod_txt ") != std::string::npos &&
+                      ccode.find("mod_list ") != std::string::npos);
+            }
         }
     }
 

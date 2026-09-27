@@ -33,7 +33,7 @@ for f in "$@"; do
 done
 GADGET_BIN="mods/u_frida/gadget/frida-gadget.bin"
 [ -f "$GADGET_BIN" ] || die "rode tools/fetch_frida_gadget.sh antes"
-MODS="/data/local/tmp/mods/$PKG"   # arvore VELHA: o fixture do round2 ainda e deste lado
+MODS="/data/adb/bepinex/mods/$PKG"   # arvore root-only (ver post-fs-data.sh). O adb nao le /data/adb: o push vai para /data/local/tmp e um su -c mv coloca no lugar.
 STAGE="/data/local/tmp/frida-stage-$PKG"
 CTX="u:object_r:bepinex_mod_file:s0"
 

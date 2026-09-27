@@ -57,16 +57,14 @@ static inline bool bc_generic_allowlist_contains_buf(const char *buf, const char
 // inútil. A leitura em si é permitida: o post-fs-data chcona este arquivo pro
 // tipo bepinex_mod_file e o zygote tem getattr/open/read nesse tipo — não
 // abrimos shell_data_file:file pra ninguém.
-static inline bool bc_generic_allowlist_contains(const char *pkg) {
-    if (access(BC_GENERIC_ALLOWLIST_PATH, F_OK) != 0) return false;
-    FILE *f = fopen(BC_GENERIC_ALLOWLIST_PATH, "r");
-    if (!f) return false;
-    char buf[8192];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    buf[n] = '\0';
-    return bc_generic_allowlist_contains_buf(buf, pkg);
-}
+// O JOGO nao abre este arquivo: a arvore e root-only (/data/adb) e ele nao tem
+// nem search nela. Quem le e o companion (root), que devolve o CONTEUDO pelo
+// socket; o jogo chama bc_generic_allowlist_contains_buf() com o que chegou
+// (ver bc_mod_text_request em main.cpp, e a unica chamada agora).
+//
+// bc_generic_allowlist_contains() foi REMOVIDA de proposito: manter uma
+// versao que faz access()+fopen() num caminho que o jogo nao alcanca e deixar
+// um leitor morto que parece funcionar.
 #endif // __ANDROID__
 
 #endif // BC_GENERIC_ALLOWLIST_H
