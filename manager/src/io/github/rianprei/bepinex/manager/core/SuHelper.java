@@ -207,8 +207,18 @@ public final class SuHelper {
         } catch (IllegalArgumentException e) {
             return false;
         }
-        Result r = exec("mkdir -p '" + dir + "' && chmod 755 '" + dir + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + dir + "'");
-        return r.success;
+        return exec(ensureModDirCommand(dir)).success;
+    }
+
+    /**
+     * Cadeia que cria a pasta de mods com contexto SELinux. Builder PURO
+     * (sem exec) para o teste de host rodar em sh de verdade: `chcon` não
+     * existe no host, então o teste põe um stub à frente do PATH. A string é
+     * byte a byte a que ia para o device — mesma ordem, mesmo &&, mesmo
+     * contexto.
+     */
+    public static String ensureModDirCommand(String dir) {
+        return "mkdir -p '" + dir + "' && chmod 755 '" + dir + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + dir + "'";
     }
 
     public static List<String> listFiles(String dirPath) {
@@ -307,7 +317,7 @@ public final class SuHelper {
                 fos.write(content.getBytes(StandardCharsets.UTF_8));
             }
             requirePath(tmp.getAbsolutePath(), "tmp");
-            Result r = exec("cp '" + tmp.getAbsolutePath() + "' '" + filePath + "' && chmod 644 '" + filePath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + filePath + "'");
+            Result r = exec(writeTextFileCommand(tmp.getAbsolutePath(), filePath));
             tmp.delete();
             // cp como root cria o arquivo root:root. Se o destino for dentro
             // de /data/data/<pkg>/files (o state dir do jogo), isso tranca o
@@ -319,6 +329,12 @@ public final class SuHelper {
         }
     }
 
+    /** Cadeia de escrita por cópia (conteúdo já validado, entra por arquivo). */
+    public static String writeTextFileCommand(String tmpPath, String destPath) {
+        return "cp '" + tmpPath + "' '" + destPath + "' && chmod 644 '" + destPath + "' && chcon "
+                + SELINUX_MOD_CONTEXT + " '" + destPath + "'";
+    }
+
     public static boolean copyFile(String srcPath, String destPath, String chmodMode) {
         String mode = (chmodMode != null) ? chmodMode : "644";
         try {
@@ -328,8 +344,13 @@ public final class SuHelper {
         } catch (IllegalArgumentException e) {
             return false;
         }
-        Result r = exec("cp -f '" + srcPath + "' '" + destPath + "' && chmod " + mode + " '" + destPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + destPath + "'");
-        return r.success;
+        return exec(copyFileCommand(srcPath, destPath, mode)).success;
+    }
+
+    /** Cópia forçada com modo e contexto SELinux (o `mode` já foi validado). */
+    public static String copyFileCommand(String srcPath, String destPath, String mode) {
+        return "cp -f '" + srcPath + "' '" + destPath + "' && chmod " + mode + " '" + destPath
+                + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + destPath + "'";
     }
 
     // Helper de instalacao de arquivos (adendo F1c SELinux: cp + chmod 644 + chcon)
@@ -387,8 +408,12 @@ public final class SuHelper {
             }
         }
         requirePath(newPath, "toggle");
-        Result r = exec("mv '" + currentPath + "' '" + newPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + newPath + "'");
-        return r.success;
+        return exec(toggleModCommand(currentPath, newPath)).success;
+    }
+
+    /** Ligar/desligar mod: renomeia e reaplica o contexto no nome novo. */
+    public static String toggleModCommand(String currentPath, String newPath) {
+        return "mv '" + currentPath + "' '" + newPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + newPath + "'";
     }
 
     public static boolean restartGame(String pkg) {
