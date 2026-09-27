@@ -66,11 +66,6 @@ stage_tree() {
     done <"$SNAP"
 }
 
-build_com() {
-    local tree="$1" ndk="$2" log="$3"
-    ( cd "$tree/mods/$TARGET" && "$ndk/ndk-build" -B -j4 ) >"$log" 2>&1
-}
-
 # --- 1. as duas árvores ------------------------------------------------------
 # A diferença entre os dois builds é de ONDE o NDK parece estar, e há duas
 # maneiras de isso estar errado:

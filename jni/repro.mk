@@ -142,6 +142,19 @@ endif
 # para o $(if) que vem depois (verificado: dava string vazia com _v já
 # preenchido depois). Passando o valor como ARGUMENTO de outra call, o shell
 # roda primeiro e o $(error) enxerga o resultado.
+# A chave do cache da cópia limpa é o sha256 do CONTEÚDO do prebuilt E dos
+# argumentos do objcopy, E da versão do objcopy.
+#
+# ACHADO DA REVISÃO DE b384771: com a chave sendo só o conteúdo, trocar
+# --strip-debug por uma remoção parcial de seções NÃO gerava cópia nova — o
+# ship_stripped_test reencontrava a cópia limpa antiga do cache, dava OK, e o
+# vazamento voltava sem ninguém ver. A chave tem que mudar quando o que a
+# FERRAMENTA FAZ muda, não só quando a entrada muda.
+#
+# A chave é montada com um printf de uma string só (e não com um grupo
+# `{ ...; }` multi-linha), e NÃO há comentário dentro do $(shell): um `#` em
+# make encerra a linha lógica e deixa o comando pela metade — foi o que
+# quebrou a primeira tentativa.
 define bepinex_prebuilt
 $(call _bp_check,$(strip $(shell \
     src="$(BEPINEX_REPRO_ROOT)/$(1)"; \
@@ -152,14 +165,19 @@ $(call _bp_check,$(strip $(shell \
     fi; \
     outdir="$(BEPINEX_REPRO_ROOT)/obj/prebuilt-limpo"; \
     if ! mkdir -p "$$outdir"; then echo "BEPINEX-ERRO nao criei $$outdir"; exit 0; fi; \
-    sum=$$(sha256sum "$$src" | cut -d" " -f1); \
+    BEPINEX_PB_FLAGS='--strip-debug'; \
+    src_sum=$$(sha256sum "$$src" | cut -d' ' -f1); \
+    oc_ver=$$($(BEPINEX_OBJCOPY) --version 2>/dev/null | head -1); \
+    [ -n "$$oc_ver" ] || oc_ver='sem-versao'; \
+    sum=$$(printf '%s|%s|%s' "$$src_sum" "$$BEPINEX_PB_FLAGS" "$$oc_ver" \
+            | sha256sum | cut -d' ' -f1); \
     out="$$outdir/$$sum.a"; \
     if [ ! -f "$$out" ]; then \
         tmp=$$(mktemp "$$outdir/.tmp.XXXXXX") || { \
             echo "BEPINEX-ERRO mktemp falhou em $$outdir"; exit 0; }; \
-        if ! $(BEPINEX_OBJCOPY) --strip-debug "$$src" "$$tmp" 2>/dev/null; then \
+        if ! $(BEPINEX_OBJCOPY) $$BEPINEX_PB_FLAGS "$$src" "$$tmp" 2>/dev/null; then \
             rm -f "$$tmp"; \
-            echo "BEPINEX-ERRO objcopy --strip-debug falhou em $$src (objcopy: $(BEPINEX_OBJCOPY))"; \
+            echo "BEPINEX-ERRO objcopy $$BEPINEX_PB_FLAGS falhou em $$src (objcopy: $(BEPINEX_OBJCOPY))"; \
             exit 0; \
         fi; \
         mv -f "$$tmp" "$$out" || { rm -f "$$tmp"; \

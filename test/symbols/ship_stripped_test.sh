@@ -346,6 +346,43 @@ done
 if [ "$VAZ" -eq 0 ]; then
     printf '  [PASS] mods/%s (que usa Dobby), seu símbolo guardado e o deste teste não levam /home nem /Users\n' "$DOBBY_MOD"
 fi
+
+# --- 5d. a cópia limpa do cache bate com a chave recalculada ---------------
+#
+# ACHADO DA REVISÃO DE b384771: a chave do cache era o sha256 do CONTEÚDO do
+# prebuilt, e só isso. Trocar --strip-debug por uma remoção parcial de seções
+# não gerava cópia nova: o teste reencontrava a cópia limpa ANTIGA do cache,
+# dava OK, e o vazamento voltava sem ninguém ver. A chave tem que ser função
+# também do que a ferramenta FAZ.
+#
+# Este check recalcula a chave, aqui em bash, a partir de (conteúdo do
+# prebuilt, a string de flags que está no repro.mk, a versão do objcopy) e
+# exige que a cópia com ESSE nome exista. Se alguém mudar os flags e o cache
+# reusar a cópia antiga, a chave recalculada não está lá — e falha. Nao precisa
+# mutar o repro.mk para pegar isso.
+REPRO_MK="$ROOT/jni/repro.mk"
+PB_FLAGS="$(sed -n "s/^[[:space:]]*BEPINEX_PB_FLAGS='\([^']*\)'.*/\1/p" "$REPRO_MK" | head -1)"
+if [ -z "$PB_FLAGS" ]; then
+    printf '  [FAIL] nao achei BEPINEX_PB_FLAGS em jni/repro.mk: a chave do cache nao tem os flags do objcopy\n'
+    fail=1
+else
+    OC="$("$BINDIR/llvm-objcopy" 2>/dev/null || true)"
+    [ -n "$OC" ] || OC="$(command -v llvm-objcopy 2>/dev/null || true)"
+    [ -n "$OC" ] || OC="$(command -v objcopy 2>/dev/null || true)"
+    OC_VER="$("$OC" --version 2>/dev/null | head -1)"
+    [ -n "$OC_VER" ] || OC_VER="sem-versao"
+    SRC_SUM="$(sha256sum "$ROOT/jni/lib/arm64-v8a/libdobby.a" | cut -d' ' -f1)"
+    ESPERADO="$(printf '%s|%s|%s' "$SRC_SUM" "$PB_FLAGS" "$OC_VER" | sha256sum | cut -d' ' -f1)"
+    CACHE="$ROOT/obj/prebuilt-limpo"
+    if [ -f "$CACHE/$ESPERADO.a" ]; then
+        printf '  [PASS] a copia limpa do cache tem a chave recalculada (conteudo + flags "%s" + versao do objcopy)\n' "$PB_FLAGS"
+    else
+        printf '  [FAIL] a copia limpa do cache NAO bate com a chave recalculada (flags "%s").\n' "$PB_FLAGS"
+        printf '        procurado: %s.a\n' "$ESPERADO"
+        printf '        no cache: %s\n' "$(find "$CACHE" -name '*.a' -printf '%f ' 2>/dev/null)"
+        fail=1
+    fi
+fi
 check "o símbolo guardado não leva caminho de quem compilou" "$VAZ"
 
 [ "$fail" -eq 0 ] || die "simbolo vazando para o usuario (ver acima)"
