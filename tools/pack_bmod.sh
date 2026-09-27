@@ -1,6 +1,6 @@
 #!/bin/bash
 # pack_bmod.sh <id> — gera mods/<id>/<id>.bmod, o zip distribuível (C2):
-# manifest.json + mod.so (type=native) ou mod.patch (type=patch).
+# manifest.json + mod.so (type=native) ou mod.bpatch (type=patch).
 # Valida o manifest antes de fechar o zip (format 1, id, engine, type, game).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,7 +54,7 @@ if man["type"] == "native":
     # Já stripado pelo symbols_ship acima.
     src, arc = f"{stage}/mod.so", "mod.so"
 else:
-    src, arc = f"{mod_dir}/{mod_id}.patch", "mod.patch"
+    src, arc = f"{mod_dir}/{mod_id}.bpatch", "mod.bpatch"
 if not os.path.isfile(src): die(f"artefato ausente: {src} (build primeiro)")
 
 out = f"{mod_dir}/{mod_id}.bmod"

@@ -59,8 +59,8 @@ static Il2Cpp il;
 // falta, e nesse caso pode ser cedo demais (cmdline ainda "zygote64",
 // rejeitado por mod_pkg_from_cmdline). Antes isto era um for(;;) sem teto
 // — e um teto curto (10s, o que a revisão dedevice reclamou) matava o
-// dump em device lento. 120s é o mesmo orçamento do il2cpp_boot logo
-// abaixo. Estourou o teto? O dump é abortado: um dump.tsv com
+// dump em device lento. Este teto de 120s é só para resolver o pacote; o
+// il2cpp_boot abaixo tem um deadline separado. Estourou o teto? O dump é abortado: um dump.tsv com
 // "# pkg=" vazio não serve para nada.
 static const char *wait_for_pkg(int timeout_s) {
     for (int i = 0; i <= timeout_s * 5; i++) {
@@ -73,7 +73,7 @@ static const char *wait_for_pkg(int timeout_s) {
 
 // Tamanho do mapeamento da libil2cpp (header do C5): soma os PT_LOAD.
 static int il2cpp_size_cb(struct dl_phdr_info *info, size_t, void *out) {
-    if (info->dlpi_name && strstr(info->dlpi_name, "/libil2cpp.so")) {
+    if (mod_il2cpp_name_matches(info->dlpi_name)) {
         long long total = 0;
         for (int i = 0; i < info->dlpi_phnum; i++)
             if (info->dlpi_phdr[i].p_type == PT_LOAD)
@@ -224,9 +224,15 @@ static void *worker(void *) {
     }
 
     char dir[352], path[384], tmp[448];
-    snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
-    snprintf(path, sizeof(path), "%s/dump.tsv", dir);
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    int dir_n = snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
+    int path_n = snprintf(path, sizeof(path), "%s/dump.tsv", dir);
+    int tmp_n = snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (dir_n <= 0 || (size_t)dir_n >= sizeof(dir) ||
+        path_n <= 0 || (size_t)path_n >= sizeof(path) ||
+        tmp_n <= 0 || (size_t)tmp_n >= sizeof(tmp)) {
+        LOG("caminho de saída longo demais para o pacote — dump abortado");
+        return nullptr;
+    }
 
     struct stat st;
     if (stat(path, &st) == 0) {
@@ -237,7 +243,7 @@ static void *worker(void *) {
     }
 
     if (!il2cpp_boot(il)) {
-        LOG("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
+        LOG("boot IL2CPP falhou; dump abortado (motivo detalhado no log IL2CPP)");
         return nullptr;
     }
     // Enumeração obrigatória (opcionais: flags/image_get_name, com fallback).

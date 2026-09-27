@@ -154,31 +154,31 @@ public class BmodInstallerTest {
         // e o codigo recusa, com o teto no motivo da recusa.
 
         // (1) O caso do briefing: 1MB de zeros numa entrada que DECLARA 16
-        // bytes, num .patch (teto 256KB). Barato e e o ataque classico.
+        // bytes, num .bpatch (teto 256KB). Barato e e o ataque classico.
         File patchBomb = new File(tmpDir(), "patch_bomb.bmod");
         try (ZipOutputStream z = new ZipOutputStream(new FileOutputStream(patchBomb))) {
             z.putNextEntry(new ZipEntry("manifest.json"));
             z.write(manifestJson("patch").getBytes("UTF-8"));
             z.closeEntry();
-            z.putNextEntry(new ZipEntry("mod.patch"));
+            z.putNextEntry(new ZipEntry("mod.bpatch"));
             z.write(new byte[1024 * 1024]);
             z.closeEntry();
         }
-        rewriteDeclaredSize(patchBomb, "mod.patch", 16);
-        checkZipBombPremise(patchBomb, "mod.patch", 16, 1024 * 1024);
+        rewriteDeclaredSize(patchBomb, "mod.bpatch", 16);
+        checkZipBombPremise(patchBomb, "mod.bpatch", 16, 1024 * 1024);
 
         ModManifest mp = ManifestParser.parse(manifestJson("patch"));
         File outPatch = new File(tmpDir(), "extract_patch_bomb");
         try {
             BmodInstaller.extractBmod(patchBomb, mp, outPatch);
-            throw new AssertionError("payload .patch de 1MB (declarando 16) deveria ter sido recusado");
+            throw new AssertionError("payload .bpatch de 1MB (declarando 16) deveria ter sido recusado");
         } catch (BmodInstaller.LimitExceededException e) {
-            check("o limite nomeia o payload", "mod.patch".equals(e.what));
+            check("o limite nomeia o payload", "mod.bpatch".equals(e.what));
             check("o teto do patch e 256KB", e.limit == 256L * 1024);
             check("a mensagem acusa a mentira do tamanho",
                     e.getMessage().contains("declara") && e.getMessage().contains("abortada"));
         }
-        check("parcial .patch apagado", !new File(outPatch, "meu.patch").exists());
+        check("parcial .bpatch apagado", !new File(outPatch, "meu.bpatch").exists());
         check("parcial .json apagado", !new File(outPatch, "meu.json").exists());
 
         // (2) O teto real do .so (64MB) tambem barra: 65MB de zeros
@@ -257,12 +257,12 @@ public class BmodInstallerTest {
     }
 
     private static void testBmodLegitimoExtrai() throws IOException {
-        File f = legitBmod("patch", "mod.patch", 2048);
+        File f = legitBmod("patch", "mod.bpatch", 2048);
         ModManifest m = ManifestParser.parse(manifestJson("patch"));
         File out = new File(tmpDir(), "extract_ok");
         File payload = BmodInstaller.extractBmod(f, m, out);
         check("payload extraido", payload.exists() && payload.length() == 2048);
-        check("nome do payload", payload.getName().equals("meu.patch"));
+        check("nome do payload", payload.getName().equals("meu.bpatch"));
         check("manifest extraido", new File(out, "meu.json").exists());
     }
 }

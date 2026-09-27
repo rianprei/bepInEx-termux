@@ -1,4 +1,4 @@
-# T1 mul — métodos DIFERENTES dos do t1_return.patch de propósito: return
+# T1 mul — métodos DIFERENTES dos do t1_return.bpatch de propósito: return
 # reescreve o prólogo e a guarda de método curto recusaria o mul no mesmo
 # endereço. Sem save/IAP/anúncio.
 # mul int: índice do clipe de áudio ×3. Efeito: sons trocam/somem. Só áudio.

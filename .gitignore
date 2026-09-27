@@ -24,3 +24,7 @@ mods/u_frida/gadget/
 # poucos bytes, gerados pelo generate.py da propria pasta, deterministico.
 !test/fixtures/modtypes/*.zip
 !test/fixtures/modtypes/*.apk
+test/fixtures/dll2patch/src/bin/
+test/fixtures/dll2patch/src/obj/
+test/fixtures/dll2patch/facts/bin/
+test/fixtures/dll2patch/facts/obj/

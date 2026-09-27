@@ -155,9 +155,13 @@ public class ModContentDetectorTest {
         String patch = "# regras\n"
                 + "return ComplexCreature HasAmmo 0 bool true\n"
                 + "field WeaponInfo unlimitedAmmo bool true Update 1\n";
+        // O NOME do arquivo e a extensao ANTIGA (.patch) de proposito: o
+        // detector decide pelo CONTEUDO, nao pelo nome. Um arquivo C4 valido
+        // que o usuario trouxe de onde veio tem que ser reconhecido e
+        // instalado como <id>.bpatch. E o item 3 do rename.
         Detection d = ModContentDetector.detect(text("minhas_regras.patch", patch), true);
         check("texto C4 = patch", d.kind == Kind.PATCH && d.installable);
-        check("ext .patch", ".patch".equals(d.targetExt));
+        check("ext .bpatch mesmo vindo de um .patch", ".bpatch".equals(d.targetExt));
         check("id do arquivo", "minhas_regras".equals(d.targetId));
     }
 
@@ -171,7 +175,7 @@ public class ModContentDetectorTest {
         check("ext .js", ".js".equals(d.targetExt));
         check("id do script", "meu_script".equals(d.targetId));
 
-        // .patch tem prioridade se o texto tiver regra C4 E marca de JS.
+        // .bpatch tem prioridade se o texto tiver regra C4 E marca de JS.
         Detection mix = ModContentDetector.detect(
                 text("mix.txt", "Interceptor.attach(x);\nreturn Foo Bar 0 int 1\n"), true);
         check("regra C4 ganha de marca JS", mix.kind == Kind.PATCH);

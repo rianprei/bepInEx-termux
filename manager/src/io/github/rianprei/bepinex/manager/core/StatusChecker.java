@@ -36,7 +36,7 @@ public final class StatusChecker {
 
     public static String command(String adbRoot) {
         return "echo B=bepinex-probe-begin; "
-                + "echo uid=$(id -u 2>/dev/null); "
+                + "echo \"uid=$(id -u 2>/dev/null)\"; "
                 + "m=''; "
                 + "for c in '" + adbRoot + "/modules/bc-poc' '" + adbRoot + "'/modules/*bepinex*; do "
                 + "  if [ -d \"$c\" ]; then m=\"$c\"; break; fi; "
@@ -47,9 +47,14 @@ public final class StatusChecker {
                 // invertido — só apareceu rodando o comando em sh de verdade.)
                 + "echo disable=enabled; "
                 + "if [ -n \"$m\" ] && [ -f \"$m/disable\" ]; then echo disable=disabled; fi; "
-                + "if [ -d '" + adbRoot + "/zygisk' ] || [ -d '" + adbRoot + "'/modules/*zygisk* ] "
-                + "|| getprop ro.zygisk 2>/dev/null | grep -q 1; then echo zygisk=yes; else echo zygisk=no; fi; "
-                + "echo magisk=$(magisk -v 2>/dev/null | head -n 1); "
+                + "z=no; "
+                + "if [ -d '" + adbRoot + "/zygisk' ]; then z=yes; "
+                + "else for d in '" + adbRoot + "'/modules/*zygisk*; do "
+                + "  [ -d \"$d\" ] && { z=yes; break; }; "
+                + "done; fi; "
+                + "if [ \"$z\" != yes ] && getprop ro.zygisk 2>/dev/null | grep -q 1; then z=yes; fi; "
+                + "echo zygisk=$z; "
+                + "echo \"magisk=$(magisk -v 2>/dev/null | head -n 1)\"; "
                 + "echo B=bepinex-probe-end";
     }
 

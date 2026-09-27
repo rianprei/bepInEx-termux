@@ -61,7 +61,7 @@ static void fake_reload(void *self, bool reload_ammo, void *method) {
 static void *worker(void *) {
     LOG("carregado, esperando libil2cpp.so");
     Il2Cpp il;
-    if (!il2cpp_boot(il)) { LOG("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo"); return nullptr; }
+    if (!il2cpp_boot(il)) { LOG("boot IL2CPP falhou; consulte o log do mod para o motivo"); return nullptr; }
 
     void *weapon = nullptr, *creature = nullptr;
     for (int i = 0; i < 600 && !(weapon && creature); i++) {  // até 120s pras classes

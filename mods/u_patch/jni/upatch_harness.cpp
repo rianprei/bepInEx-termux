@@ -20,6 +20,94 @@ static int count_cb(char *line, int lineno, void *vctx) {
     return 0;
 }
 
+// --- round-trip real (Caso 80): tradutor JVM -> parser C++ -----------------
+//
+// O Dll2PatchTest (gate JVM) grava o patchText() REAL do HarmonyTranslator em
+// test/fixtures/dll2patch/translator_output.bpatch — o mesmo artefato .bpatch
+// que o Manager empurra para o celular. Este caso é o round-trip SEM RÉPLICA:
+// cada linha passa pelas funções REAIS que o mod roda no device
+// (up_foreach_line -> up_parse_line -> up_split_class, a cadeia inteira do
+// up_line_apply) e tem que bater com o contrato dourado dos casos A-C do
+// fixture. Divergência entre o tradutor Java e o parser C++ cai AQUI, não num
+// clone Java que ninguém sincroniza.
+struct RoundTripGold {
+    up_kind_t kind;
+    const char *cls;
+    const char *member;
+    const char *value;
+    const char *ns;   // verdade do metadata da DLL fixture (DllReader):
+    const char *name;  // up_split_class tem que reproduzir este par
+    int nargs;
+    up_type_t type;
+};
+static const RoundTripGold kRoundTripGold[] = {
+    {UP_RETURN, "Dll2PatchFixture.GameClass", "GetHealth", "100", "Dll2PatchFixture", "GameClass", 0, UP_INT},
+    {UP_RETURN, "Dll2PatchFixture.GameClass", "GetMana", "50", "Dll2PatchFixture", "GameClass", 0, UP_INT},
+    {UP_MUL, "Dll2PatchFixture.GameClass", "GetDamage", "2", "Dll2PatchFixture", "GameClass", 0, UP_INT},
+};
+static const int kRoundTripNGold = (int)(sizeof(kRoundTripGold) / sizeof(kRoundTripGold[0]));
+
+struct RoundTripCtx {
+    int rules;
+    int skips;
+    char why[512];  // primeira divergência, com a linha que a causou
+};
+static int roundtrip_cb(char *line, int lineno, void *vctx) {
+    RoundTripCtx *c = (RoundTripCtx *)vctx;
+    char copy[512];
+    snprintf(copy, sizeof(copy), "%s", line);  // up_parse_line destrói a linha
+    up_rule_t r;
+    int rc = up_parse_line(copy, &r);
+    if (rc == 1) {  // comentário/vazia: o device pula e segue
+        c->skips++;
+        return 0;
+    }
+    if (rc == -1) {
+        if (!c->why[0]) {
+            snprintf(c->why, sizeof(c->why),
+                     "linha %d RECUSADA pelo parser C++ real (o device logaria e seguiria): '%s'",
+                     lineno, line);
+        }
+        return 1;
+    }
+    if (c->rules >= kRoundTripNGold) {
+        if (!c->why[0]) {
+            snprintf(c->why, sizeof(c->why),
+                     "linha %d é regra ALÉM do contrato dos casos A-C: '%s'", lineno, line);
+        }
+        return 1;
+    }
+    const RoundTripGold &g = kRoundTripGold[c->rules];
+    // A cadeia do device termina em il.find_class(nspace, cname); no host o
+    // il2cpp não existe, então o par esperado é a verdade do metadata da DLL.
+    // Split ANTES dos campos: classe que o u_patch não resolve é o pior bug
+    // do contrato (o Manager mostra a regra como pronta e o jogo ignora em
+    // silêncio) — o gate reclama disso primeiro.
+    char nspace[128], cname[128];
+    if (!up_split_class(r.cls, nspace, sizeof(nspace), cname, sizeof(cname))
+        || strcmp(nspace, g.ns) != 0 || strcmp(cname, g.name) != 0) {
+        if (!c->why[0]) {
+            snprintf(c->why, sizeof(c->why),
+                     "linha %d: classe '%s' NÃO resolve no split do u_patch (device logaria "
+                     "\"classe não encontrada\" e ignoraria a regra; DLL diz ns='%s' name='%s')",
+                     lineno, r.cls, g.ns, g.name);
+        }
+        return 1;
+    }
+    if (!(r.kind == g.kind && strcmp(r.cls, g.cls) == 0 && strcmp(r.member, g.member) == 0
+          && r.nargs == g.nargs && r.type == g.type && strcmp(r.value, g.value) == 0)) {
+        if (!c->why[0]) {
+            snprintf(c->why, sizeof(c->why),
+                     "linha %d com campos fora do contrato: '%s' (esperado %s %s %s %d %s %s)",
+                 lineno, line, g.kind == UP_RETURN ? "return" : "mul", g.cls, g.member,
+                 g.nargs, g.type == UP_INT ? "int" : "?", g.value);
+        }
+        return 1;
+    }
+    c->rules++;
+    return 0;
+}
+
 static int g_fail = 0;
 static void check(const char *name, bool cond) {
     printf("  [%s] %s\n", cond ? "PASS" : "FAIL", name);
@@ -522,6 +610,112 @@ int main() {
               (f[0] & 0x9F00001Fu) == 0x90000010u && f[1] == up_enc_add_x16((uint32_t)(0x7B002234ull & 0xFFFull)));
         check("strb nunca é a palavra 0 nem a 2 (this só é usado depois da guarda)",
               f[0] != 0x39004009u && f[2] != 0x39004009u);
+    }
+
+    // --- #14: o scan do loader, que e o que diz quais arquivos o motor le ---
+    //
+    // Este caso existe por causa de uma SABOTAGEM que passou: com o loader
+    // voltando a procurar so "*.patch", o verify_all inteiro continuou PASS.
+    // A decisao de scan vivia no .cpp, sem nenhum teste de host, e nada no gate
+    // executava o loader. Agora ela mora em u_patch_parse.h (puro) e e
+    // testada aqui.
+    printf("\n[Caso 78] up_is_patch_file/up_patch_id_from_name: o scan do loader\n");
+    {
+        // 1. o que o motor tem que ler
+        check("t1.bpatch é lido", up_is_patch_file("t1.bpatch"));
+        check("meu_mod.bpatch é lido", up_is_patch_file("meu_mod.bpatch"));
+        // 2. o que ele NÃO tem que ler
+        check("x.bpatch.off (desligado) nao é lido", !up_is_patch_file("t1.bpatch.off"));
+        check("x.conf nao é lido", !up_is_patch_file("t1.conf"));
+        check("x.so nao é lido", !up_is_patch_file("lib.so"));
+        check("sem extensao nao é lido", !up_is_patch_file("regras"));
+        // A extensao ANTIGA: o motor nao deve mais ler, porque o Manager
+        // instala o que reconhece por conteudo como <id>.bpatch. Se um dia o
+        // loader voltar a aceitar .patch, esta linha e a que avisa.
+        check("t1.patch (extensao antiga) NAO é lido", !up_is_patch_file("t1.patch"));
+        // 3. ".bpatch" e prefixo de ".bpatch.off", nao sufixo de outra coisa
+        check("bpatch sem ponto nao é lido", !up_is_patch_file("bpatch"));
+        check("xbpatch nao é lido (precisa do ponto)", !up_is_patch_file("xbpatch"));
+        // 4. o id, e o par com o <id>.conf
+        char id[128] = {};
+        check("id de t1.bpatch é t1", up_patch_id_from_name("t1.bpatch", id, sizeof(id))
+              && strcmp(id, "t1") == 0);
+        check("id de meu_mod.bpatch é meu_mod",
+              up_patch_id_from_name("meu_mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu_mod") == 0);
+        check("id com ponto no meio preserva o ponto",
+              up_patch_id_from_name("meu.mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu.mod") == 0);
+        // O bug que o "- 6" hardcoded produziria: id com um caractere a mais.
+        check("id NÃO tem caractere sobrando da extensão",
+              up_patch_id_from_name("t1.bpatch", id, sizeof(id)) && strlen(id) == 2);
+        // 5. o .conf do mod e montado a partir DESTE id
+        char cpath[256];
+        snprintf(cpath, sizeof(cpath), "/data/local/tmp/mods/com.x/%s.conf", id);
+        check("o .conf procurado é t1.conf (o par que o motor usa)",
+              strcmp(cpath, "/data/local/tmp/mods/com.x/t1.conf") == 0);
+        // 6. arestas: nome so com a extensao, id que nao cabe, nulo
+        check("nome exatamente .bpatch é recusado (id vazio)",
+              !up_patch_id_from_name(".bpatch", id, sizeof(id)));
+        check("id maior que o buffer é recusado", !up_patch_id_from_name("aaaa.bpatch", id, 4));
+        check("id em buffer de tamanho 1 é recusado", !up_patch_id_from_name("a.bpatch", id, 1));
+        check("null é recusado sem crash", !up_patch_id_from_name(nullptr, id, sizeof(id))
+              && !up_is_patch_file(nullptr));
+        // 7. o comprimento da extensao e o da constante, e nao um numero solto
+        check("o comprimento da extensao bate com UP_PATCH_EXT",
+              up_patch_ext_len() == strlen(UP_PATCH_EXT));
+        check("a extensao do motor e .bpatch", strcmp(UP_PATCH_EXT, ".bpatch") == 0);
+    }
+
+    printf("\n[Caso 80] round-trip real: saída do tradutor JVM → parser C++ (gate)\n");
+    {
+        // O arquivo é gerado pelo gate JVM (Dll2PatchTest grava o patchText()
+        // real do HarmonyTranslator) e versionado com o golden — o verify_all
+        // roda os testes JVM ANTES deste harness, então aqui sempre parseia a
+        // saída fresca do tradutor, nunca uma cópia velha. Faltando/velho, este
+        // caso falha: é ele quem prova que o C++ real é quem decide.
+        FILE *fp = fopen("test/fixtures/dll2patch/translator_output.bpatch", "rb");
+        if (!fp) {
+            check("translator_output.bpatch abriu (gate JVM o gera; rode manager/run_tests.sh)", false);
+        } else {
+            char buf[65536];
+            size_t len = fread(buf, 1, sizeof(buf) - 1, fp);
+            fclose(fp);
+            if (len >= sizeof(buf) - 1) {
+                check("translator_output.bpatch cabe no buffer (tradutor explode regras?)", false);
+            } else {
+                buf[len] = '\0';
+                RoundTripCtx ctx = {0, 0, ""};
+                up_foreach_line(buf, roundtrip_cb, &ctx, 64);
+                if (ctx.why[0]) printf("    %s\n", ctx.why);
+                check("nenhuma linha do tradutor recusada/divergente no parser C++ real",
+                      ctx.why[0] == '\0');
+                check("casos A-C: 3 regras aceitas pelo parser C++ real",
+                      ctx.rules == kRoundTripNGold);
+                check("cabeçalho do .bpatch pulado como comentário", ctx.skips >= 1);
+            }
+        }
+        // Prova negativa permanente (o motivo da recusa de '/' no tradutor):
+        // a regra de classe aninhada que o Manager aceita (PatchGenerator.parse
+        // devolve 1) o parser C++ também aceita como LINHA — mas o split REAL
+        // do u_patch não resolve: no metadata da DLL o tipo aninhado é
+        // name="Inner" SEM namespace (ECMA-335), e up_split_class quebra no
+        // último '.', produzindo name="Outer/Inner" — nome que o
+        // il.find_class do device nunca acha (a regra morre em silêncio).
+        char nested[256], nestedCopy[256];
+        snprintf(nested, sizeof(nested), "return Dll2PatchFixture.Outer/Inner GetNested 0 int 1");
+        snprintf(nestedCopy, sizeof(nestedCopy), "%s", nested);
+        up_rule_t r;
+        check("classe aninhada: parser C++ aceita a linha (simetria com o Manager)",
+              up_parse_line(nestedCopy, &r) == 0
+              && strcmp(r.cls, "Dll2PatchFixture.Outer/Inner") == 0);
+        char nspace[128], cname[128];
+        check("...mas o split do u_patch NÃO resolve: name='Outer/Inner' nunca é "
+              "encontrado no metadata real (name='Inner' sem namespace)",
+              up_split_class("Dll2PatchFixture.Outer/Inner", nspace, sizeof(nspace),
+                             cname, sizeof(cname))
+              && strcmp(nspace, "Dll2PatchFixture") == 0 && strcmp(cname, "Outer/Inner") == 0
+              && strcmp(cname, "Inner") != 0);
     }
 
     printf("== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);

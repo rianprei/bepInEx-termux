@@ -1,4 +1,4 @@
-// fuzz_c4_line — alvo de fuzzing das LINHAS .patch/.conf do u_patch.
+// fuzz_c4_line — alvo de fuzzing das LINHAS .bpatch/.conf do u_patch.
 //
 // Cobre o contrato C4 inteiro (mods/u_patch/jni/u_patch_parse.h, header-only,
 // sem plataforma) com entrada de usuário: up_tokenize, up_parse_line,
@@ -30,13 +30,13 @@
 
 namespace {
 
-// Limite de entrada: um .patch/.conf de verdade tem poucas linhas, mas o
-// parser precisa ser limitado de qualquer jeito (o .patch vem de um arquivo
+// Limite de entrada: um .bpatch/.conf de verdade tem poucas linhas, mas o
+// parser precisa ser limitado de qualquer jeito (o .bpatch vem de um arquivo
 // que o usuário/Manager controla). Acima disso o resto é ignorado — mesmo
 // caminho do truncamento real (o mod lê o arquivo com teto).
 constexpr size_t kMaxInput = 8192;
 
-// Um .patch de 4 KB é o teto prático; acima disso o buffer de linha do
+// Um .bpatch de 4 KB é o teto prático; acima disso o buffer de linha do
 // mod não dá conta mesmo. Mantemos folga pra exercitar truncamento.
 char g_buf[kMaxInput + 1];
 

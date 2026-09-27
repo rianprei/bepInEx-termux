@@ -28,11 +28,13 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import io.github.rianprei.bepinex.manager.core.BmodInstaller;
-import io.github.rianprei.bepinex.manager.core.ModInventory;
-import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
-import io.github.rianprei.bepinex.manager.core.ModContentDetector;
+import io.github.rianprei.bepinex.manager.core.ModInventory;
+import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
+import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
+import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
+import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
@@ -41,15 +43,16 @@ import io.github.rianprei.bepinex.manager.model.GameInfo;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int REQUEST_PICK_FILE = 1001;
+    private static final Executor FILE_EXECUTOR =
+            command -> new Thread(command, "mod-file-import").start();
 
     private TextView mTvStatusRoot;
     private TextView mTvStatusModule;
@@ -67,7 +70,10 @@ public class MainActivity extends Activity {
     private GameAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Uri mPendingIncomingUri;
-    private File mPendingImportFile;
+    // Estado do arquivo escolhido: fora da Activity e por tela (estático) —
+    // rotação herda o pendente e a flag de install; a JVM testa o fluxo
+    // inteiro (SelectedFileFlowTest) pela mesma API que daqui é chamada.
+    private final SelectedFileFlow.Flow mFlow = SelectedFileFlow.of(SelectedFileFlow.MAIN);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -123,7 +129,23 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Retaguarda: staged órfão de processo morto (ou de rodadas antigas)
+        // não pode acumular no cache. Stage/install em voo e pendentes são
+        // preservados; a rodada é pulada enquanto há stage em voo (bug B).
+        SelectedFileFlow.sweepOrphans(getCacheDir());
         loadStatusAndApps();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Saída definitiva da tela (usuário fechou/voltou): nenhum staged
+        // pendente sobra no cache. Em rotação (isFinishing == false) o arquivo
+        // fica pendente e a instância nova herda no próximo refresh.
+        if (isFinishing()) {
+            File pending = mFlow.pending().take();
+            if (pending != null) SelectedFileStager.delete(pending);
+        }
     }
 
     @Override
@@ -264,10 +286,10 @@ public class MainActivity extends Activity {
                     Uri pending = mPendingIncomingUri;
                     mPendingIncomingUri = null;
                     processSelectedUri(pending);
-                } else if (mPendingImportFile != null) {
-                    File pending = mPendingImportFile;
-                    mPendingImportFile = null;
-                    processSelectedFile(pending);
+                } else {
+                    // Herança de rotação: arquivo staged da instância anterior.
+                    File pending = mFlow.pending().take();
+                    if (pending != null) processSelectedFile(pending);
                 }
             });
         }).start();
@@ -300,30 +322,31 @@ public class MainActivity extends Activity {
     }
 
     private void processSelectedUri(Uri uri) {
-        String displayName = resolveDisplayName(uri);
-        File tmp = null;
-        try {
-            tmp = SelectedFileStager.create(getCacheDir(), displayName);
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
-                byte[] buf = new byte[4096];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            }
-            if (mAllGames.isEmpty()) {
-                mPendingImportFile = tmp;
-            } else {
-                processSelectedFile(tmp);
-            }
-        } catch (Exception e) {
-            SelectedFileStager.delete(tmp);
-            new AlertDialog.Builder(this)
-                    .setTitle("Não foi possível abrir o arquivo")
-                    .setMessage("Erro ao ler o arquivo escolhido:\n" + e.getMessage())
-                    .setPositiveButton("OK", null)
-                    .show();
-        }
+        mFlow.stage(FILE_EXECUTOR, mMainHandler::post,
+                () -> SelectedFileStager.copyIntoStaging(getCacheDir(), resolveDisplayName(uri),
+                        () -> getContentResolver().openInputStream(uri)),
+                (staged, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Tela morreu (rotação/tema/idioma) com a cópia em voo:
+                        // fica pendente para a instância nova, não vira órfão.
+                        if (staged != null && !mFlow.pending().set(staged)) {
+                            SelectedFileStager.delete(staged);
+                        }
+                        return;
+                    }
+                    if (error != null) {
+                        mFlow.consume(staged);
+                        new AlertDialog.Builder(this)
+                                .setTitle("Não foi possível abrir o arquivo")
+                                .setMessage("Erro ao ler o arquivo escolhido:\n" + error.getMessage())
+                                .setPositiveButton("OK", null)
+                                .show();
+                    } else if (mAllGames.isEmpty()) {
+                        if (!mFlow.pending().set(staged)) SelectedFileStager.delete(staged);
+                    } else {
+                        processSelectedFile(staged);
+                    }
+                });
     }
 
     private String resolveDisplayName(Uri uri) {
@@ -345,37 +368,46 @@ public class MainActivity extends Activity {
 
     private void processSelectedFile(File file) {
         if (mAllGames.isEmpty()) {
-            mPendingImportFile = file;
+            if (!mFlow.pending().set(file)) SelectedFileStager.delete(file);
             return;
         }
-        try {
-            ModContentDetector.Detection detection = ModContentDetector.detect(
-                    LooseModInstaller.probe(file), true);
-            ModManifest manifest = detection.kind == ModContentDetector.Kind.BMOD
-                    ? BmodInstaller.inspect(file) : null;
-            SelectedFileRouter.Decision decision = SelectedFileRouter.decide(detection, manifest);
-            if (decision.action == SelectedFileRouter.Action.REJECT) {
-                showImportMessage("Arquivo não aceito", decision.message);
-                SelectedFileStager.delete(file);
-            } else if (decision.action == SelectedFileRouter.Action.INSTALL_DECLARED_GAME) {
-                new AlertDialog.Builder(this)
-                        .setTitle("Instalar mod")
-                        .setMessage("Este pacote foi feito para o jogo " + decision.packageName
-                                + ". Deseja continuar?")
-                        .setPositiveButton("Instalar", (dialog, which) -> {
-                            GameInfo target = findGame(decision.packageName);
-                            installSelectedFile(file, decision.packageName,
-                                    target != null ? target.engine : null);
-                        })
-                        .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
-                        .show();
-            } else {
-                showSelectGameDialogForFile(file, manifest);
+        mFlow.inspect(FILE_EXECUTOR, mMainHandler::post, file, (inspection, error) -> {
+            if (!UiLiveness.alive(this)) {
+                // Rotação no meio da inspeção: a instância nova re-pergunta
+                // com o mesmo arquivo (ele continua pendente).
+                if (!mFlow.pending().set(file)) SelectedFileStager.delete(file);
+                return;
             }
-        } catch (Exception e) {
+            if (error != null) {
+                mFlow.consume(file);
+                showImportMessage("Não foi possível abrir o arquivo",
+                        "O arquivo não pôde ser identificado: " + error.getMessage());
+                return;
+            }
+            showInspectionResult(file, inspection);
+        });
+    }
+
+    private void showInspectionResult(File file, SelectedFileFlow.Inspection inspection) {
+        SelectedFileRouter.Decision decision = inspection.decision();
+        ModManifest manifest = inspection.manifest();
+        if (decision.action == SelectedFileRouter.Action.REJECT) {
+            showImportMessage("Arquivo não aceito", decision.message);
             SelectedFileStager.delete(file);
-            showImportMessage("Não foi possível abrir o arquivo",
-                    "O arquivo não pôde ser identificado: " + e.getMessage());
+        } else if (decision.action == SelectedFileRouter.Action.INSTALL_DECLARED_GAME) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Instalar mod")
+                    .setMessage("Este pacote foi feito para o jogo " + decision.packageName
+                            + ". Deseja continuar?")
+                    .setPositiveButton("Instalar", (dialog, which) -> {
+                        GameInfo target = findGame(decision.packageName);
+                        installSelectedFile(file, decision.packageName,
+                                target != null ? target.engine : null);
+                    })
+                    .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
+                    .show();
+        } else {
+            showSelectGameDialogForFile(file, manifest);
         }
     }
 
@@ -415,10 +447,31 @@ public class MainActivity extends Activity {
     }
 
     private void installSelectedFile(File file, String packageName, String engine) {
-        LooseModInstaller.Result result = LooseModInstaller.installFromFile(file, packageName, engine);
-        SelectedFileStager.delete(file);
-        showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
-        loadStatusAndApps();
+        // A flag vive no ESTADO da tela (SelectedFileFlow.of): cada toque
+        // chama a mesma API e o segundo é recusado enquanto o primeiro roda.
+        boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
+                () -> LooseModInstaller.installFromFile(file, packageName, engine),
+                (result, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Morreu com o install em voo: se instalou, o staged
+                        // cumpriu o papel; se não, a instância nova tenta de novo.
+                        if (error == null && result != null && result.success) {
+                            mFlow.consume(file);
+                        } else if (!mFlow.pending().set(file)) {
+                            mFlow.consume(file);
+                        }
+                        return;
+                    }
+                    mFlow.consume(file);
+                    if (error != null) {
+                        showImportMessage("Não instalado", "Falha ao instalar o arquivo: "
+                                + error.getMessage());
+                        return;
+                    }
+                    showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
+                    loadStatusAndApps();
+                });
+        if (!started) return;   // duplo toque: o primeiro install continua
     }
 
     private void showImportMessage(String title, String message) {

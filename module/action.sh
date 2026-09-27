@@ -44,13 +44,13 @@ for d in "$MODS"/*/; do
     echo ""
     echo "$pkg"
     on=""
-    for f in "$d"*.so "$d"*.patch; do
+    for f in "$d"*.so "$d"*.bpatch; do
         [ -e "$f" ] || continue
         on="$on ${f##*/}"
     done
     echo "  ativos:${on:- (nenhum)}"
     off=""
-    for f in "$d"*.so.off "$d"*.patch.off; do
+    for f in "$d"*.so.off "$d"*.bpatch.off; do
         [ -e "$f" ] || continue
         off="$off ${f##*/}"
     done

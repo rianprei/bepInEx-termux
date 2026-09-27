@@ -24,10 +24,13 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
-import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
+import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
@@ -35,15 +38,16 @@ import io.github.rianprei.bepinex.manager.model.ModInfo;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
-public class GameDetailActivity extends Activity {
+public class GameDetailActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int REQUEST_PICK_BMOD_FOR_GAME = 1002;
+    private static final Executor FILE_EXECUTOR =
+            command -> new Thread(command, "mod-file-import").start();
 
     private String mPkg;
     private String mAppName;
@@ -63,6 +67,9 @@ public class GameDetailActivity extends Activity {
     private final List<ModInfo> mMods = new ArrayList<>();
     private ModAdapter mAdapter;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    // Estado do arquivo escolhido: por tela e estático — rotação herda o
+    // pendente e a flag de install (o duplo toque é recusado pela própria API).
+    private final SelectedFileFlow.Flow mFlow = SelectedFileFlow.of(SelectedFileFlow.DETAIL);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -112,10 +119,16 @@ public class GameDetailActivity extends Activity {
         mListMods.setAdapter(mAdapter);
 
         findViewById(R.id.btn_action_restart).setOnClickListener(v -> {
+            String activityComponent = LaunchActivityResolver.resolve(getPackageManager(), mPkg);
+            if (activityComponent == null) {
+                Toast.makeText(this, LaunchActivityResolver.NOT_FOUND_MESSAGE, Toast.LENGTH_LONG).show();
+                return;
+            }
             Toast.makeText(this, "Reiniciando " + mAppName + "...", Toast.LENGTH_SHORT).show();
             new Thread(() -> {
-                boolean ok = SuHelper.restartGame(mPkg);
+                boolean ok = SuHelper.restartGame(mPkg, activityComponent);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     if (ok) {
                         Toast.makeText(this, "Jogo reiniciado!", Toast.LENGTH_SHORT).show();
                     } else {
@@ -146,6 +159,7 @@ public class GameDetailActivity extends Activity {
             new Thread(() -> {
                 boolean ok = SuHelper.reactivateMods(mPkg);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mBtnReactivate.setEnabled(true);
                     if (ok) {
                         mCrashGuardBox.setVisibility(View.GONE);
@@ -182,7 +196,25 @@ public class GameDetailActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Herança de rotação: o staged da instância anterior retoma o install
+        // (aqui o jogo de destino é fixo, definido quando o usuário escolheu).
+        File pending = mFlow.pending().take();
+        if (pending != null) {
+            installStagedFile(pending);
+            return;
+        }
         loadMods();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Saída definitiva: nenhum staged pendente sobra no cache. Em rotação
+        // (isFinishing == false) o arquivo fica pendente para a nova instância.
+        if (isFinishing()) {
+            File pending = mFlow.pending().take();
+            if (pending != null) SelectedFileStager.delete(pending);
+        }
     }
 
     @Override
@@ -205,41 +237,63 @@ public class GameDetailActivity extends Activity {
     }
 
     // C7: o usuario escolhe QUALQUER arquivo e o Manager descobre pelo
-    // conteudo o que e (.bmod, .so arm64, .patch, .js, .dll de PC...). O
+    // conteudo o que e (.bmod, .so arm64, .bpatch, .js, .dll de PC...). O
     // nome original so importa para virar o id do arquivo instalado.
     private void installSelectedFile(Uri uri) {
-        String displayName = resolveDisplayName(uri);
-        File tmp = null;
-        try {
-            tmp = SelectedFileStager.create(getCacheDir(), displayName);
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            }
-
-            installStagedFile(tmp);
-        } catch (Exception e) {
-            SelectedFileStager.delete(tmp);
-            new AlertDialog.Builder(this)
-                    .setTitle("Nao instalado")
-                    .setMessage("Erro ao ler o arquivo: " + e.getMessage())
-                    .setPositiveButton("OK", null)
-                    .show();
-        }
+        mFlow.stage(FILE_EXECUTOR, mMainHandler::post,
+                () -> SelectedFileStager.copyIntoStaging(getCacheDir(), resolveDisplayName(uri),
+                        () -> getContentResolver().openInputStream(uri)),
+                (staged, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Tela morreu no meio da cópia (rotação etc.):
+                        // fica pendente para a instância nova.
+                        if (staged != null && !mFlow.pending().set(staged)) {
+                            SelectedFileStager.delete(staged);
+                        }
+                        return;
+                    }
+                    if (error != null) {
+                        mFlow.consume(staged);
+                        new AlertDialog.Builder(this)
+                                .setTitle("Não instalado")
+                                .setMessage("Erro ao ler o arquivo: " + error.getMessage())
+                                .setPositiveButton("OK", null)
+                                .show();
+                    } else {
+                        installStagedFile(staged);
+                    }
+                });
     }
 
     private void installStagedFile(File file) {
-        LooseModInstaller.Result res = LooseModInstaller.installFromFile(file, mPkg, mEngine);
-        SelectedFileStager.delete(file);
-        new AlertDialog.Builder(this)
-                .setTitle(res.success ? "Sucesso" : "Não instalado")
-                .setMessage(res.message)
-                .setPositiveButton("OK", null)
-                .show();
-        loadMods();
+        // A flag vive no ESTADO da tela: o segundo toque chama a mesma API
+        // e é recusado enquanto o primeiro roda (bug A, agora na raiz).
+        boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
+                () -> LooseModInstaller.installFromFile(file, mPkg, mEngine),
+                (result, error) -> {
+                    if (!UiLiveness.alive(this)) {
+                        // Morreu com o install em voo: se instalou, o staged
+                        // cumpriu o papel; se não, a instância nova retoma.
+                        if (error == null && result != null && result.success) {
+                            mFlow.consume(file);
+                        } else if (!mFlow.pending().set(file)) {
+                            mFlow.consume(file);
+                        }
+                        return;
+                    }
+                    mFlow.consume(file);
+                    if (isFinishing()) return;
+                    String title = error != null || !result.success ? "Não instalado" : "Sucesso";
+                    String message = error != null
+                            ? "Falha ao instalar o arquivo: " + error.getMessage() : result.message;
+                    new AlertDialog.Builder(this)
+                            .setTitle(title)
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                    loadMods();
+                });
+        if (!started) return;   // duplo toque: o primeiro install continua
     }
 
     private String resolveDisplayName(Uri uri) {
@@ -271,7 +325,7 @@ public class GameDetailActivity extends Activity {
                     : CrashGuardState.parse(null, false);
             final boolean cgMostrar = cg.marker;
 
-            // 1. Encontra todos os arquivos de mod (.so, .patch, .off)
+            // 1. Encontra todos os arquivos de mod (.so, .bpatch, .off)
             boolean gadgetSoFound = false;
             for (String f : files) {
                 if (f.equals("u_dump.so") || f.equals("u_patch.so")) {
@@ -287,25 +341,15 @@ public class GameDetailActivity extends Activity {
                     continue;
                 }
 
-                String baseId = null;
-                boolean enabled = true;
-                String type = "patch";
-
-                if (f.endsWith(".so")) {
-                    baseId = f.substring(0, f.length() - 3);
-                    type = "native";
-                } else if (f.endsWith(".so.off")) {
-                    baseId = f.substring(0, f.length() - 7);
-                    type = "native";
-                    enabled = false;
-                } else if (f.endsWith(".patch")) {
-                    baseId = f.substring(0, f.length() - 6);
-                    type = "patch";
-                } else if (f.endsWith(".patch.off")) {
-                    baseId = f.substring(0, f.length() - 10);
-                    type = "patch";
-                    enabled = false;
-                }
+                // O corte do nome mora em ModInventory.parseModFileName (puro,
+                // testado no host) e não aqui. A versão que estava aqui cortava
+                // o id com números soltos: "- 6" para ".bpatch" (7 letras) e
+                // "- 10" para ".bpatch.off" (11). "t1.bpatch" virava id "t1.", e
+                // o nome que o Manager montava de volta não existia no aparelho.
+                ModInventory.ModFile modFile = ModInventory.parseModFileName(f);
+                String baseId = modFile == null ? null : modFile.id();
+                boolean enabled = modFile == null || modFile.enabled();
+                String type = modFile == null ? "patch" : modFile.type();
 
                 if (baseId != null) {
                     ModInfo info = map.get(baseId);
@@ -363,6 +407,7 @@ public class GameDetailActivity extends Activity {
 
             final boolean temGadgetSo = gadgetSoFound;
             mMainHandler.post(() -> {
+                if (!UiLiveness.alive(this)) return;
                 if (cgMostrar) {
                     mTvCrashGuard.setText(CrashGuardState.describe(cg, System.currentTimeMillis() / 1000L));
                     mCrashGuardBox.setVisibility(View.VISIBLE);
@@ -466,7 +511,10 @@ public class GameDetailActivity extends Activity {
                         .setPositiveButton(R.string.btn_delete, (dialog, which) -> {
                             new Thread(() -> {
                                 SuHelper.deleteMod(mPkg, mod.id);
-                                mMainHandler.post(GameDetailActivity.this::loadMods);
+                                mMainHandler.post(() -> {
+                                    if (!UiLiveness.alive(GameDetailActivity.this)) return;
+                                    loadMods();
+                                });
                             }).start();
                         })
                         .setNegativeButton(R.string.btn_cancel, null)

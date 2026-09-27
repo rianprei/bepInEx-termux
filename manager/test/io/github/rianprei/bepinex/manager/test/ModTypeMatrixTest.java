@@ -75,6 +75,9 @@ public class ModTypeMatrixTest {
         matrix(patchBroken(dir), Kind.TEXT_OTHER, false,
                 new String[]{"não é um mod"},
                 new String[]{});
+        // Item 3 do rename .patch -> .bpatch: o CONTEUDO decide, a extensao nao.
+        matrix(patchExtAntiga(dir), Kind.PATCH, true, null, new String[]{});
+        matrix(patchSemExtensao(dir), Kind.PATCH, true, null, new String[]{});
         matrix(fridaJs(dir), Kind.FRIDA_JS, true, null, new String[]{});
         matrix(luaGg(dir), Kind.LUA_GG, false,
                 new String[]{"GameGuardian", "não"},
@@ -286,9 +289,18 @@ public class ModTypeMatrixTest {
 
     private static File peExe(File d) { return f(d, "hackeador.exe"); }
 
-    private static File patchOk(File d) { return f(d, "regras_boas.patch"); }
+    private static File patchOk(File d) { return f(d, "regras_boas.bpatch"); }
 
-    private static File patchBroken(File d) { return f(d, "regras_quebradas.patch"); }
+    private static File patchBroken(File d) { return f(d, "regras_quebradas.bpatch"); }
+
+    // C4 valido com a extensao ANTIGA (.patch). O rename para .bpatch nao
+    // pode ter virado "so aceito .bpatch": o detector decide pelo CONTEUDO, e
+    // um arquivo C4 que o usuario trouxe de outro lugar tem que ser
+    // reconhecido e instalado como <id>.bpatch.
+    private static File patchExtAntiga(File d) { return f(d, "regras_ext_antiga.patch"); }
+
+    // O mesmo, sem extensao nenhuma. Cobre a outra metade do item 3.
+    private static File patchSemExtensao(File d) { return f(d, "regras_sem_extensao"); }
 
     private static File fridaJs(File d) { return f(d, "script_frida.js"); }
 

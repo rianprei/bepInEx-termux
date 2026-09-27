@@ -17,7 +17,7 @@ import java.util.List;
  * {@code <regra> TAB <accept|reject>}, e os dois lados têm que concordar:
  * o Manager que gera a regra e o u_patch que a consome não podem discordar
  * sobre o que é uma linha válida — divergência aqui é um mod que o Manager
- * mostra como pronto e o jogo ignora (ou o contrário: um .patch que o jogo
+ * mostra como pronto e o jogo ignora (ou o contrário: um .bpatch que o jogo
  * aplica e o Manager nunca escreveu).
  *
  * <p>A fixture é a fonte da verdade, e ela vem do C4 do ROADMAP. Se um dos

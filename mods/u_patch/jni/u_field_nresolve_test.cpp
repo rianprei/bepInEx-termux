@@ -296,7 +296,9 @@ int main() {
     // --- a regra do device, ponta a ponta ----------------------------------
     printf("\n[Caso 8] a regra que derrubou o jogo, com a cadeia toda no ar\n");
     {
-        // `field WeaponInfo unlimitedAmmo bool true` — o texto exato do .patch
+        // `field WeaponInfo unlimitedAmmo bool true` — o texto exato da regra. O
+        // arquivo no aparelho se chamava .patch na epoca do crash; a extensao
+        // hoje e .bpatch e o TEXTO e o que o motor parseia.
         // do device. O parse é o mesmo de produção (up_parse_line).
         char line[] = "field WeaponInfo unlimitedAmmo bool true";
         up_rule_t r;
