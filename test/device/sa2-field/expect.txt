@@ -1,5 +1,4 @@
 # T1 field (caso separado: só vale com o verbo `field` implementado no u_patch).
-# Texto do log combinado com o freebuff: "…field aplicado" na mesma linha do
-# sig (id|kind|classe|membro|…). Se o freebuff escolher outra frase, esta
-# regex é o único lugar a ajustar — combine o texto com ele antes de rodar.
+# A linha de aplicação contém o sig (id|kind|classe|membro|…) e "field aplicado
+# em N método(s)". A regex ancora o fixture e a classe reais do SA2.
 \[u_patch\] t1_field\.bpatch[|].*[|]WeaponInfo[|].*field aplicado

@@ -282,7 +282,7 @@ while IFS= read -r test_script; do
     run_step "shell test ${test_script#"$ROOT"/}" "$TIMEOUT_TEST" bash "$test_script"
 done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
 
-for device_script in restore-sim.sh quoting-check.sh; do
+for device_script in restore-sim.sh quoting-check.sh device-round2-host-test.sh; do
     path="$ROOT/test/device/$device_script"
     if [ -f "$path" ]; then
         # TIMEOUT_DEVICE_SIM (não TIMEOUT_TEST): pega TRAVA, não lentidão —
