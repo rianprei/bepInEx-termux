@@ -463,28 +463,20 @@ static bool hook_enabled(const char *shortname) {
 // Lê e parseia o bc_mods.conf pra um array destino (parse puro, sem aplicar).
 // Retorna false se o arquivo não existe (destino fica com defaults puros).
 static bool read_mods_config_into(struct bc_mod_entry *dst, int cap) {
-    int fd = open(BC_MODS_CONF_PATH, O_RDONLY | O_CLOEXEC);
-    if (fd >= 0) {
-        char buf[2048];
-        ssize_t total = 0;
-        while (total < (ssize_t)sizeof(buf) - 1) {
-            ssize_t r = read(fd, buf + total, sizeof(buf) - 1 - (size_t)total);
-            if (r < 0) {
-                if (errno == EINTR) continue;
-                total = -1;
-                break;
-            }
-            if (r == 0) break;
-            total += r;
-        }
-        close(fd);
-        if (total < 0) total = 0;
-        buf[total] = '\0';
+    // POR CONTEUDO, nao por caminho: a arvore e root-only (/data/adb) e o
+    // jogo nao tem nem search nela. Quem abre e o companion (root).
+    //
+    // Este era o ultimo open() de caminho da arvore no jogo, e a varredura do
+    // teste de SCM_RIGHTS achou — o check procurava o nome de uma funcao e nao
+    // a CONSTANTE do caminho, entao passou quando a leitura voltou.
+    char buf[2048];
+    char why[160] = {0};
+    if (bc_mod_text_request("bc_mods.conf", buf, sizeof(buf), why, sizeof(why)) >= 0) {
         // v2: parse tipado com defaults preenchidos (present=false)
         bc_mods_parse(buf, BC_SCHEMA, BC_SCHEMA_N, dst, cap);
         return true;
     }
-    // arquivo ausente = defaults puros (tudo ON, throttle off)
+    // sem companion ou sem conf = defaults puros (tudo ON, throttle off)
     bc_mods_parse(nullptr, BC_SCHEMA, BC_SCHEMA_N, dst, cap);
     return false;
 }

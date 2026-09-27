@@ -307,6 +307,32 @@ int main() {
             // e nao ha leitor por caminho da allowlist em lugar nenhum do jogo
             bool tem_fopen = code.find("bc_generic_allowlist_contains(") != std::string::npos;
             check("o jogo nao le a allowlist por caminho", !tem_fopen);
+            // NENHUMA leitura por caminho da arvore no jogo. A checagem e
+            // sobre a CONSTANTE do caminho, nao sobre o nome de uma funcao:
+            // a primeira versao deste check procurava
+            // bc_generic_allowlist_contains( e a sabotagem trouxe de volta um
+            // access(BC_GENERIC_ALLOWLIST_PATH,...) — passou.
+            const char *const RAIZ[] = {"BC_GENERIC_ALLOWLIST_PATH", "BC_GENERIC_MODS_DIR",
+                                        "BC_MODS_CONF_PATH", "BC_MODS_DIR"};
+            std::string linha;
+            bool abriu_caminho = false;
+            size_t pos = 0;
+            while ((pos = code.find('\n', pos)) != std::string::npos) {
+                size_t fim = code.find('\n', pos + 1);
+                if (fim == std::string::npos) break;
+                linha = code.substr(pos + 1, fim - pos - 1);
+                for (const char *r : RAIZ) {
+                    if (linha.find(r) == std::string::npos) continue;
+                    // so conta se a linha ABRE o caminho
+                    if (linha.find("fopen(") != std::string::npos ||
+                        linha.find("access(") != std::string::npos ||
+                        linha.find("open(") != std::string::npos ||
+                        linha.find("dlopen(") != std::string::npos)
+                        abriu_caminho = true;
+                }
+                pos = fim;
+            }
+            check("o jogo nao ABRE nenhum caminho da arvore root-only", !abriu_caminho);
             // e o companion tem o verbo de conteudo (mod_txt) e o de lista
             FILE *cf = fopen((self + "/../../jni/companion.cpp").c_str(), "r");
             if (cf == nullptr) {
