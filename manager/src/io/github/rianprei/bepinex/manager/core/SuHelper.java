@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -333,18 +332,17 @@ public final class SuHelper {
             // stdin seria mais curto, mas se o su do device nao repassar o
             // stdin o `cat > destino` receberia EOF e deixaria o arquivo
             // VAZIO sem dar erro — o .conf/.patch do mod sumiria em silencio.
-            File tmp = File.createTempFile("bep_su_write_", ".tmp");
-            try (FileOutputStream fos = new FileOutputStream(tmp)) {
-                fos.write(content.getBytes(StandardCharsets.UTF_8));
-            }
-            requirePath(tmp.getAbsolutePath(), "tmp");
-            Result r = exec(writeTextFileCommand(tmp.getAbsolutePath(), filePath));
-            tmp.delete();
+            String tempDirectory = System.getProperty("java.io.tmpdir");
+            File cacheDirectory = tempDirectory == null ? null : new File(tempDirectory);
+            boolean written = TemporaryTextFile.write(cacheDirectory, content, tmpPath -> {
+                        requirePath(tmpPath, "tmp");
+                        return exec(writeTextFileCommand(tmpPath, filePath)).success;
+                    });
             // cp como root cria o arquivo root:root. Se o destino for dentro
             // de /data/data/<pkg>/files (o state dir do jogo), isso tranca o
             // app fora do próprio log — devolve o dono do diretório pai.
-            if (r.success && filePath.contains("/files/")) ensureOwner(filePath);
-            return r.success;
+            if (written && filePath.contains("/files/")) ensureOwner(filePath);
+            return written;
         } catch (IOException | IllegalArgumentException e) {
             return false;
         }
