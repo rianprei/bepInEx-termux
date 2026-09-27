@@ -37,55 +37,83 @@ if (targetType == null) {
 o patch altera (overload ambíguo, tipo de retorno, etc.). O alvo mora no
 `Assembly-CSharp` do jogo, que não vem junto do mod.
 
-## 3 patches reais do corpus
+## 3 exemplos reais das 375 recusas
 
-### 1. dsp-AddFuelStar.dll — AddFuelStar.AddFuelStar.GameTick
+### 1. Darkwood_Customizer.dll — DarkwoodCustomizer.CamMainPatch.CamUpdate
 
-**O que faltou:** o tipo alvo `AddFuelStar` não está na DLL (morar no Assembly-CSharp do jogo).
+**O que faltou:** o tipo alvo `CamMainPatch` não está na DLL (morar no Assembly-CSharp do jogo).
 
 **IL resumido:** `nop ldsfld ldc.i4.0 ceq stloc.0 ldloc.0 brfalse nop ldarg.0 ldfld stloc.1 ...`
 
-### 2. dsp-BiggerSeed.dll — BiggerSeed.BiggerSeed.BigSeed
+### 2. Darkwood_Customizer.dll — DarkwoodCustomizer.CharacterPatch.CharUpdate
 
-**O que faltou:** o tipo alvo `BiggerSeed` não está na DLL.
+**O que faltou:** o tipo alvo `CharacterPatch` não está na DLL.
 
-**IL resumido:** `nop ldarg.0 stloc.0 ldc.i4.m1 conv.i8 stloc.1 ldarg.0 call ldstr callvirt callvirt stloc.2 ...`
+**IL resumido:** `nop ldarg.0 ldc.i4.0 call nop ret`
 
-### 3. dsp-ChangeSun.dll — ChangeSun.ChangeSun.GameTick
+### 3. Darkwood_Customizer.dll — DarkwoodCustomizer.CharacterPatch.ChararcterAwake
 
-**O que faltou:** o tipo alvo `ChangeSun` não está na DLL.
+**O que faltou:** o tipo alvo `CharacterPatch` não está na DLL.
 
-**IL resumido:** `nop ldsfld ldc.i4.0 ceq stloc.0 ldloc.0 brfalse nop ldarg.0 ldfld stloc.1 ldsfld callvirt ldc.i4.0 cgt stloc.2 ...`
+**IL resumido:** `nop ldarg.0 ldc.i4.1 call nop ret`
 
 ## Modo medição (sem conferir no jogo)
 
 Se o tradutor não exigisse que o tipo alvo esteja na DLL (usando apenas o nome
 do tipo e do método do atributo), quantos patches seriam traduzidos?
 
-**Resposta:** não medido (requer mudança no tradutor). O risco de traduzir sem
-conferir é alto: o tradutor não pode confirmar overload ambíguo, tipo de
-retorno, etc. Isso pode gerar patches incorretos que alteram o método errado.
+**Resposta:** não medido diretamente (requer mudança no tradutor). Mas a
+classificação do corpo dos 378 patches mostra que:
 
-## Top 5 padrões não cobertos
-
-| Padrão | Exemplo | Veredito |
+| Corpo do patch | Contagem | % |
 |---|---|---|
-| Prefix/Postfix com `__result = CONST` | dsp-AddFuelStar.GameTick | **Limite de projeto:** precisa do assembly do jogo para confirmar o alvo |
-| Postfix com `__result *= K` | dsp-BiggerSeed.BigSeed | **Limite de projeto:** precisa do assembly do jogo |
-| Atribuição estática | dsp-ChangeSun.GameTick | **Limite de projeto:** precisa do assembly do jogo |
-| Classe aninhada | (3 casos) | **Verbo novo:** o u_patch precisa localizar classes aninhadas |
-| Tipo string | dsp-BiggerSeed.BigSeed | **Impossível sem runtime .NET:** o u_patch não suporta string |
+| branch/if | 260 | 69% |
+| chamada de método | 104 | 28% |
+| campo estático | 10 | 3% |
+| outro | 2 | 1% |
+| acesso a campo | 1 | 0% |
+| aritmética | 1 | 0% |
+
+**Risco de traduzir sem conferir:** o tradutor não pode confirmar overload
+ambíguo, tipo de retorno, etc. Isso pode gerar patches incorretos que alteram o
+método errado.
+
+## Top 5 padrões do CORPO (não os motivos de recusa)
+
+| Padrão | Contagem | Exemplo | Veredito |
+|---|---|---|---|
+| branch/if | 260 | Darkwood_Customizer.CamMainPatch.CamUpdate | **Impossível sem runtime .NET:** o patch altera fluxo condicional, não um valor fixo |
+| chamada de método | 104 | Darkwood_Customizer.CharacterPatch.CharUpdate | **Verbo novo:** o patch chama um método do jogo; o u_patch precisaria de um verbo "call" |
+| campo estático | 10 | TPC_CheatCraftFromNearbyContainers.Plugin.Patch_UiWindowPause_OnQuit | **Cabe no C4:** o verbo `static` já existe |
+| acesso a campo | 1 | Darkwood_Customizer.EnemiesPatch.DaySpawnChancePostfix | **Cabe no C4:** o verbo `field` já existe |
+| aritmética | 1 | TPC_CheatInventoryStacking.Plugin.Patch_WorldObjectsHandler_DropOnFloorImplentation | **Verbo novo:** o patch faz aritmética; o u_patch precisaria de um verbo "add/sub" |
+
+## Ideia para o veredito (b): u_dump como solução
+
+O projeto já tem o `u_dump`, que despeja no celular os tipos e métodos do jogo
+IL2CPP. O tradutor poderia confirmar o alvo contra esse despejo em vez do
+`Assembly-CSharp`. Isso resolveria o limite porque o `u_dump` roda no celular e
+tem acesso ao assembly do jogo. O que faltaria: o tradutor precisaria ler o
+`dump.tsv` gerado pelo `u_dump` e confirmar o alvo contra ele. Isso é viável
+mas requer mudança no tradutor.
 
 ## Licença
 
-O corpus foi baixado de fontes públicas (GitHub, Thunderstore) com licença que
-permite baixar. Os .dll de terceiros NÃO foram commitados no repo. O manifest
+O corpus foi baixado de fontes públicas (GitHub) com licença que permite
+baixar. Os .dll de terceiros NÃO foram commitados no repo. O manifest
 (`test/fixtures/dll_corpus/MANIFEST.tsv`) contém nome, URL, licença, sha256,
 jogo e backend de cada mod.
+
+**Contagem de licenças no MANIFEST:**
+- Apache-2.0: 22 (Planet Crafter + Dyson Sphere Program)
+- MIT: 6 (Darkwood_Customizer, FFPR_Fix, Magicite, MiSide_KappiMod, TLD_PrepperCache, TLD_QualityOfLife)
+- BSD-2-Clause: 1 (Tunic_Translation)
+- desconhecido: 1 (PotionCraft_EnableDev)
 
 ## Conclusão
 
 **0/378 patches traduzidos (0%).** O tradutor é estrito demais por projeto: o
 alvo mora no `Assembly-CSharp` do jogo, que não vem junto do mod. Para traduzir
 mods reais, o tradutor precisaria do assembly do jogo ou de uma forma de
-confirmar o alvo sem ele (o que é arriscado).
+confirmar o alvo sem ele (o que é arriscado). A ideia de usar o `u_dump` é
+viável mas requer mudança no tradutor.
