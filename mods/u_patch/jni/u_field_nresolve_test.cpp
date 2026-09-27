@@ -43,10 +43,6 @@ void check(const char *name, bool cond) {
     if (!cond) g_fail++;
 }
 
-void print_case(unsigned id, const char *description) {
-    printf("%s[Caso %u] %s\n", id == 84 ? "" : "\n", id, description);
-}
-
 // --- o mundo que o fake representa -----------------------------------------
 struct FakeType { char blob[32]; };
 struct FakeClass { char blob[32]; };
@@ -178,11 +174,11 @@ void case_each_link() {
 int main() {
     printf("== u_field_nresolve_test: cadeia de resolução com Il2Cpp falso ==\n\n");
 
-    print_case(84, "cada elo devolvendo nullptr: recusa com motivo, sem crash");
+    printf("[Caso 84] cada elo devolvendo nullptr: recusa com motivo, sem crash\n");
     case_each_link();
 
     // --- O type confusion: o que vai pro type_get_name é o TYPE -----------
-    print_case(85, "type_get_name recebe o Il2CppType*, não a Il2CppClass*");
+    printf("\n[Caso 85] type_get_name recebe o Il2CppType*, não a Il2CppClass*\n");
     {
         // ESTE é o caso que quebra se o bug do device voltar. O fix passa `t`;
         // o bug passava `class_from_type(t)`. Os dois são não-nulos, então
@@ -201,7 +197,7 @@ int main() {
     }
 
     // --- O tipo de cada valor do C4, e o casamento com up_value_type_check -
-    print_case(86, "tipos reais do C4: bool/int/float com want certo");
+    printf("\n[Caso 86] tipos reais do C4: bool/int/float com want certo\n");
     {
         struct Row { const char *name; size_t want; bool aceita; };
         const Row rows[] = {
@@ -236,7 +232,7 @@ int main() {
     // com SIGSEGV aqui em vez de num assert. Sem il2cpp_free não dá pra copiar
     // (copiar sem devolver é leak) nem devolver (free() é UB): a resposta
     // honesta é recusar e deixar o log explicar.
-    print_case(87, "free ausente: recusa em vez de free() da libc");
+    printf("\n[Caso 87] free ausente: recusa em vez de free() da libc\n");
     {
         reset();
         Il2Cpp il = make_il();
@@ -251,7 +247,7 @@ int main() {
     }
 
     // --- nome maior que o buffer: recusa, não trunca ----------------------
-    print_case(88, "nome de tipo maior que o buffer: recusa em vez de truncar");
+    printf("\n[Caso 88] nome de tipo maior que o buffer: recusa em vez de truncar\n");
     {
         reset();
         Il2Cpp il = make_il();
@@ -264,7 +260,7 @@ int main() {
     }
 
     // --- a linha de log, no formato que o mod escreve ----------------------
-    print_case(89, "linha de log PT-BR: 'campo X não encontrado em Y'");
+    printf("\n[Caso 89] linha de log PT-BR: 'campo X não encontrado em Y'\n");
     {
         char line[256];
         up_resolve_log_line(UP_RS_NO_FIELD, "WeaponInfo", "unlimitedAmmo", line, sizeof(line));
@@ -285,7 +281,7 @@ int main() {
     }
 
     // --- args inválidos não crasham ---------------------------------------
-    print_case(90, "argumentos nulos: recusa, sem crash");
+    printf("\n[Caso 90] argumentos nulos: recusa, sem crash\n");
     {
         reset();
         Il2Cpp il = make_il();
@@ -298,7 +294,7 @@ int main() {
     }
 
     // --- a regra do device, ponta a ponta ----------------------------------
-    print_case(91, "a regra que derrubou o jogo, com a cadeia toda no ar");
+    printf("\n[Caso 91] a regra que derrubou o jogo, com a cadeia toda no ar\n");
     {
         // `field WeaponInfo unlimitedAmmo bool true` — o texto exato da regra. O
         // arquivo no aparelho se chamava .patch na epoca do crash; a extensao
