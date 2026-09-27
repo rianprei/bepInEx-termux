@@ -1,6 +1,7 @@
 package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
+import io.github.rianprei.bepinex.manager.core.DownloadFilePicker;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
@@ -39,6 +40,7 @@ public class RootCallBudgetTest {
         testContagemTelaInicial();
         testParseIgnoraLixo();
         testBundleDeManifests();
+        testDownloadListingUmaChamada();
         System.out.println("  [OK] RootCallBudgetTest (orçamento de chamadas root)");
     }
 
@@ -167,5 +169,18 @@ public class RootCallBudgetTest {
         check("o conteúdo do bundle ainda é um manifest válido", m != null && "Mod B".equals(m.name));
         check("bundle vazio = mapa vazio",
                 ModInventory.parseBundle("", SuHelper.BUNDLE_SEP).isEmpty());
+    }
+
+    private static void testDownloadListingUmaChamada() {
+        final int[] calls = {0};
+        DownloadFilePicker.Listing listing = DownloadFilePicker.list(command -> {
+            calls[0]++;
+            check("a listagem consulta Download e Documents no mesmo comando",
+                    command.contains(DownloadFilePicker.DOWNLOAD_DIR)
+                            && command.contains(DownloadFilePicker.DOCUMENTS_DIR));
+            return "";
+        });
+        check("a listagem faz exatamente uma chamada root", calls[0] == 1);
+        check("listagem vazia é válida", listing.success() && listing.paths.isEmpty());
     }
 }

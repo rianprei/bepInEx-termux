@@ -347,6 +347,26 @@ public final class SuHelper {
         return exec(copyFileCommand(srcPath, destPath, mode)).success;
     }
 
+    public static DownloadFilePicker.Listing listDownloadFiles() {
+        return DownloadFilePicker.list(command -> {
+            Result result = exec(command);
+            if (!result.success) {
+                throw new IllegalStateException(result.friendlyError != null
+                        ? result.friendlyError : "Falha ao listar Download/Documents.");
+            }
+            return result.stdout;
+        });
+    }
+
+    public static boolean copyDownloadFileToCache(String sourcePath, String destinationPath) {
+        try {
+            String command = DownloadFilePicker.copyToCacheCommand(sourcePath, destinationPath);
+            return exec(command).success;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     /** Cópia forçada com modo e contexto SELinux (o `mode` já foi validado). */
     public static String copyFileCommand(String srcPath, String destPath, String mode) {
         return "cp -f '" + srcPath + "' '" + destPath + "' && chmod " + mode + " '" + destPath
