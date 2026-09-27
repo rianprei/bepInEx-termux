@@ -4,62 +4,31 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
-## Unreleased
+## [Não lançado]
 
-### Added
-- sa2content (new mod, Swamp Attack 2 1.3.9): content through the game's own balance system, memory only (no `OnReceivedBalanceFromGrid`, which writes a local patch file). 31 embedded patches (`tools/gen_patches.py` from a runtime snapshot): one unused primary weapon unlocked per redneck at level 1 (9), effect fusions (Shotgun frost, DoubleShotgun poison, Kalashnikov electric, TankBusterRifle radioactive), L05/L10/L15 of chapters 2+ end with the previous chapter's boss (18), forced interstitial ads between levels blocked (rewarded ads untouched). Reapplied after `GameBalancer.TryApplyPendingPatches`. Applied on device 2026-09-25 (ld 18 / red 9 / wep 4, Apply ok); in-game look not yet confirmed.
-- sa2content: playable Unknown (Slow Joe body + runtime Shotgun clone with every damage effect but mind control), on by default (`-DSA2_ENABLE_UNKNOWN=0` turns it off). Validated on device 2026-09-25 after the `copy_field` fix (the earlier map crash was the mod storing a stack address into reference fields).
-- mods/common/il2cpp_min.h: header-only il2cpp API + boot (linker-namespace fix) shared by the generic-path mods; sa2ammo moved onto it.
-- loader: per-package mods on the generic path. Every `.so` in `/data/local/tmp/mods/<pkg>/` is `dlopen`ed when an allowlisted package starts, before engine detection (Unity/IL2CPP games expose no `Java_*`, so detection alone would leave them dormant). These mods are self-contained (their constructor does the work), no `bc_mod_register`.
-- sa2ammo (new mod, Swamp Attack 2 1.3.9): unlimited ammo on the player's primary weapons by turning on the game's own `WeaponInfo.unlimitedAmmo` flag from `SelectWeapon`/`ReloadWeaponClip` hooks. Classes, methods and field offsets are resolved through the exported il2cpp API. Validated on device 2026-09-25 (user confirmed ammo no longer drops).
-- kungfux: remaining community cons of Kung Fu Cat X #132 (vault `context/kfx-cons-CONSOLIDADO.md`): multi-hit merged into one hit at foreswing 11 (the 3rd hit no longer carries the damage and whiffs after KB; cycle kept at 90f, col4 40 on all forms), HP x1648/999 (Lv30 ~28k, Dancer TF 27.5k), range 300 -> 350, cost 1560 -> 1200 (col6 is x100 after load in 0x793f44, scaled proportionally). Per-hit readers proven through the column tables at 0x1f8310/0x1f8328/0x1f8340. Warp immunity kept (contested con).
-- mechabun: every remaining sourced proposal at its highest value ("se tem fonte adiciona"): TF HP 520.5k Lv50 / ATK 18.75k Lv30, freeze 38%, wave lv5 normal 100%, strengthen x2, explosion 100%, savage 20%, shield pierce 20%, KB/slow/curse 20%, red/black/alien targets, zombie killer, resistant, massive, curse immunity, 3-hit TF. Missing parameters use vanilla data conventions (explosion start = range, savage +200%, slow 60f, curse 90f).
-- kungfux (new mod, `02_kungfux.so`): Kung Fu Cat X #132 without the wiki cons (speed 10, KB 3, area attack, 90f attack cycle); no hook, patches the unit struct from a watcher thread once vanilla values are seen. Cost still unchanged (no struct reader).
-- mechabun: sources re-verified in a real browser (context/mecha-bun-fontes-verificadas.md, OpenCode + freebuff English originals): KB count 4, survive 100% and wave immunity (reddit 1ftdnvo t1_lpt0btb), explosion immunity (1o3deph OP; explosion, not surge). Behemoth Slayer source corrected to 1jbfu1p (fandom 734592 was not a real quote).
-- mechabun: target traits red/black/metal/traitless/angel, resistant, massive damage, colossus slayer and soul strike (battle readers pending proof).
-- mechabun: thread 1qv6rno checked in a real browser: mini-wave 100% lv2, dodge 20%/30f, toxic immunity, weaken 25%/90f/50%.
-- mechabun: second source pass (context/mecha-bun-fontes-kimi-2.md): removed survive and wave/explosion/toxic/slow/weaken immunities; weaken 50%/90f; behemoth slayer restored (fandom source).
-- mechabun: removed everything without a valid source (targets red/black/metal/traitless, resistant, massive, colossus, soul strike, behemoth, wave attack, dodge, KB count 4); added speed +6 (reddit 1qv6rno).
-- mechabun: range 190 -> 250 (user decision; 265 had no traceable source).
-- mechabun: wave 20% mini -> 30% full wave, dodge 30% -> 50% (user max-value rule).
-- **`mods/mechabun` teto de nível 60+90**: reescreve em memória a linha
-  426 do `unitbuy.csv` (parse 0x7936b8, tabela `+0x4ACB8`, XOR key
-  `row+0xfc`; leitores col49 0x3e85f8, col50 0x3e7f7c, col51 0x3e80d8).
-  Vanilla EN lido no device: col49=30 col50=50 col51=0. Validado: save
-  editado pra 60+90 aparece 60+90 no jogo.
-- **`mods/mechabun`**: KB 4, Freeze 20%/90f, Crit 25%, Weaken 100%/120f/50%,
-  Survive 100%, imunidades Freeze/Slow/Weaken — cada coluna com leitor em
-  batalha provado no build `338b0601`. Mini-wave 20%, Dodge 30%/90f,
-  range 265 (ainda sem leitor).
+### Para o usuário
+- [HOST] O Manager agora lista e identifica mais engines de jogos, explica em português o que cada tipo de jogo permite fazer e evita tratar qualquer app com bibliotecas nativas como jogo. O app compila e a detecção tem testes JVM; instalação e uso no celular ainda não foram verificados. (`59fe913`, `5ed8019`)
+- [HOST] O Manager reúne instalação de mods `.bmod` e arquivos compatíveis, controles para ativar/desativar, opções, logs e criação de regras sem código; o fluxo de leitura do jogo gera e limpa o scanner automaticamente, inclusive ao falhar. APK e testes JVM cobrem esses caminhos, mas o fluxo ainda não foi executado no celular. (`59fe913`, `9bc95f8`, `368406d`, `3884e54`, `ca4354b`)
+- [HOST] Foi adicionado o motor de regras IL2CPP para alterar retornos, multiplicar valores e fixar campos; o formato é compartilhado entre o Manager e o carregador para evitar divergências. Os testes de host incluem harnesses e execução de thunks em QEMU; o efeito em jogo continua pendente de teste no aparelho. (`6589f2f`, `bf9eee3`)
+- [HOST] `u_noads` tenta fechar anúncios forçados usando o callback de fechamento do SDK, cobrindo seis SDKs conhecidos. Os testes verificam alvos e fechadores, mas o uso no SA2 não foi confirmado em aparelho. (`f08164b`)
+- [HOST] O carregador aceita scripts `.js` do Frida apenas em modo script; o instalador e a checagem do binário do gadget têm testes de host. A execução no celular continua experimental e não foi validada. (`023e4c9`, `744bb6d`)
 
-### Changed
-- **`mods/mechabun`**: HP True Form ×25/9 = 300k Lv50. O ×325/54 antigo
-  usava a base Lv50 da forma normal (86,4k) e dava ~650k real (base TF =
-  108k).
+### Correções
+- [HOST] Os mods passaram a compartilhar o mesmo caminho de log; a espera pelo pacote e as mensagens de timeout foram corrigidas para refletir o comportamento real. Os testes de host cobrem o helper de log, e o gate compila os componentes; não é uma nova validação em aparelho. (`df40b73`, `638b05f`, `09bcd74`)
+- [HOST] Foram corrigidos fluxos de root do Manager, incluindo chamadas repetidas, cadeias `chcon`, entrega de comandos por stdin e preservação de `resources.arsc` no APK para instalação em versões atuais do Android. Testes de shell/JVM e checagens do APK cobrem esses casos. (`3f1bdef`, `368406d`, `3884e54`, `ca4354b`)
+- [HOST] A instalação do APK passou a ser verificada por alinhamento e estrutura instalável antes de ser aceita pelo gate. (`368406d`, `3884e54`)
+- [HOST] O simulador do teste de restauração ganhou relógio falso e não fica preso ao stdin herdado; os limites de timeout separam a simulação dos testes no aparelho. (`c3da4cc`, `2b3d8c6`)
 
-### Removed
-- **`mods/mechabun`**: hook "D2-fix" em 0x8789e8 — é o getter de freeze
-  time (col26), não de dano; escalaria o freeze 9/5. O dano normal vem de
-  `calc_atk` 0x872440, que lê col3 do struct já patchado.
+### Segurança/robustez
+- [HOST] Antes de carregar mods, o loader confere o ELF e recusa bibliotecas com SONAME do Frida Gadget, mesmo se forem renomeadas; outra checagem confirma o símbolo necessário no loader de Battle Cats. Os casos são cobertos pelo harness, não por um teste em aparelho. (`744bb6d`, `81efee2`)
+- [HOST] O kit de teste de aparelho agora exige backup verificável antes de restaurar dados, valida o hash de cada arquivo restaurado e informa divergências. Os testes de restauração são simulações de host, não uma rodada no celular. (`1224346`, `05b7138`)
+- [HOST] O gate universal reúne builds, testes do Manager e dos mods, verificações de shell e análise estática pinada; também detecta IDs duplicados no harness e valida referências documentais a arquivos, linhas e trechos citados. (`ad46276`, `aa33ac1`, `66280c0`, `73e45b5`)
 
-### Verified
-- **`mods/mechabun` ATK em batalha**: hook log-only temporário em
-  `calc_atk` (não commitado) mostrou `args=0,426,2,20,...` →
-  `ret=10800` no builder de batalha (site 0x7c250c) = 900×12 (Lv20 com
-  tesouros); vanilla seria 6.000. +80% chega ao dano real.
-
-### Fixed
-- loader: a package with its own mods dir (`/data/local/tmp/mods/<pkg>`) no longer connects to the companion (the companion opened the Termux console over the game, so Swamp Attack 2 kept bouncing to Termux) and skips the generic Cocos2d-x engine detection/log hooks.
-- mods/common/il2cpp_min.h: `il2cpp_boot` waits for `il2cpp_get_corlib()` before `il2cpp_domain_get()`, which allocates the domain through the GC when it does not exist yet and crashed the game when a mod loaded from Zygisk ran before `il2cpp_init` (Frida injection came late and hid it).
-- loader: per-package generic mods now load in alphabetical order (`scandir` + `alphasort`); plain `readdir` order was arbitrary. README states the real `bc_mods/` order (`strcmp` on the name, zero-padded prefixes; manifest `requires` still reorders), not "numeric prefix".
-- sa2ammo / sa2content: each Dobby hook is installed and logged on its own; one failing hook no longer aborts the others (review by kilo, `raw/review-sa2-kilo.md`).
-- sa2content `gen_patches.py`: snapshot read once with closed handles; a missing category or fusion damage type stops with a clear message instead of `AttributeError`/`StopIteration`.
-- **`mods/mechabun` `verify_unit_base`**: device real (build `338b0601`)
-  leu range=760 (190×4) com ATK 400/500 exatos — offset certo, struct
-  guarda range em unidade interna ×4. Check rejeitava e o patch inteiro
-  ficava vanilla. Agora aceita 190 ou 190×4; par de ATK segue provando o
-  offset. Validado em batalha: `DEBUG form=0 ATK raw=400 pos-scale=720`,
-  `design ideal comunitario aplicado`, zero crash.
+### Para desenvolvedores
+- [HOST] Há um comando local de release que gera o zip Magisk, o APK do Manager e os módulos distribuídos, com `SHA256SUMS`, metadados de build e dependências externas pinadas. A reprodutibilidade foi verificada em builds de host; publicar ou etiquetar uma release não faz parte desta mudança. (`f36c650`)
+- [HOST] O Manager pode ser assinado com uma chave fixa fornecida pelo usuário, sem expor a senha do keystore na lista de processos; o teste usa chaves temporárias e não inclui keystore no repositório. (`192e967`)
+- [HOST] Foram adicionados documentação do SDK e do formato `.bmod`, fixture C4 compartilhada, scanner empacotado a partir do fonte e roteiro/gate de referências em documentação. (`0d989c3`, `bf9eee3`, `9bc95f8`, `73e45b5`)
+- [HOST] O roadmap recebeu sincronizações com evidência por item e o parecer do spike de runtime .NET; esses registros não significam que a execução ou medição em aparelho foi feita. (`ea957ae`, `7c66679`)
 
 ## v0.3.6 — 2026-09-22
 
