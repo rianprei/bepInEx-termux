@@ -164,6 +164,21 @@ static inline ssize_t bc_fd_recv_fd(int sock, void *data, size_t cap, int *out_f
     return r;
 }
 
+// Envio simples, sem FD: o que o protocolo TXT usa (conf/allowlist, que
+// não são mapeáveis — o jogo só precisa do texto).
+static inline ssize_t bc_fd_send_data(int sock, const void *data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t n = write(sock, (const char *)data + sent, len - sent);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        sent += (size_t)n;
+    }
+    return (ssize_t)sent;
+}
+
 // Monta o pedido. Devolve o tamanho, ou -1 se não coube / tem caractere ruim.
 static inline ssize_t bc_fd_build_request(char *buf, size_t cap, int proto,
                                          const char *verb, const char *path) {
