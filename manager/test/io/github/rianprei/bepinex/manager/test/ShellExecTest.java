@@ -2,8 +2,10 @@ package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.DownloadFilePicker;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
+import io.github.rianprei.bepinex.manager.model.ModInfo;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 
 import java.io.ByteArrayOutputStream;
@@ -38,6 +40,7 @@ public class ShellExecTest {
         requireShell();
         testShNDeCadaComando();
         testInventarioExecutado();
+        testParseNomeDeMod();
         testBundleExecutado();
         testCrashGuardExecutado();
         testProbeExecutado();
@@ -210,6 +213,114 @@ public class ShellExecTest {
     }
 
     // ---------- 3) bundle de manifests ---------------------------------------
+
+    /**
+     * O corte do nome de arquivo: nome -&gt; (id, tipo, ligado) e a volta.
+     *
+     * ACHADO (revisao do Maestro em 800aba9): a tela de jogo cortava o id com
+     * numeros soltos — "- 6" para ".bpatch" e "- 10" para ".bpatch.off" — e as
+     * duas extensoes tem 7 e 11. "t1.bpatch" virava id "t1.", o nome montado de
+     * volta era "t1..bpatch", e o aparelho nao tinha esse arquivo: todo mod de
+     * regras aparecia com o nome errado, nao achava o &lt;id&gt;.json nem o
+     * &lt;id&gt;.conf, e ligar/desligar/apagar miravam um caminho inexistente.
+     *
+     * O gate passou nessa hora pelo mesmo motivo do loader: o parse nao era
+     * executado por teste nenhum. Aqui ele e.
+     */
+    private static void testParseNomeDeMod() {
+        // --- nome -> (id, tipo, ligado) ---
+        ModInventory.ModFile rules = ModInventory.parseModFileName("t1.bpatch");
+        check("t1.bpatch -> id t1, patch, ligado",
+                rules != null && rules.id().equals("t1") && rules.isRules()
+                        && rules.enabled());
+
+        ModInventory.ModFile rulesOff = ModInventory.parseModFileName("t1.bpatch.off");
+        check("t1.bpatch.off -> id t1, patch, DESLIGADO",
+                rulesOff != null && rulesOff.id().equals("t1") && rulesOff.isRules()
+                        && !rulesOff.enabled());
+
+        ModInventory.ModFile dotted = ModInventory.parseModFileName("meu.mod.bpatch");
+        check("meu.mod.bpatch preserva o ponto do id",
+                dotted != null && dotted.id().equals("meu.mod"));
+
+        ModInventory.ModFile so = ModInventory.parseModFileName("t1.so");
+        check("t1.so -> id t1, native, ligado",
+                so != null && so.id().equals("t1") && "native".equals(so.type())
+                        && so.enabled());
+
+        ModInventory.ModFile soOff = ModInventory.parseModFileName("t1.so.off");
+        check("t1.so.off -> id t1, native, DESLIGADO",
+                soOff != null && soOff.id().equals("t1") && "native".equals(soOff.type())
+                        && !soOff.enabled());
+
+        // A extensao ANTIGA: o motor nao le mais, entao o inventario nao pode
+        // inventar um id para ela — senao a tela mostraria um mod que nao existe.
+        check("t1.patch (extensao antiga) e ignorado",
+                ModInventory.parseModFileName("t1.patch") == null);
+        check("t1.so nao casa com .patch nem com .bpatch",
+                ModInventory.parseModFileName("t1.conf") == null
+                        && ModInventory.parseModFileName("t1.json") == null);
+
+        // ".bpatch" sozinho: extensao sem id. Nao vira mod sem nome.
+        check(".bpatch sozinho e recusado",
+                ModInventory.parseModFileName(".bpatch") == null);
+        check(".bpatch.off sozinho e recusado",
+                ModInventory.parseModFileName(".bpatch.off") == null);
+        check(".so sozinho e recusado", ModInventory.parseModFileName(".so") == null);
+        check("null e recusado sem crash", ModInventory.parseModFileName(null) == null);
+        check("vazio e recusado", ModInventory.parseModFileName("") == null);
+
+        // --- o round-trip: id -> nome, o nome volta para o mesmo id ---
+        String[][] casos = {
+            {"t1", "patch", "ligado"},
+            {"t1", "patch", "desligado"},
+            {"meu.mod", "patch", "ligado"},
+            {"meu.mod", "patch", "desligado"},
+            {"t1", "native", "ligado"},
+            {"t1", "native", "desligado"},
+        };
+        for (String[] c : casos) {
+            String id = c[0], type = c[1];
+            boolean enabled = "ligado".equals(c[2]);
+            String nome = ModInventory.modFileName(id, type, enabled);
+            ModInventory.ModFile deVolta = ModInventory.parseModFileName(nome);
+            check("round-trip " + id + "/" + type + "/" + c[2] + " (nome " + nome + ")",
+                    deVolta != null && deVolta.id().equals(id)
+                            && deVolta.type().equals(type)
+                            && deVolta.enabled() == enabled);
+        }
+
+        // --- o round-trip pelo caminho REAL do Manager ---
+        // ModInfo.getMainFilename() e o que a tela usa para localizar o arquivo no
+        // aparelho. Se ele montar um nome que parseModFileName nao reconhece, o
+        // id some de novo — era o outro lado do mesmo bug.
+        ModInfo ligado = new ModInfo("t1");
+        ligado.type = "patch";
+        ligado.isEnabled = true;
+        check("ModInfo (regras, ligado) monta t1.bpatch",
+                ligado.getMainFilename().equals("t1.bpatch"));
+        check("e o nome volta para o id t1",
+                ModInventory.parseModFileName(ligado.getMainFilename()).id().equals("t1"));
+
+        ModInfo desligado = new ModInfo("t1");
+        desligado.type = "patch";
+        desligado.isEnabled = false;
+        check("ModInfo (regras, desligado) monta t1.bpatch.off",
+                desligado.getMainFilename().equals("t1.bpatch.off"));
+        check("e o nome volta para o id t1, desligado",
+                ModInventory.parseModFileName(desligado.getMainFilename()).id().equals("t1")
+                        && !ModInventory.parseModFileName(desligado.getMainFilename()).enabled());
+
+        ModInfo nativo = new ModInfo("t1");
+        nativo.type = "native";
+        check("ModInfo (nativo) monta t1.so", nativo.getMainFilename().equals("t1.so"));
+        check("e o nome volta para o id t1",
+                ModInventory.parseModFileName(nativo.getMainFilename()).id().equals("t1"));
+
+        // --- a extensao e a da constante, e nao um literal novo ---
+        check("RULES_EXT e a extensao que o parse usa",
+                ModInventory.parseModFileName("t1" + ModContentDetector.RULES_EXT) != null);
+    }
 
     private static void testBundleExecutado() {
         File root = tempDir("bundle");
