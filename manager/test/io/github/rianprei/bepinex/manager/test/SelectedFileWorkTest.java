@@ -17,7 +17,7 @@ public final class SelectedFileWorkTest {
     private SelectedFileWorkTest() {}
 
     public static void run() throws Exception {
-        File file = Files.createTempFile("selected-file-work-", ".patch").toFile();
+        File file = Files.createTempFile("selected-file-work-", ".bpatch").toFile();
         try {
             Files.writeString(file.toPath(), "return Example GetValue 0 int 1\n",
                     StandardCharsets.UTF_8);

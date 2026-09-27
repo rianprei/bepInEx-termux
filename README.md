@@ -21,7 +21,7 @@ Hoje o projeto é validado em: **Swamp Attack 2** (Unity IL2CPP, mods em
 produção: munição infinita e conteúdo extra) e **Battle Cats** (caminho
 próprio, histórico, intacto). TABS Pocket Edition é o próximo alvo. O app
 **bepInEx Manager** (instalar/ligar/desligar mods com um toque, sem terminal)
-já existe e instala `.bmod`, `.so`, `.patch` e `.js`. O módulo, o
+já existe e instala `.bmod`, `.so`, `.bpatch` e `.js`. O módulo, o
 carregamento de mods `.so`, o crashguard com **Reativar**, o scanner e o
 bloqueio de anúncios foram verificados no celular (POCO C75, 26-27/09).
 A instalação de mods pelo Manager e a criação de mods pelo Mod Maker no
@@ -57,7 +57,7 @@ Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
 ## Instalar um mod
 
 > **Pelo Manager (experimental):** o Manager já existe e instala `.bmod`,
-> `.so`, `.patch` e `.js` com um toque. A instalação e o uso no celular
+> `.so`, `.bpatch` e `.js` com um toque. A instalação e o uso no celular
 > ainda não foram verificados em aparelho (experimental). O que segue é o
 > caminho alternativo, sem Manager.
 
@@ -174,12 +174,12 @@ não pela extensão, e diz em português se roda. A tabela honesta:
   embalado para o BepInEx do computador (a pasta `BepInEx` com plugins está
   aí dentro). O `.dll` dele é feito para o jogo rodando no computador e
   não funciona no celular. Em breve vai dar para converter mods simples
-  para o formato que o celular roda (`.patch`); por enquanto, procure a
+  para o formato que o celular roda (`.bpatch`); por enquanto, procure a
   versão para Android deste mod.
 
 - **`.apk`:** é o instalador do jogo, não um mod. O Manager nunca modifica
   arquivo do jogo: nem pacote do aplicativo, nem expansão. Para instalar
-  mod, escolha o arquivo de mod em si (`.so`, `.patch` ou `.js`).
+  mod, escolha o arquivo de mod em si (`.so`, `.bpatch` ou `.js`).
 
 - **`.xapk`:** é um pacote de expansão do jogo, não um mod. O Manager nunca
   modifica arquivo do jogo.

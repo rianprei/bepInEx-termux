@@ -88,7 +88,7 @@ public final class SelectedFileFlowTest {
         File cache = Files.createTempDirectory("flow-install-").toFile();
         try {
             SelectedFileFlow.Flow flow = SelectedFileFlow.of(SelectedFileFlow.MAIN);
-            File staged = makeStaged(cache, "em-install.patch");
+            File staged = makeStaged(cache, "em-install.bpatch");
             FakeExecutor worker = new FakeExecutor();
             FakeUiExecutor ui = new FakeUiExecutor();
 

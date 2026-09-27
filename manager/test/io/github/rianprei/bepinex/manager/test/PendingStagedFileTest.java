@@ -61,7 +61,7 @@ public final class PendingStagedFileTest {
         try {
             File velho1 = stage(cache, "velho1.so");
             File velho2 = stage(cache, "velho2.bmod");
-            File velho3 = stage(cache, "velho3.patch");
+            File velho3 = stage(cache, "velho3.bpatch");
             File pendente = stage(cache, "atual.so");
             File estranho = new File(cache, "nao-e-staging.txt");
             Files.writeString(estranho.toPath(), "x");
