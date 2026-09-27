@@ -155,6 +155,12 @@ public class ModMakerActivity extends Activity {
 
     // 1. Escanear Jogo com u_dump.so
     private void scanGame() {
+        String activityComponent = LaunchActivityResolver.resolve(getPackageManager(), mPkg);
+        if (activityComponent == null) {
+            mTvScannerStatus.setText(LaunchActivityResolver.NOT_FOUND_MESSAGE);
+            Toast.makeText(this, LaunchActivityResolver.NOT_FOUND_MESSAGE, Toast.LENGTH_LONG).show();
+            return;
+        }
         if (!hasAsset("u_dump.so")) {
             new AlertDialog.Builder(this)
                     .setTitle("Componente Ausente")
@@ -175,7 +181,7 @@ public class ModMakerActivity extends Activity {
                         return SuHelper.installFile(local, "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
                     }
                     public boolean deleteDump() { return SuHelper.deleteDump(mPkg); }
-                    public boolean restartGame() { return SuHelper.restartGame(mPkg); }
+                    public boolean restartGame() { return SuHelper.restartGame(mPkg, activityComponent); }
                     public boolean dumpReady() {
                         return SuHelper.readDump(mPkg) != null;
                     }

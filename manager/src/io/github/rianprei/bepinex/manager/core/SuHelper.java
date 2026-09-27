@@ -97,6 +97,8 @@ public final class SuHelper {
     private static final Pattern NAME_RE = Pattern.compile("^[A-Za-z0-9._-]+$");
     private static final Pattern MODE_RE = Pattern.compile("^[0-7]{3,4}$");
     private static final Pattern PATH_RE = Pattern.compile("^/[A-Za-z0-9_./-]+$");
+    private static final Pattern ACTIVITY_CLASS_RE =
+            Pattern.compile("^\\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*$");
 
     public static final String MODS_ROOT = "/data/local/tmp/mods/";
 
@@ -105,6 +107,25 @@ public final class SuHelper {
         if (pkg == null || !PKG_RE.matcher(pkg).matches()) {
             throw new IllegalArgumentException("pacote invalido: " + pkg);
         }
+    }
+
+    public static String requireActivityComponent(String pkg, String component) {
+        requirePkg(pkg);
+        if (component == null || component.indexOf('\n') >= 0 || component.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("atividade de início inválida");
+        }
+        int separator = component.indexOf('/');
+        if (separator <= 0 || separator != component.lastIndexOf('/')
+                || !pkg.equals(component.substring(0, separator))) {
+            throw new IllegalArgumentException("atividade de início não pertence ao pacote");
+        }
+        String className = component.substring(separator + 1);
+        if (!ACTIVITY_CLASS_RE.matcher(className).matches()
+                || className.equals(".")
+                || (!className.startsWith(".") && !className.startsWith(pkg + "."))) {
+            throw new IllegalArgumentException("nome da atividade de início inválido");
+        }
+        return component;
     }
 
     // Nome de arquivo dentro de mods/<pkg>/: sem barra, sem "..", sem espaco.
@@ -436,18 +457,21 @@ public final class SuHelper {
         return "mv '" + currentPath + "' '" + newPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + newPath + "'";
     }
 
-    public static boolean restartGame(String pkg) {
+    public static boolean restartGame(String pkg, String activityComponent) {
         try {
             requirePkg(pkg);
+            requireActivityComponent(pkg, activityComponent);
         } catch (IllegalArgumentException e) {
             return false;
         }
-        // Encerra forcadamente e inicia o aplicativo principal
-        String cmd = "am force-stop '" + pkg + "' && " +
-                "(monkey -p '" + pkg + "' -c android.intent.category.LAUNCHER 1 2>/dev/null || " +
-                "am start -n $(cmd package resolve-activity --brief '" + pkg + "' | tail -n 1) 2>/dev/null)";
-        Result r = exec(cmd);
+        Result r = exec(restartGameCommand(pkg, activityComponent));
         return r.exitCode == 0;
+    }
+
+    public static String restartGameCommand(String pkg, String activityComponent) {
+        requirePkg(pkg);
+        requireActivityComponent(pkg, activityComponent);
+        return "am force-stop '" + pkg + "' && am start -n '" + activityComponent + "' 2>/dev/null";
     }
 
     public static String readLog(String pkg) {

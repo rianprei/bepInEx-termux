@@ -10,6 +10,7 @@ public class SuHelperTest {
         testNomeHostilRecusado();
         testChmodHostilRecusado();
         testCaminhoHostilRecusado();
+        testActivityComponentValidation();
         testValidosAceitos();
         testOwnerFixCommand();
         testReactivatePlan();
@@ -98,6 +99,37 @@ public class SuHelperTest {
                 SuHelper.listFiles("/data/local/tmp/mods/$(id)").isEmpty());
         check("writeTextFile hostil nao executa",
                 !SuHelper.writeTextFile("/data/local/tmp/mods/com.foo/a.conf; id", "x=1"));
+    }
+
+    private static void testActivityComponentValidation() {
+        String valid = SuHelper.requireActivityComponent("com.example.game", "com.example.game/.MainActivity");
+        check("componente relativo válido", valid.equals("com.example.game/.MainActivity"));
+        check("componente aninhado válido",
+                SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/com.example.game.Main$Home").endsWith("Main$Home"));
+        checkRejeita("componente com espaço",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main Activity"));
+        checkRejeita("componente com ponto e vírgula",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main;id"));
+        checkRejeita("componente com substituição de comando",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.$(id)"));
+        checkRejeita("componente com duas linhas",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main\ncom.attacker/.Run"));
+        checkRejeita("componente com dois separadores",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main/Other"));
+        checkRejeita("componente de outro pacote",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.attacker/.Main"));
+        String command = SuHelper.restartGameCommand("com.example.game", valid);
+        check("comando passa componente inteiro entre aspas simples",
+                command.contains("am start -n 'com.example.game/.MainActivity'"));
+        check("comando não resolve atividade pelo shell",
+                !command.contains("resolve-activity") && !command.contains("$("));
     }
 
     /**

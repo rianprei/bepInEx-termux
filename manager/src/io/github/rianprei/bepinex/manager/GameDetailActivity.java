@@ -115,9 +115,14 @@ public class GameDetailActivity extends Activity {
         mListMods.setAdapter(mAdapter);
 
         findViewById(R.id.btn_action_restart).setOnClickListener(v -> {
+            String activityComponent = LaunchActivityResolver.resolve(getPackageManager(), mPkg);
+            if (activityComponent == null) {
+                Toast.makeText(this, LaunchActivityResolver.NOT_FOUND_MESSAGE, Toast.LENGTH_LONG).show();
+                return;
+            }
             Toast.makeText(this, "Reiniciando " + mAppName + "...", Toast.LENGTH_SHORT).show();
             new Thread(() -> {
-                boolean ok = SuHelper.restartGame(mPkg);
+                boolean ok = SuHelper.restartGame(mPkg, activityComponent);
                 mMainHandler.post(() -> {
                     if (ok) {
                         Toast.makeText(this, "Jogo reiniciado!", Toast.LENGTH_SHORT).show();
