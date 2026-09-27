@@ -537,8 +537,8 @@ public final class SuHelper {
 
     public static String crashGuardCommand(String pkg, String counterPath,
                                            String markerPath, String modsMarkerPath) {
-        return "echo deaths=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f1);"
-                + " echo ts=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f2);"
+        return "echo \"deaths=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f1)\";"
+                + " echo \"ts=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f2)\";"
                 + " if [ -f '" + markerPath + "' ] || [ -f '" + modsMarkerPath + "' ]; "
                 + "then echo marker=yes; else echo marker=no; fi";
     }
@@ -573,7 +573,8 @@ public final class SuHelper {
         if (!stateDirExists) return null;
         return "rm -f '" + CrashGuardState.markerPath(pkg) + "' '"
                 + CrashGuardState.modsMarkerPath(pkg) + "' && "
-                + "echo '0 '$(date +%s) > '" + CrashGuardState.counterPath(pkg) + "'";
+                + "printf '0 %s\\n' \"$(date +%s)\" > '"
+                + CrashGuardState.counterPath(pkg) + "'";
     }
 
     public static boolean reactivateMods(String pkg) {

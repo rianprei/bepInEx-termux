@@ -2,7 +2,9 @@ package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.SelectedFileWork;
+import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -59,7 +61,28 @@ public final class SelectedFileWorkTest {
             check("install executou e devolveu erro controlado",
                     installError.get() == null && installResult.get() != null
                             && !installResult.get().success);
-            System.out.println("  [OK] SelectedFileWorkTest (probe/install fora da thread UI)");
+
+            CountDownLatch stageFinished = new CountDownLatch(1);
+            AtomicReference<Thread> stageCallbackThread = new AtomicReference<>();
+            AtomicReference<File> stagedFile = new AtomicReference<>();
+            AtomicReference<Exception> stageError = new AtomicReference<>();
+            byte[] stageBytes = "conteudo grande do arquivo".getBytes(StandardCharsets.UTF_8);
+            SelectedFileWork.stage(workerExecutor, file.getParentFile(), () -> "selected file.bin",
+                    () -> new ByteArrayInputStream(stageBytes), (value, error) -> {
+                        stagedFile.set(value);
+                        stageError.set(error);
+                        stageCallbackThread.set(Thread.currentThread());
+                        stageFinished.countDown();
+                    });
+            check("cópia do URI concluída fora da thread chamadora",
+                    stageFinished.await(5, TimeUnit.SECONDS)
+                            && stageCallbackThread.get() != null
+                            && stageCallbackThread.get().getId() != uiThread);
+            check("cópia do URI foi concluída em cache",
+                    stageError.get() == null && stagedFile.get() != null
+                            && java.util.Arrays.equals(Files.readAllBytes(stagedFile.get().toPath()), stageBytes));
+            SelectedFileStager.delete(stagedFile.get());
+            System.out.println("  [OK] SelectedFileWorkTest (stage/probe/install fora da thread UI)");
         } finally {
             Files.deleteIfExists(file.toPath());
         }

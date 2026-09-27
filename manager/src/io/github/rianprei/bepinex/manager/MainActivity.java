@@ -39,8 +39,6 @@ import io.github.rianprei.bepinex.manager.model.GameInfo;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -301,30 +299,26 @@ public class MainActivity extends Activity {
     }
 
     private void processSelectedUri(Uri uri) {
-        String displayName = resolveDisplayName(uri);
-        File tmp = null;
-        try {
-            tmp = SelectedFileStager.create(getCacheDir(), displayName);
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
-                byte[] buf = new byte[4096];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            }
-            if (mAllGames.isEmpty()) {
-                mPendingImportFile = tmp;
-            } else {
-                processSelectedFile(tmp);
-            }
-        } catch (Exception e) {
-            SelectedFileStager.delete(tmp);
-            new AlertDialog.Builder(this)
-                    .setTitle("Não foi possível abrir o arquivo")
-                    .setMessage("Erro ao ler o arquivo escolhido:\n" + e.getMessage())
-                    .setPositiveButton("OK", null)
-                    .show();
-        }
+        SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
+                () -> getContentResolver().openInputStream(uri), (staged, error) ->
+                        mMainHandler.post(() -> {
+                            if (isFinishing()) {
+                                SelectedFileStager.delete(staged);
+                                return;
+                            }
+                            if (error != null) {
+                                SelectedFileStager.delete(staged);
+                                new AlertDialog.Builder(this)
+                                        .setTitle("Não foi possível abrir o arquivo")
+                                        .setMessage("Erro ao ler o arquivo escolhido:\n" + error.getMessage())
+                                        .setPositiveButton("OK", null)
+                                        .show();
+                            } else if (mAllGames.isEmpty()) {
+                                mPendingImportFile = staged;
+                            } else {
+                                processSelectedFile(staged);
+                            }
+                        }));
     }
 
     private String resolveDisplayName(Uri uri) {

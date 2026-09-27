@@ -35,8 +35,6 @@ import io.github.rianprei.bepinex.manager.model.ModInfo;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -216,27 +214,24 @@ public class GameDetailActivity extends Activity {
     // conteudo o que e (.bmod, .so arm64, .patch, .js, .dll de PC...). O
     // nome original so importa para virar o id do arquivo instalado.
     private void installSelectedFile(Uri uri) {
-        String displayName = resolveDisplayName(uri);
-        File tmp = null;
-        try {
-            tmp = SelectedFileStager.create(getCacheDir(), displayName);
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 FileOutputStream out = new FileOutputStream(tmp)) {
-                if (in == null) throw new java.io.IOException("O provedor não abriu o arquivo.");
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            }
-
-            installStagedFile(tmp);
-        } catch (Exception e) {
-            SelectedFileStager.delete(tmp);
-            new AlertDialog.Builder(this)
-                    .setTitle("Nao instalado")
-                    .setMessage("Erro ao ler o arquivo: " + e.getMessage())
-                    .setPositiveButton("OK", null)
-                    .show();
-        }
+        SelectedFileWork.stage(FILE_EXECUTOR, getCacheDir(), () -> resolveDisplayName(uri),
+                () -> getContentResolver().openInputStream(uri), (staged, error) ->
+                        mMainHandler.post(() -> {
+                            if (isFinishing()) {
+                                SelectedFileStager.delete(staged);
+                                return;
+                            }
+                            if (error != null) {
+                                SelectedFileStager.delete(staged);
+                                new AlertDialog.Builder(this)
+                                        .setTitle("Não instalado")
+                                        .setMessage("Erro ao ler o arquivo: " + error.getMessage())
+                                        .setPositiveButton("OK", null)
+                                        .show();
+                            } else {
+                                installStagedFile(staged);
+                            }
+                        }));
     }
 
     private void installStagedFile(File file) {
