@@ -43,9 +43,18 @@ die() { echo "symbolize: $*" >&2; exit 1; }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --offset) MODE=offset; shift; OFFSET="${1:-}"; shift ;;
-        --symbols) shift; SYMBOLS_DIR="${1:-}"; shift ;;
-        --build-id) shift; BUILD_ID="${1:-}"; shift ;;
+        # Cada flag que recebe valor CHEGA a conferir se o valor veio. Sem isso
+        # `--offset` sozinho fazia shift com $# == 0, e sob `set -e` isso mata
+        # o script em silencio, sem dizer o que faltou.
+        --offset)
+            [ "$#" -ge 2 ] || die "--offset exige um valor (ex: --offset 0x1bb34)"
+            MODE=offset; OFFSET="$2"; shift 2 ;;
+        --symbols)
+            [ "$#" -ge 2 ] || die "--symbols exige um valor (ex: --symbols DIR)"
+            SYMBOLS_DIR="$2"; shift 2 ;;
+        --build-id)
+            [ "$#" -ge 2 ] || die "--build-id exige um valor (ex: --build-id 041d9b51...)"
+            BUILD_ID="$2"; shift 2 ;;
         -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
         *) if [ "$MODE" = file ]; then TOMBSTONE="$1"; else FRAME_NAME="${1:-}"; fi; shift ;;
     esac
@@ -126,6 +135,16 @@ printf 'símbolos:  %s\n\n' "$SYMBOLS_DIR"
  #   #04 pc 000000000001bb34  /data/.../u_patch.so (BuildId: 041d9b51...)
  #   #03 pc 0000000001b498a0  /data/.../libil2cpp.so (il2cpp_type_get_name+24) (BuildId: ffd0d6...)
  #   #04 pc 000000000001bb34  /system/lib64/libfoo.so (func+24)
+ # O awk SO EXTRAI tokens. Nao executa nada.
+ #
+ # ACHADO DE SEGURANCA (revisao do OpenCode em 668cc9f): a versao anterior
+ # montava uma linha de comando com o token .so, que vem do TOMBSTONE — entrada
+ # nao confiavel de uma maquina de outra pessoa — e a rodava com
+ # `cmd | getline`. Um tombstone com
+ #     y.so";id>/tmp/pwned;"z.so
+ # virava `SYMDIR=... finder "y.so";id>/tmp/pwned;"z.so"` e executava na maquina
+ # de quem symboliza. Entrada de outra pessoa nao entra num command line em
+ # nenhum caso; a busca de candidatos virou loop bash com argv.
  awk -v symdir="$SYMBOLS_DIR" -v finder="$ROOT/tools/symbols_find_by_name.sh" '
     /^[[:space:]]*#[0-9]+[[:space:]]+pc[[:space:]]/ {
         if (label != "") printf "%s\t%s\t%s\t%s\n", label, off, so, bid
@@ -148,19 +167,9 @@ printf 'símbolos:  %s\n\n' "$SYMBOLS_DIR"
                 if (tok != "") bid = tok
             }
         }
-        if (bid == "" && so != "") {
-            # Tombstone sem BuildId: casamento por NOME. A CONTAGEM importa: com
-            # um candidato dá para resolver (marcado como palpite); com dois ou
-            # mais, escolher um no chute é pior que não resolver — e o shell
-            # precisa saber a contagem para=listar os candidatos e pedir
-            # --build-id. Por isso vai "nome:<n>:<bid>" (ou "nome?:" se varios).
-            cmd = "SYMDIR=\"" symdir "\" \"" finder "\" \"" so "\""
-            n = 0
-            while ((cmd | getline line) > 0) { n++; if (n == 1) first = line }
-            close(cmd)
-            if (n == 1) { sub(/\r?$/, "", first); bid = "nome:1:" first }
-            else if (n > 1) bid = "nome?:" n
-        }
+        # Sem BuildId no tombstone o casamento por NOME acontece DEPOIS, no
+        # loop bash deste script, com argv — o awk nao procura nada. Ver o
+        # comentario de seguranca no topo deste bloco.
         next
     }
     END { if (label != "") printf "%s\t%s\t%s\t%s\n", label, off, so, bid }
@@ -168,6 +177,17 @@ printf 'símbolos:  %s\n\n' "$SYMBOLS_DIR"
 while IFS=$'\t' read -r label off so bid; do
     base="$(basename "$so" 2>/dev/null || printf '%s' "$so")"
     base="${base%.so}"
+    # Tombstone sem BuildId: casamento por NOME, AQUI no shell e com argv.
+    # "$base" vem do arquivo de outra pessoa e nunca entra num command line.
+    if [ -z "$bid" ] && [ -n "$so" ]; then
+        cands="$(SYMDIR="$SYMBOLS_DIR" "$ROOT/tools/symbols_find_by_name.sh" "$base" || true)"
+        n="$(printf '%s' "$cands" | grep -c . || true)"
+        if [ "$n" -eq 1 ]; then
+            bid="nome:1:$cands"
+        elif [ "$n" -gt 1 ]; then
+            bid="nome?:$n"
+        fi
+    fi
     case "$bid" in
         nome\?:*)
             # 2+ builds com este nome: NAO resolve. Escolher um aqui é como o

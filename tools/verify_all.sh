@@ -442,6 +442,18 @@ else
     echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
+# O TOMBSTONE e entrada de outra pessoa: um crash report que o usuario manda
+# nunca pode virar comando na maquina de quem symboliza (revisao do OpenCode em
+# 668cc9f: o awk montava uma command line com o token .so e rodava com
+# `cmd | getline`).
+if [ -f "$ROOT/test/symbols/symbolize_injection_test.sh" ]; then
+    run_step "symbolize: tombstone nunca vira comando" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/symbolize_injection_test.sh"
+else
+    record "symbolize: tombstone nunca vira comando (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_injection_test.sh ausente: o tombstone pode executar comando"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"
