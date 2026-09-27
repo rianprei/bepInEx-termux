@@ -153,16 +153,58 @@ done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_cl
 
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
-    # TODOS os arquivos que declaram [Caso N] — não só selftest_harness.cpp.
-    # Antes o grep olhava um arquivo só, e a colisão do F4 (61-64 no
-    # upatch_harness x 61-64/65-68 da base) passava reto (achado do review).
-    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- "test/*.cpp" "mods/*/jni/*harness*.cpp" |
-        grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
+    # Varre todo .cpp do worktree (test/, mods/, selftest e demais raízes);
+    # só .git é podado, pois contém objetos/metadados, não arquivos-fonte.
+    source_files="$2/case-id-sources.txt"
+    labels_file="$2/case-id-labels.txt"
+    find . -path "./.git" -prune -o -type f -name "*.cpp" -print > "$source_files" \
+        || exit 1
+    : > "$labels_file"
+    while IFS= read -r source_file; do
+        if grep -h -o -E "\[Caso [0-9]+\]" "$source_file" >> "$labels_file"; then
+            :
+        else
+            grep_status=$?
+            [ "$grep_status" -eq 1 ] || exit "$grep_status"
+        fi
+    done < "$source_files"
+    labels=$(cat "$labels_file") || exit 1
+    if [ -z "$labels" ]; then
+        echo "nenhum rótulo [Caso N] encontrado nos diretórios de teste" >&2
+        exit 1
+    fi
+    duplicates=$(printf "%s\n" "$labels" | sort | uniq -d || true)
     if [ -n "$duplicates" ]; then
         printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
         exit 1
     fi
-' bash "$ROOT"
+    static_ids="$2/case-ids-static.txt"
+    printf "%s\n" "$labels" | sort -u > "$static_ids"
+    max_id=$(sed -E "s/^\[Caso ([0-9]+)\]$/\1/" "$static_ids" | sort -n | tail -1)
+    # Leave two unassigned IDs above the current high-water mark for concurrent
+    # merges. Recomputed from this tree every run; no case-number range is fixed.
+    case_base=$((max_id + 3))
+    g++ -std=c++17 -Wall -Wextra -Werror -I mods/u_patch/jni \
+        mods/u_patch/jni/u_field_nresolve_test.cpp -o "$2/u_field_case_id_probe"
+    UP_FIELD_CASE_ID_BASE="$case_base" "$2/u_field_case_id_probe" > "$2/u_field_case_id_probe.out"
+    dynamic_ids=$(grep -o -E "\[Caso [0-9]+\]" "$2/u_field_case_id_probe.out" || true)
+    expected_dynamic=$(grep -E -c "^[[:space:]]*print_case\([0-9]+" \
+        mods/u_patch/jni/u_field_nresolve_test.cpp)
+    actual_dynamic=$(printf "%s\n" "$dynamic_ids" | grep -c . || true)
+    if [ "$actual_dynamic" -ne "$expected_dynamic" ]; then
+        printf "rótulos dinâmicos incompletos: esperado=%s obtido=%s\n" \
+            "$expected_dynamic" "$actual_dynamic" >&2
+        exit 1
+    fi
+    dynamic_duplicates=$(printf "%s\n" "$dynamic_ids" | sort | uniq -d || true)
+    overlap=$(printf "%s\n" "$dynamic_ids" | sort -u | grep -F -x -f "$static_ids" || true)
+    if [ -n "$dynamic_duplicates" ] || [ -n "$overlap" ]; then
+        printf "IDs dinâmicos duplicados: %s %s\n" "$dynamic_duplicates" "$overlap" >&2
+        exit 1
+    fi
+    printf "IDs dinâmicos alocados a partir do máximo atual (%s):\n%s\n" \
+        "$max_id" "$dynamic_ids"
+' bash "$ROOT" "$TMP"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
