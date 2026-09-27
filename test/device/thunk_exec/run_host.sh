@@ -17,17 +17,33 @@ echo "== run fixed (tem que passar; inclui field) =="
 "$QEMU" libs/arm64-v8a/thunk_exec fixed || rc=1
 
 echo "== run buga (tem que FALHAR) =="
-if timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec buga >/dev/null 2>&1; then
-    echo "buga passou — teste NÃO pega o bug (a)"; rc=1
+if [ ! -x libs/arm64-v8a/thunk_exec ]; then
+    echo "binário thunk_exec não existe ou não é executável — gate não pode validar buga/bugb2"
+    rc=1
 else
-    echo "buga falhou como esperado"
+    timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec buga >/dev/null 2>&1; buga_ec=$?
+    if [ $buga_ec -eq 0 ]; then
+        echo "buga passou — teste NÃO pega o bug (a)"; rc=1
+    elif [ $buga_ec -eq 124 ]; then
+        echo "buga deu timeout — esperado SIGBUS/crash, não hang"; rc=1
+    else
+        echo "buga falhou como esperado (exit=$buga_ec)"
+    fi
 fi
 
 echo "== run bugb2 (tem que FALHAR — hang/timeout) =="
-if timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec bugb2 >/dev/null 2>&1; then
-    echo "bugb2 passou — teste NÃO pega o bug (b)"; rc=1
+if [ ! -x libs/arm64-v8a/thunk_exec ]; then
+    echo "binário thunk_exec não existe ou não é executável — gate não pode validar buga/bugb2"
+    rc=1
 else
-    echo "bugb2 falhou como esperado"
+    timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec bugb2 >/dev/null 2>&1; bugb2_ec=$?
+    if [ $bugb2_ec -eq 0 ]; then
+        echo "bugb2 passou — teste NÃO pega o bug (b)"; rc=1
+    elif [ $bugb2_ec -eq 124 ]; then
+        echo "bugb2 falhou como esperado (timeout 124)"
+    else
+        echo "bugb2 falhou com exit=$bugb2_ec — esperado timeout 124"; rc=1
+    fi
 fi
 
 echo "== mods que o harness do loader lê (.so de build) =="

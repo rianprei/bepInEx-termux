@@ -161,7 +161,7 @@ não pela extensão, e diz em português se roda. A tabela honesta:
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
 | `.bpatch` (regras declarativas) | **sim** (experimental) | testado só no PC; uso no celular pendente de verificação |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
-| `.js` script Frida | **não use** | o frida-gadget 17.19.0 fechou o jogo (SA2) no teste em celular; pode fechar o jogo até a correção |
+| `.js` script Frida | **experimental** | o frida-gadget 17.19.0 fechou o jogo (SA2) no teste em celular; o projeto usa 17.18.0, que carregou e rodou o script no POCO C75 + SA2 |
 | `.dll` de BepInEx/MelonLoader **IL2CPP** | depois | exige runtime .NET no processo |
 | `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois | Harmony roda nativo em Mono |
 | `.dll` Mono de PC em jogo **IL2CPP** (ex.: mods de TABS PC) | **não automático** | os dois binários falam línguas diferentes; use o Mod Maker/SDK pra recriar |
@@ -204,6 +204,24 @@ não pela extensão, e diz em português se roda. A tabela honesta:
   `.js` da pasta rodarem sozinhos.
 
 ### Suporte por engine
+
+## Matriz de suporte
+
+| Tipo de jogo | Funciona? | Observação |
+|---|---|---|
+| Unity IL2CPP arm64 | **sim** (experimental) | validado só em Swamp Attack 2 (POCO C75, Android 16) |
+| Unity Mono | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Unreal | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Godot | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Cocos2d-x | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Nativo (C/C++) | **só .so próprio** | Battle Cats validado pelo caminho próprio (hooks por AOB); nenhum outro jogo nativo testado |
+| Jogo 32-bit (arm32) | **não** | arm32 em andamento |
+| Jogo com vários processos (:unity, :remote) | **corrigido** (experimental) | ainda não testado no celular |
+| Celular com vários usuários/perfil de trabalho | **ainda não** | em desenvolvimento |
+
+**Legenda:** "só .so próprio" = o jogo carrega mods nativos `.so` feitos para ele,
+mas não converte mods de PC automaticamente. "(experimental)" = ainda não
+testado completamente no celular.
 
 O tipo de engine é detectado pelas libs do jogo. O que cada engine suporta:
 
@@ -250,6 +268,12 @@ Depende do jogo Android ser Mono ou IL2CPP e do mod ser pra qual dos dois —
 tabela acima. O caso comum ("jogo Android é IL2CPP, meu mod de PC é Mono")
 **não tem conversão automática**: o mod de PC referencia tipos que não
 existem no binário IL2CPP. O caminho é recriar o mod aqui (Mod Maker ou SDK).
+
+**Converter `.dll` de BepInEx**: medido em 30 mods reais, 0 de 378 patches
+convertidos (375 recusados porque o método-alvo fica no jogo, 3 por classe
+aninhada). Os ~3% são estimativa do tipo de corpo, não conversão medida.
+Mod de PC em geral **não roda no celular** por aqui. Veja o documento
+`docs/DLL-COVERAGE.md` (chega pela branch uni/dll-coverage) para os números completos.
 
 ### Meu celular usa SELinux Enforcing — funciona?
 É o padrão em celular de fábrica, e o módulo já carrega as regras
