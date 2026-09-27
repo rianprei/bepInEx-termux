@@ -5,12 +5,15 @@ basta; aqui é o contrato dos arquivos (C2–C5 e C7 do
 [ROADMAP-UNIVERSAL.md](ROADMAP-UNIVERSAL.md)) do ponto de vista de quem
 empacota e distribui.
 
-Estado honesto dos motores (2026-09-26): mods **nativos** (`.so`) rodam hoje
+Estado honesto dos motores (2026-09-27): mods **nativos** (`.so`) rodam hoje
 e estão validados no device (Swamp Attack 2). O `u_patch` (motor das regras
-`.bpatch`, base do Mod Maker) está **em integração** (fase F4); o `u_dump`
-(scanner que gera o `dump.tsv`) já está mergeado (F3). O Manager (app) está
-**em desenvolvimento** (F5) — hoje a instalação é pelo
-`tools/deploy_mod.sh` ou na mão com root.
+`.bpatch`, base do Mod Maker) já está mergeado (F4); o `u_dump`
+(scanner que gera o `dump.tsv`) já está mergeado (F3). O Manager (app) já
+existe e instala `.bmod`/`.so`/`.bpatch`/`.js` — a instalação pelo Manager
+no celular foi testada (Xiaomi) mas o seletor não devolveu o arquivo
+(SAF MIUI); a opção **Escolher da pasta Download** foi criada por isso
+mas ainda não foi testada no celular (experimental). O
+`tools/deploy_mod.sh` continua como caminho alternativo.
 
 ## Onde cada coisa vive no device (C1)
 
@@ -97,7 +100,7 @@ não derruba mod.
 
 ## `.bpatch` (C4) — regras declarativas (u_patch)
 
-> **MOTOR EM INTEGRAÇÃO (F4):** o `u_patch` ainda não mergeou — esta seção
+> **MOTOR JÁ MERGEADO (F4):** o `u_patch` já mergeou — esta seção
 > documenta o **contrato fixo** do roadmap (C4), mas nada aqui é operacional
 > hoje. Não empacote nem distribua `.bpatch`/`type:patch` até o merge; o
 > passo a passo de instalação entra aqui quando isso acontecer.
@@ -174,7 +177,7 @@ e o SDK usam — nada de offset mágico.
 
 ## O que o Manager aceita de qualquer origem (C7)
 
-O Manager (em desenvolvimento) identifica o arquivo **pelo conteúdo**, não
+O Manager identifica o arquivo **pelo conteúdo**, não
 pela extensão:
 
 | Tipo detectado | Como detecta | Roda? |
@@ -183,7 +186,7 @@ pela extensão:
 | `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim (copia pra pasta) |
 | `.so` arm32/x86 | ELF de outra arquitetura | não |
 | `.bpatch` | texto nas regras C4 | **em integração** (u_patch, F4) |
-| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | em desenvolvimento (F11) |
+| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | experimental (gadget 17.19.0 fechou o jogo no teste em celular) |
 | `.dll` IL2CPP (BepInEx 6/MelonLoader IL2CPP) | PE + CLI + refs `Il2CppInterop`/`UnhollowerBaseLib` | depois (F12) |
 | `.dll` Mono em jogo Android **Mono** | AssemblyRefs sem `Il2Cpp*` + engine mono | depois (F13) |
 | `.dll` Mono (ex.: TABS PC) em jogo **IL2CPP** | idem + engine il2cpp | **não automático** (recrie com Mod Maker/SDK) |
