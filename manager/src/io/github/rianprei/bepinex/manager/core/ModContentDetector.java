@@ -34,6 +34,31 @@ import java.util.Set;
 // APK/OBB/arquivos do jogo: tudo em runtime.
 public final class ModContentDetector {
 
+    // Extensao do arquivo de REGRAS. ".bpatch" e nao ".patch" porque o nome
+    // colidia com o .patch de diff do git e confundia quem olha a pasta de mods
+    // (decisao do usuario, 2026-09-27).
+    //
+    // A constante e o UNICO lugar onde ela mora. Antes ela aparecia escrita em
+    // seis arquivos (o detector, o Mod Maker, o BmodInstaller, o ModInfo, a
+    // tela de detalhe do jogo), e seis literais e uma extensao esperando a
+    // proxima metade do rename. Quem precisa do nome — inclusive o tradutor de
+    // .dll, que produz texto C4 — le daqui ou daqui deriva pelo
+    // ModContentDetector.
+    //
+    // O CONTEUDO decide o tipo, nao o nome: um arquivo C4 valido chamado
+    // "minhas_regras.patch", ou sem extensao nenhuma, e reconhecido e
+    // instalado como <id>.bpatch. Ver as fixtures regras_ext_antiga.patch e
+    // regras_sem_extensao, e os casos da matriz de tipos.
+    public static final String RULES_EXT = ".bpatch";
+
+    // Nome do arquivo de regras para um id. Quem grava o arquivo usa isto em vez
+    // de montar `id + extensao` num literal: o tradutor de .dll (que produz
+    // texto C4), o Mod Maker e o instalador passam pelo mesmo caminho, entao nao
+    // ha como um deles voltar a escrever a extensao antiga.
+    public static String rulesFileName(String id) {
+        return (id == null ? "" : id) + RULES_EXT;
+    }
+
     public enum Kind {
         BMOD,             // zip com manifest.json do formato C2 (pelo CONTEUDO)
         ZIP_PLAIN,        // zip sem manifest.json de pacote .bmod
@@ -288,7 +313,7 @@ public final class ModContentDetector {
                                 + "do jogo.", null, null);
             }
             if (!PatchGenerator.parse(t).isEmpty()) {
-                return installAs(s, ".bpatch", Kind.PATCH, "regras de mod (.bpatch)");
+                return installAs(s, RULES_EXT, Kind.PATCH, "regras de mod (" + RULES_EXT + ")");
             }
             if (hasJsMarker(t)) {
                 return installAs(s, ".js", Kind.FRIDA_JS, "script Frida (.js)");

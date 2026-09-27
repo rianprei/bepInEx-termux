@@ -25,6 +25,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
@@ -298,7 +299,7 @@ public class GameDetailActivity extends Activity {
                     baseId = f.substring(0, f.length() - 7);
                     type = "native";
                     enabled = false;
-                } else if (f.endsWith(".bpatch")) {
+                } else if (f.endsWith(ModContentDetector.RULES_EXT)) {
                     baseId = f.substring(0, f.length() - 6);
                     type = "patch";
                 } else if (f.endsWith(".bpatch.off")) {

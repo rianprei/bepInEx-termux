@@ -21,6 +21,7 @@ import android.widget.Toast;
 import io.github.rianprei.bepinex.manager.core.BmodInstaller;
 import io.github.rianprei.bepinex.manager.core.DumpParser;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
 import io.github.rianprei.bepinex.manager.core.ScanFlow;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
@@ -570,7 +571,7 @@ public class ModMakerActivity extends Activity {
             String dir = "/data/local/tmp/mods/" + mPkg + "/";
             SuHelper.ensureModDir(mPkg);
 
-            SuHelper.writeTextFile(dir + modId + ".bpatch", patchContent);
+            SuHelper.writeTextFile(dir + modId + ModContentDetector.RULES_EXT, patchContent);
             SuHelper.writeTextFile(dir + modId + ".json", manifestJson);
 
             // Checa u_patch.so em assets/

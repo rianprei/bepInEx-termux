@@ -120,9 +120,10 @@ public final class BmodInstaller {
 
             // 2. payload (mod.so ou mod.bpatch), teto por tipo
             boolean nativePayload = "native".equals(manifest.type);
-            String entryName = nativePayload ? "mod.so" : "mod.bpatch";
+            String entryName = nativePayload ? "mod.so" : "mod" + ModContentDetector.RULES_EXT;
             long limit = nativePayload ? MAX_PAYLOAD_BYTES : MAX_PATCH_BYTES;
-            String destName = manifest.id + (nativePayload ? ".so" : ".bpatch");
+            String destName = manifest.id
+                    + (nativePayload ? ".so" : ModContentDetector.RULES_EXT);
 
             ZipEntry payloadEntry = zip.getEntry(entryName);
             if (payloadEntry == null) {
@@ -222,7 +223,8 @@ public final class BmodInstaller {
             zos.closeEntry();
 
             // mod.bpatch ou mod.so
-            String entryName = "native".equals(manifest.type) ? "mod.so" : "mod.bpatch";
+            String entryName = "native".equals(manifest.type) ? "mod.so"
+                : "mod" + ModContentDetector.RULES_EXT;
             zos.putNextEntry(new ZipEntry(entryName));
             if (isContent) {
                 zos.write(payloadContentOrPath.getBytes(StandardCharsets.UTF_8));
