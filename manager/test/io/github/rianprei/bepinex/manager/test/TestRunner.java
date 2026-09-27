@@ -25,6 +25,7 @@ public class TestRunner {
         UiLivenessTest.run();
         PendingStagedFileTest.run();
         SelectedFileFlowTest.run();
+        RootInjectionTableTest.run();
             ShellExecTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);
