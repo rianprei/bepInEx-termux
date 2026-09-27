@@ -169,7 +169,7 @@ int main() {
               strcmp(log.last_message, "desisti após 1s: domínio não inicializou") == 0);
     }
 
-    printf("\n[Caso 80] detecção do nome da IL2CPP em APK e split APK\n");
+    printf("\n[Caso 83] detecção do nome da IL2CPP em APK e split APK\n");
     check("base.apk!/lib/.../libil2cpp.so casa",
           mod_il2cpp_name_matches("/data/app/base.apk!/lib/arm64-v8a/libil2cpp.so"));
     check("split_config.arm64_v8a.apk!/lib/.../libil2cpp.so casa",
