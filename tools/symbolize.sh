@@ -9,10 +9,22 @@
 #
 #   #04  0x1bb34  libbc-poc.so  up_field_type_name  u_patch_mod.cpp:375
 #
-# Sem os símbolos daquele build-id, a resposta é o que o Android já daria —
-# offset + build-id — e diz exatamente qual binário está faltando. Não adivinha
-# offset, não tenta o .so de outro build: isso foi o que transformou o crash do
-# SA2 em 12 builds de tentativa e erro.
+# REGRA: um resultado só sai sem ressalva quando o build-id do tombstone casou
+# com o do símbolo guardado. Sem build-id (Android 8-), o casamento é por NOME,
+# e isso é palpite, não prova:
+#
+#   - 1 candidato  -> resolve, e CADA LINHA sai marcada
+#                     [NAO VERIFICADO: sem BuildId, casado por nome];
+#   - 2+ candidatos-> NÃO resolve. Lista os build-ids e diz como escolher
+#                     (--build-id). Escolher no chute é como o dev acaba
+#                     debugando a função do build errado.
+#
+# Sem símbolos daquele build-id, a resposta é o que o Android já daria — offset
+# + build-id — e diz exatamente qual binário está faltando.
+#
+# ACHADO DA REVISÃO DE f59e9ff: a versão anterior devolvia só o primeiro
+# candidato do INDEX e imprimia a função SEM AVISO. No crash do SA2 isso mostrou,
+# com toda a confiança de um resultado verificado, a função de outro build.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,9 +54,15 @@ done
 A2L="$(symbols_addr2line)"
 [ -n "$A2L" ] || die "llvm-addr2line/addr2line ausente: instale o NDK ou ponha no PATH"
 
-# symbolize_one <rótulo> <build-id> <offset> <nome-binário>
+# symbolize_one <rótulo> <build-id> <offset> <nome-binário> [procedência]
+# procedência: "buildid" (casou pelo build-id: resultado verificado) ou
+# "nome" (casou pelo nome, sem build-id no tombstone: palpite marcado).
 symbolize_one() {
-    local label="$1" bid="$2" off="$3" name="$4" so out fn loc
+    local label="$1" bid="$2" off="$3" name="$4" prov="${5:-buildid}" so out fn loc
+    local marca=""
+    if [ "$prov" = "nome" ]; then
+        marca="  [NAO VERIFICADO: sem BuildId, casado por nome]"
+    fi
     if [ -z "$bid" ]; then
         # Sem build-id no tombstone E sem correspondência por nome: NÃO tenta
         # adivinhar. Um offset solto de um .so errado é pior que nada.
@@ -76,7 +94,7 @@ symbolize_one() {
     # (mais interna) e a linha, que é o que o usuário precisa para achar no editor.
     fn="$(printf '%s\n' "$out" | sed -n '1p')"
     loc="$(printf '%s\n' "$out" | sed -n '2p')"
-    printf '  %-5s %-12s %-16s %s\n' "$label" "$off" "$(basename "$so" .so)" "$fn"
+    printf '  %-5s %-12s %-16s %s%s\n' "$label" "$off" "$(basename "$so" .so)" "$fn" "$marca"
     printf '        %s\n' "$loc"
 }
 
@@ -131,11 +149,17 @@ printf 'símbolos:  %s\n\n' "$SYMBOLS_DIR"
             }
         }
         if (bid == "" && so != "") {
-            # tombstone sem BuildId: acha o build-id pelo nome do binário
+            # Tombstone sem BuildId: casamento por NOME. A CONTAGEM importa: com
+            # um candidato dá para resolver (marcado como palpite); com dois ou
+            # mais, escolher um no chute é pior que não resolver — e o shell
+            # precisa saber a contagem para=listar os candidatos e pedir
+            # --build-id. Por isso vai "nome:<n>:<bid>" (ou "nome?:" se varios).
             cmd = "SYMDIR=\"" symdir "\" \"" finder "\" \"" so "\""
-            if ((cmd | getline line) > 0) bid = line
+            n = 0
+            while ((cmd | getline line) > 0) { n++; if (n == 1) first = line }
             close(cmd)
-            sub(/\r?$/, "", bid)
+            if (n == 1) { sub(/\r?$/, "", first); bid = "nome:1:" first }
+            else if (n > 1) bid = "nome?:" n
         }
         next
     }
@@ -144,6 +168,27 @@ printf 'símbolos:  %s\n\n' "$SYMBOLS_DIR"
 while IFS=$'\t' read -r label off so bid; do
     base="$(basename "$so" 2>/dev/null || printf '%s' "$so")"
     base="${base%.so}"
-    symbolize_one "$label" "$bid" "$off" "$base"
+    case "$bid" in
+        nome\?:*)
+            # 2+ builds com este nome: NAO resolve. Escolher um aqui é como o
+            # dev acaba debugando a função do build errado — que foi
+            # exatamente o defeito achado na revisão de f59e9ff.
+            n="${bid#nome?:}"
+            printf '  %-5s %-12s %-16s AMBIGUO: %s builds guardados com este nome\n' \
+                "$label" "$off" "$base" "$n"
+            printf '        o tombstone nao traz BuildId (Android 8-), e ha mais de um\n'
+            printf '        candidato pelo nome. Escolha o build-id certo e rode de novo:\n'
+            printf '          tools/symbolize.sh --offset <build-id> %s   (este frame)\n' "$off"
+            printf '        candidatos:\n'
+            SYMDIR="$SYMBOLS_DIR" "$ROOT/tools/symbols_find_by_name.sh" "$base" |
+                sed 's/^/          /'
+            ;;
+        nome:1:*)
+            symbolize_one "$label" "${bid#nome:1:}" "$off" "$base" nome
+            ;;
+        *)
+            symbolize_one "$label" "$bid" "$off" "$base" buildid
+            ;;
+    esac
 done
 

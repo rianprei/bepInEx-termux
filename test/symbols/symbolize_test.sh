@@ -111,7 +111,61 @@ fi
 # fechar um crash de device — que é o ponto do trabalho inteiro.
 BASE_COMMIT="${SYMBOLS_BASE_COMMIT:-5ed8019}"
 if git -C "$ROOT" cat-file -e "$BASE_COMMIT^{commit}" 2>/dev/null; then
-    echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
+    # --- (5) tombstone SEM BuildId: o caminho que a revisão achou -------------
+#
+# ACHADO (revisão de f59e9ff): sem build-id no tombstone, o symbolize.sh
+# casava pelo NOME e imprimia a função SEM AVISO, com a confiança de um
+# resultado verificado. No crash do SA2 isso mostrou a função de outro build.
+# A regra agora:
+#   1 candidato  -> resolve, e CADA LINHA sai marcada [NAO VERIFICADO...]
+#   2+ candidatos-> NÃO resolve; lista os build-ids e diz como escolher
+echo "symbolize_test: (5) tombstone sem BuildId (casado por nome)"
+mkdir -p "$WORK/nobid"
+# uma build só com este nome
+ONE=$(symbols_add "$SO" "$WORK/nobid" "u_patch")
+printf 'backtrace:\n      #04 pc 000000000001bb34  /data/local/tmp/mods/com.x/u_patch.so (up_field_type_name+24)\n' \
+    >"$WORK/nobid1.txt"
+out5=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" "$WORK/nobid1.txt" 2>&1)
+printf '%s\n' "$out5" | sed 's/^/    /'
+check "sem BuildId e 1 candidato: resolve" \
+    "$(grep -qE '\.[ch]+:[0-9]+' <<<"$out5" && echo 0 || echo 1)"
+check "e marca CADA linha como nao verificado" \
+    "$(grep -q 'NAO VERIFICADO: sem BuildId, casado por nome' <<<"$out5" && echo 0 || echo 1)"
+check "a marca aparece na MESMA linha da funcao (nao numa nota solta)" \
+    "$(grep -qE 'up_dedupe_mark|\.[ch]pp:[0-9]+|\S+ +\[NAO VERIFICADO' <<<"$out5" \
+        && grep 'NAO VERIFICADO' <<<"$out5" | grep -qE 'u_patch' && echo 0 || echo 1)"
+
+# agora uma SEGUNDA build do mesmo nome: tem que recusar
+cp "$SO" "$WORK/segundo.so"
+printf '\nconst char *segunda_build_marca = "x";\n' >>"$WORK/segundo.so" 2>/dev/null || true
+# um .so genuinamente diferente: pega outro build real do repo
+OTHER=""
+for cand in "$ROOT/mods/kungfux/libs/arm64-v8a/libkungfux.so" \
+            "$ROOT/mods/sa2ammo/libs/arm64-v8a/libsa2ammo.so"; do
+    if [ -f "$cand" ]; then OTHER="$cand"; break; fi
+done
+if [ -n "$OTHER" ]; then
+    TWO=$(symbols_add "$OTHER" "$WORK/nobid" "u_patch")
+    out5b=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" "$WORK/nobid1.txt" 2>&1)
+    printf '%s\n' "$out5b" | sed 's/^/    /'
+    check "sem BuildId e 2 candidatos: NAO resolve" \
+        "$(grep -q 'AMBIGUO' <<<"$out5b" && echo 0 || echo 1)"
+    check "e nao imprime funcao:linha de nenhum dos dois" \
+        "$(grep -qE '\.[ch]+:[0-9]+' <<<"$out5b" && echo 1 || echo 0)"
+    check "lista os build-ids candidatos" \
+        "$(grep -q "$ONE" <<<"$out5b" && grep -q "$TWO" <<<"$out5b" && echo 0 || echo 1)"
+    check "e diz como escolher (--offset/--build-id)" \
+        "$(grep -qF 'offset <build-id>' <<<"$out5b" && echo 0 || echo 1)"
+    # e o caminho de escolha explicita tem que funcionar
+    out5c=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" --build-id "$ONE" --offset 0x1bb34 u_patch 2>&1)
+    check "com --build-id explicito resolve SEM a marca de palpite" \
+        "$(grep -qE '\.[ch]+:[0-9]+' <<<"$out5c" \
+            && ! grep -q 'NAO VERIFICADO' <<<"$out5c" && echo 0 || echo 1)"
+else
+    echo "    (sem segundo .so para o caso ambiguo; pulado)"
+fi
+
+echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
     H="$WORK/hist"
     mkdir -p "$H"
     ( cd "$ROOT" && git archive "$BASE_COMMIT" mods/u_patch mods/common jni ) | tar -x -C "$H"
