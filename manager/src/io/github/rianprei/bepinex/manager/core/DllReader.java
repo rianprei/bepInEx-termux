@@ -315,14 +315,22 @@ public final class DllReader {
                 : rowCounts[8] + 1;
         validateListRange(firstParam, nextParam, rowCounts[8], "ParamList");
         MethodSignature signature = readMethodSignature(getBlob(signatureIndex));
-        if (nextParam - firstParam > signature.parameterTypes.size()) {
+        if (nextParam - firstParam > signature.parameterTypes.size() + 1) {
             throw error("tabela Param tem mais parâmetros que a assinatura do método " + name);
         }
         List<ParameterInfo> parameters = new ArrayList<>(signature.parameterTypes.size());
         Map<Integer, String> parameterNames = new HashMap<>();
+        boolean returnParameterSeen = false;
         for (int paramRid = firstParam; paramRid < nextParam; paramRid++) {
             int paramRow = tableRow(8, paramRid);
             int sequence = u16(paramRow + 2);
+            if (sequence == 0) {
+                if (returnParameterSeen) {
+                    throw error("sequência Param de retorno duplicada no método " + name);
+                }
+                returnParameterSeen = true;
+                continue;
+            }
             if (sequence < 1 || sequence > signature.parameterTypes.size()
                     || parameterNames.containsKey(sequence)) {
                 throw error("sequência Param inválida no método " + name);

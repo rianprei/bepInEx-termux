@@ -1,14 +1,14 @@
-metadata	1028	3552
-section	.text	8192	4376	4608	512
+metadata	1028	3644
+section	.text	8192	4468	4608	512
 section	.rsrc	16384	960	1024	5120
 section	.reloc	24576	12	512	6144
-rows	TypeDef	20
-rows	MethodDef	31
+rows	TypeDef	21
+rows	MethodDef	32
 rows	CustomAttribute	39
 rows	MemberRef	14
 rows	TypeRef	18
 rows	Field	19
-rows	Param	16
+rows	Param	17
 method	1	.ctor	8272	0
 method	2	.ctor	8280	0
 method	3	Prefix	8295	1
@@ -32,11 +32,12 @@ method	20	GetStat	8561	0
 method	21	GetStat	8569	1
 method	22	.ctor	8579	0
 method	23	Double	8587	1
-method	24	.ctor	8592	0
-method	25	.ctor	8600	1
-method	26	.ctor	8615	2
-method	27	.ctor	8637	3
-method	28	.ctor	8666	0
-method	29	.ctor	8674	0
-method	30	.ctor	8682	0
-method	31	.ctor	8690	1
+method	24	ReturnAnnotated	8592	1
+method	25	.ctor	8595	0
+method	26	.ctor	8603	1
+method	27	.ctor	8618	2
+method	28	.ctor	8640	3
+method	29	.ctor	8669	0
+method	30	.ctor	8677	0
+method	31	.ctor	8685	0
+method	32	.ctor	8693	1
