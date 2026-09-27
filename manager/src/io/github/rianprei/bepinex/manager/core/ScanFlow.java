@@ -8,6 +8,17 @@ import java.io.InputStream;
 // Sequência pura do scanner: instala u_dump por uma execução, espera o dump e
 // sempre remove o componente temporário, inclusive em falha/timeout.
 public final class ScanFlow {
+
+    /**
+     * Comando de sondagem do dump.tsv no device: existe? quantas linhas?
+     * "missing" quando não existe. Fica no core (e não na Activity) para o
+     * teste de host EXECUTAR em sh de verdade: `wc -l < arquivo` com `||` de
+     * fallback é exatamente o tipo de comando que só quebra quando alguém roda.
+     */
+    public static String dumpProbeCommand(String path) {
+        return "[ -f '" + path + "' ] && wc -l < '" + path + "' || echo 'missing'";
+    }
+
     public interface AssetSource {
         InputStream open(String name) throws IOException;
     }

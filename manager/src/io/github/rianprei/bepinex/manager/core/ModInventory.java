@@ -40,22 +40,37 @@ public final class ModInventory {
         }
     }
 
-    /** Comando único: um laço dentro do shell do device. */
+    /**
+     * Comando único: um laço dentro do shell do device. A raiz é parâmetro
+     * para o teste de host rodar o comando DE VERDADE (sh) contra uma árvore
+     * temporária; o Manager usa o default.
+     *
+     * Sintaxe POSIX sh, e o teste de shell real roda `sh -n` e executa: a
+     * primeira versão tinha um `;` solto depois do `echo` e virava `;;done`,
+     * que o sh rejeita — no device isso significa inventário SEMPRE vazio e
+     * todo jogo com 0 mods, sem erro nenhum na tela.
+     */
     public static String command() {
-        return "echo '" + BEGIN + "';"
-                + "for d in /data/local/tmp/mods/*/; do"
-                + "  p=${d%/}; p=${p##*/};"
-                + "  t=0; a=0;"
-                + "  for f in \"$d\"*; do"
-                + "    case \"$f\" in"
-                + "      *.so|*.patch) t=$((t+1)); a=$((a+1));;"
-                + "      *.so.off|*.patch.off) t=$((t+1));;"
-                + "    esac;"
-                + "  done;"
-                + "  echo \"$p $t $a\";"
-                + ";"
-                + "done;"
-                + "echo '" + END + "'";
+        return command("/data/local/tmp/mods");
+    }
+
+    public static String command(String modsRoot) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("echo '").append(BEGIN).append("'; ");
+        sb.append("for d in ").append(modsRoot).append("/*/; do ");
+        sb.append("[ -d \"$d\" ] || continue; ");
+        sb.append("p=${d%/}; p=${p##*/}; t=0; a=0; ");
+        // Quatro globs explícitos em vez de "$d"* : nome com espaço continua
+        // inteiro (o diretório está entre aspas e o globo é o sufixo), e
+        // pasta vazia não vira o literal do padrão.
+        sb.append("for f in \"$d\"*.so \"$d\"*.patch \"$d\"*.so.off \"$d\"*.patch.off; do ");
+        sb.append("[ -f \"$f\" ] || continue; ");
+        sb.append("case \"$f\" in *.off) t=$((t+1)) ;; *) t=$((t+1)); a=$((a+1)) ;; esac; ");
+        sb.append("done; ");
+        sb.append("echo \"$p $t $a\"; ");
+        sb.append("done; ");
+        sb.append("echo '").append(END).append("'");
+        return sb.toString();
     }
 
     /**
@@ -108,7 +123,7 @@ public final class ModInventory {
     }
 
     // Mesmo critério do SuHelper.requirePkg, sem lançar: o parse ignora o que
-    // não for nome de pacote em vez de poisons o mapa inteiro.
+    // não for nome de pacote em vez de contaminar o mapa inteiro.
     private static boolean pkgName(String s) {
         if (s == null || s.isEmpty() || s.length() > 128) return false;
         if (!Character.isLetter(s.charAt(0))) return false;
@@ -146,7 +161,6 @@ public final class ModInventory {
         return out;
     }
 
-    /** Só para teste/leitura: as linhas cruas, na ordem. */
     public static List<String> lines(String raw) {
         List<String> out = new ArrayList<>();
         if (raw == null) return out;

@@ -17,6 +17,7 @@ public class TestRunner {
             BmodInstallerTest.run();
             C4FixtureTest.run();
             RootCallBudgetTest.run();
+            ShellExecTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);
         } catch (Throwable t) {

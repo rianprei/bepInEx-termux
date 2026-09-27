@@ -10,6 +10,7 @@ public final class StatusChecker {
         public String moduleInfo = "Não instalado";
         public boolean zygiskActive = false;
         public String zygiskInfo = "Desconhecido";
+        public String magiskVersion = "";
         // Versao do APK: vem do VERSION da raiz do repo (BuildVersion e
         // gerado pelo build.sh). Numero solto aqui mentia sobre a versao.
         public String appVersion = BuildVersion.NAME + " (" + BuildVersion.CODE + ")";
@@ -19,24 +20,44 @@ public final class StatusChecker {
 
     /**
      * Uma chamada root para o status inteiro. Antes eram ~5 `su` (id, ls dos
-     * módulos, disable, zygisk, magisk -v) por carregamento de tela: cada
-     * `su` é um processo, e o padrão do projeto é "nada de chamada root
-     * repetida" (o travamento de 2026-09-27 foi exatamente isso, em escala
-     * maior). O formato é KEY=VALUE por linha.
+     * módulos, disable, zygisk, magisk -v) por carregamento de tela; cada `su`
+     * é um processo, e o padrão do projeto é "nada de chamada root repetida".
+     * Saída: marcadores + uma chave por linha.
+     *
+     * Raiz parametrizada para o teste de host rodar o comando em sh de verdade.
+     * Sem `su` aninhado dentro do comando root (seria um processo su extra
+     * dentro do orçamento de 1 chamada) e com as MESMAS três condições de
+     * zygisk do original (3884e54): /data/adb/zygisk, /data/adb/modules/*zygisk*
+     * e a propriedade ro.zygisk.
      */
-    public static final String PROBE_COMMAND =
-            "echo B=bepinex-probe-begin;"
-            + "echo uid=$(id -u 2>/dev/null);"
-            + "m=$(ls -d /data/adb/modules/*bepinex* 2>/dev/null | head -n 1);"
-            + "echo module=$m;"
-            + "echo disable=$([ -f \"$m/disable\" ] && echo disabled || echo enabled);"
-            + "echo zygisk=$(su -c 'test -d /data/adb/modules/zygisk' && echo yes || echo no);"
-            + "echo magisk=$(magisk -v 2>/dev/null | head -n 1);"
-            + "echo B=bepinex-probe-end";
+    public static String command() {
+        return command("/data/adb");
+    }
+
+    public static String command(String adbRoot) {
+        return "echo B=bepinex-probe-begin; "
+                + "echo uid=$(id -u 2>/dev/null); "
+                + "m=''; "
+                + "for c in '" + adbRoot + "/modules/bc-poc' '" + adbRoot + "'/modules/*bepinex*; do "
+                + "  if [ -d \"$c\" ]; then m=\"$c\"; break; fi; "
+                + "done; "
+                + "echo module=$m; "
+                // O arquivo `disable` do Magisk é o que DESLIGA o módulo: sem
+                // ele, o módulo está ativo. (A primeira versão tinha isso
+                // invertido — só apareceu rodando o comando em sh de verdade.)
+                + "echo disable=enabled; "
+                + "if [ -n \"$m\" ] && [ -f \"$m/disable\" ]; then echo disable=disabled; fi; "
+                + "if [ -d '" + adbRoot + "/zygisk' ] || [ -d '" + adbRoot + "'/modules/*zygisk* ] "
+                + "|| getprop ro.zygisk 2>/dev/null | grep -q 1; then echo zygisk=yes; else echo zygisk=no; fi; "
+                + "echo magisk=$(magisk -v 2>/dev/null | head -n 1); "
+                + "echo B=bepinex-probe-end";
+    }
+
+    public static final String PROBE_COMMAND = "";   // removido: use command()
 
     public static SystemStatus check() {
         return probe(new RootCall() {
-            @Override public String exec() { return SuHelper.exec(PROBE_COMMAND).stdout; }
+            @Override public String exec() { return SuHelper.exec(command()).stdout; }
         });
     }
 
@@ -51,10 +72,19 @@ public final class StatusChecker {
         String exec();
     }
 
-    static SystemStatus parse(String raw, SystemStatus status) {
+    /**
+     * Parse das chaves. Respeita os marcadores begin/end: antes, qualquer
+     * linha "uid=" ou "module=" que aparecesse fora deles (banner do su, saída
+     * do magisk) era aceita como se fosse nossa.
+     */
+    public static SystemStatus parse(String raw, SystemStatus status) {
         if (raw == null) return status;
+        boolean inside = false;
         for (String line : raw.split("\\r?\\n")) {
             String t = line.trim();
+            if (t.equals("B=bepinex-probe-begin")) { inside = true; continue; }
+            if (t.equals("B=bepinex-probe-end")) { inside = false; continue; }
+            if (!inside) continue;
             int eq = t.indexOf('=');
             if (eq <= 0) continue;
             String k = t.substring(0, eq).trim();
@@ -66,10 +96,9 @@ public final class StatusChecker {
                 status.moduleInstalled = !v.isEmpty();
                 status.moduleActive = status.moduleInstalled;
                 if (status.moduleInstalled) {
-                    String name = v.substring(v.lastIndexOf('/') + 1);
-                    status.moduleInfo = "Instalado (" + name + ")";
+                    status.moduleInfo = "Instalado (" + v.substring(v.lastIndexOf('/') + 1) + ")";
                 } else {
-                    status.moduleInfo = "Módulo bepInEx ausente em /data/adb/modules/";
+                    status.moduleInfo = "Módulo bepInEx ausente em " + v + "/";
                 }
             } else if ("disable".equals(k)) {
                 if ("disabled".equals(v)) {
@@ -78,13 +107,18 @@ public final class StatusChecker {
                 }
             } else if ("zygisk".equals(k)) {
                 status.zygiskActive = "yes".equals(v);
-                status.zygiskInfo = status.zygiskActive ? "Ativo (Zygisk / ZygiskNext)" : "Desconhecido";
             } else if ("magisk".equals(k)) {
-                // version informational; o card mostra root/zygisk
+                status.magiskVersion = v;
             }
         }
-        if (status.moduleInstalled && status.moduleActive) {
-            // moduleInfo já tem o nome do módulo; nada a acrescentar
+        if (!status.zygiskActive) {
+            // Fallback do original (3884e54): zygisk sem o diretório/propriedade
+            // ainda é Magisk instalado, e isso é o que o usuário lê no card.
+            status.zygiskInfo = (!status.magiskVersion.isEmpty())
+                    ? "Magisk instalado (" + status.magiskVersion + ")"
+                    : "Zygisk não confirmado";
+        } else {
+            status.zygiskInfo = "Ativo (Zygisk / ZygiskNext)";
         }
         return status;
     }

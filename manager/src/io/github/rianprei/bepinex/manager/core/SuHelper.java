@@ -244,15 +244,37 @@ public final class SuHelper {
      * Devolve null em falha.
      */
     public static String readTextFiles(String dir, Collection<String> names) {
-        if (dir == null || names == null || names.isEmpty()) return "";
-        if (dir == null || names == null || names.isEmpty()) return "";
+        if (names == null || names.isEmpty()) return "";
+        // O diretório entra num comando root: passa pela validação central como
+        // qualquer outro caminho. A guarda só de null não impedia nada.
+        requirePath(dir, "dir");
+        for (String n : names) requireFileName(n);
+        return exec(bundleCommand(dir, names)).stdout;
+    }
+
+    /**
+     * Conteúdo de vários arquivos numa chamada só, com separador em linha
+     * inteira. O separador vai para a SAÍDA de propósito: mandá-lo para
+     * /dev/null (a primeira versão) fazia o parse nunca achar o início do
+     * arquivo e a tela de jogo nunca mostrava o manifest. Cada arquivo tem o
+     * nome validado, então o separador não colide com nome de arquivo.
+     */
+    public static String bundleCommand(String dir, Collection<String> names) {
         StringBuilder cmd = new StringBuilder();
         for (String n : names) {
-            requireFileName(n);
-            cmd.append("echo '").append(BUNDLE_SEP).append(n).append("' >/dev/null; ")
-               .append("cat '").append(dir).append("/").append(n).append("' 2>/dev/null; ");
+            cmd.append("echo '").append(BUNDLE_SEP).append(n).append("'; ")
+               .append("cat '").append(dir).append("/").append(n).append("' 2>/dev/null; ")
+               // Newline DEPOIS de cada arquivo: sem isso, um .json que não
+               // existe (cat falha e não imprime nada) deixa o separador
+               // seguinte grudado na linha do conteúdo anterior e o parse
+               // perde o arquivo. Achado rodando o comando em sh de verdade.
+               .append("echo; ");
         }
-        return exec(cmd.toString()).stdout;
+        // Sai com 0 mesmo com o último cat falhando: um .json ausente não pode
+        // fazer a tela de jogo inteiro ler "sem log" (o exit do su é o que o
+        // SuHelper chama de sucesso).
+        cmd.append("true");
+        return cmd.toString();
     }
 
     /** Separador da resposta de readTextFiles (linha inteira, nome do arquivo). */
@@ -420,20 +442,6 @@ public final class SuHelper {
 
     // --- crashguard (F1d) ---------------------------------------------------
 
-    // O marcador existe em algum dos dois lugares? (state dir do jogo, que e
-    // onde o loader grava, e mods/<pkg>/, que outra versao do loader podia
-    // usar — o jogo nao escreve em /data/local/tmp.)
-    public static boolean hasCrashGuardMarker(String pkg) {
-        try {
-            requirePkg(pkg);
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
-        Result r = exec("[ -f '" + CrashGuardState.markerPath(pkg) + "' ] || "
-                + "[ -f '" + CrashGuardState.modsMarkerPath(pkg) + "' ] && echo yes || echo no");
-        return r.success && r.stdout.contains("yes");
-    }
-
     /**
      * Contador + marcador do crashguard em UMA chamada root (eram duas: um cat
      * e um test -f). Mesmo orçamento do resto: chamada por tela, nunca por item.
@@ -444,16 +452,44 @@ public final class SuHelper {
         } catch (IllegalArgumentException e) {
             return CrashGuardState.parse(null, false);
         }
-        String marker = CrashGuardState.modsMarkerPath(pkg);
-        Result r = exec("{ cat '" + CrashGuardState.counterPath(pkg) + "' 2>/dev/null; echo; "
-                + "if [ -f '" + CrashGuardState.markerPath(pkg) + "' ] || [ -f '" + marker + "' ]; "
-                + "then echo bep-marker; fi; }");
-        if (!r.success) return CrashGuardState.parse(null, false);
-        String raw = r.stdout == null ? "" : r.stdout;
-        int nl = raw.lastIndexOf('\n');
-        String counter = (nl > 0) ? raw.substring(0, nl) : "";
-        boolean hasMarker = raw.contains("bep-marker");
-        return CrashGuardState.parse(counter, hasMarker);
+        return parseCrashGuard(exec(crashGuardCommand(pkg, CrashGuardState.counterPath(pkg),
+                CrashGuardState.markerPath(pkg), CrashGuardState.modsMarkerPath(pkg))).stdout);
+    }
+
+    /**
+     * Contador + marcador do crashguard em UMA chamada root (eram duas: um
+     * cat e um test -f). Saída com CHAVES, não com posições: o stdout volta
+     * trim() e a versão anterior caçava a última quebra de linha para
+     * separar o contador do marcador — sem marcador, o contador perdia o
+     * "\n" e virava string vazia, e o contador de mortes sumia.
+     */
+    public static String crashGuardCommand(String pkg) {
+        return crashGuardCommand(pkg, CrashGuardState.counterPath(pkg),
+                CrashGuardState.markerPath(pkg), CrashGuardState.modsMarkerPath(pkg));
+    }
+
+    public static String crashGuardCommand(String pkg, String counterPath,
+                                           String markerPath, String modsMarkerPath) {
+        return "echo deaths=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f1);"
+                + " echo ts=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f2);"
+                + " if [ -f '" + markerPath + "' ] || [ -f '" + modsMarkerPath + "' ]; "
+                + "then echo marker=yes; else echo marker=no; fi";
+    }
+
+    /** Parse puro das chaves do crashguard. */
+    public static CrashGuardState.State parseCrashGuard(String stdout) {
+        boolean marker = false;
+        String deaths = "", ts = "";
+        for (String line : (stdout == null ? "" : stdout).split("\\r?\\n")) {
+            String t = line.trim();
+            if (t.startsWith("deaths=")) deaths = t.substring(7).trim();
+            else if (t.startsWith("ts=")) ts = t.substring(3).trim();
+            else if (t.startsWith("marker=")) marker = "yes".equals(t.substring(7).trim());
+        }
+        if (deaths.isEmpty() && ts.isEmpty() && !marker) {
+            return CrashGuardState.parse(null, false);
+        }
+        return CrashGuardState.parse(deaths + " " + ts, marker);
     }
 
     // "Reativar": apaga o marcador e zera o contador. Sem zerar, o aviso
