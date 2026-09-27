@@ -1743,6 +1743,24 @@ static bool crashguard_gate(const char *pkg, const char *tag) {
     return false;
 }
 
+// Sem log do jogo: avisa UMA vez por caminho e, quando o erro é permissão,
+// diz que a causa provável é dono errado (um script rodando como root criou
+// o arquivo/diretório e o app, com outro uid, não abre mais). Antes isso
+// repetia a cada linha de log — inundação que escondia o resto (achado da
+// rodada de device 2026-09-26).
+static void pkg_log_broken(const char *pkg, const char *path, int err) {
+    static int warned = 0;
+    if (warned) return;
+    warned = 1;
+    if (err == EACCES || err == EPERM) {
+        LOGW("%s: sem log do jogo (%s): %s — log.txt sem permissao (dono errado?) "
+             "provavelmente criado por root; o processo roda com o uid do app e nao "
+             "consegue mais abrir pra append", pkg, path, strerror(err));
+    } else {
+        LOGW("%s: sem log do jogo (%s): %s", pkg, path, strerror(err));
+    }
+}
+
 static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...) {
     // files/ pode não existir ainda (app que nunca chamou getFilesDir): sem ele
     // o mkdir do filho falha com ENOENT e o log some inteiro. 0771 é a
@@ -1750,20 +1768,20 @@ static void pkg_log_line(const char *pkg, const char *tag, const char *fmt, ...)
     char files_dir[320];
     snprintf(files_dir, sizeof(files_dir), "/data/data/%s/files", pkg);
     if (mkdir(files_dir, 0771) != 0 && errno != EEXIST) {
-        LOGW("%s: sem log do jogo (%s): %s", pkg, files_dir, strerror(errno));
+        pkg_log_broken(pkg, files_dir, errno);
         return;
     }
     char dir[336];
     snprintf(dir, sizeof(dir), "%s/bepinex", files_dir);
     if (mkdir(dir, 0700) != 0 && errno != EEXIST) {
-        LOGW("%s: sem log do jogo (%s): %s", pkg, dir, strerror(errno));
+        pkg_log_broken(pkg, dir, errno);
         return;
     }
     char path[352];
     snprintf(path, sizeof(path), "%s/log.txt", dir);
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0) {
-        LOGW("%s: sem log do jogo (%s): %s", pkg, path, strerror(errno));
+        pkg_log_broken(pkg, path, errno);
         return;
     }
     if (lseek(fd, 0, SEEK_END) >= PKG_LOG_CAP) ftruncate(fd, 0);

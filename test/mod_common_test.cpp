@@ -4,6 +4,7 @@
 //                          cacheado depois da 1ª leitura boa (C1)
 //   mod_dir              — /data/local/tmp/mods/<pkg> (C1)
 //   mod_log_format_line  — a linha "HH:MM:SS [tag] msg" do log.txt (C1)
+//   mod_log_permission_warn — o aviso de log.txt sem permissão (dono errado)
 //   mod_conf_find        — parser key=value, '#' comenta, trim (C3)
 //   conf_as_*            — conversões bool/int/float com default (C3)
 //   mod_conf_get         — default quando arquivo/key não existe (C3)
@@ -166,6 +167,21 @@ int main(int argc, char **argv) {
         check("buffer curto devolve 0", mod_log_format_line(tiny, sizeof(tiny), "u_dump", "x", when) == 0);
         check("nulo é recusado", mod_log_format_line(nullptr, 100, "u_dump", "x", when) == 0);
         check("tag nulo é recusado", mod_log_format_line(line, sizeof(line), nullptr, "x", when) == 0);
+    }
+
+    // Defesa de permissão (log.txt com dono errado): avisa UMA vez e só
+    // quando o erro é EACCES/EPERM. Sem isso o mod fica mudo e o primeiro
+    // sintoma é "o mod não funcionou".
+    printf("[mod_log_permission_warn] (avisa uma vez, só em EACCES/EPERM)\n");
+    {
+        check("EACCES avisa (1a vez)", mod_log_permission_warn(EACCES, "u_dump", "/data/data/com.foo/files/bepinex/log.txt") == true);
+        check("EACCES de novo NÃO avisa (sem inundar o logcat)",
+              mod_log_permission_warn(EACCES, "u_dump", "/data/data/com.foo/files/bepinex/log.txt") == false);
+        check("EPERM depois do EACCES também não avisa",
+              mod_log_permission_warn(EPERM, "u_dump", "/data/data/com.foo/files/bepinex/log.txt") == false);
+        check("ENOENT não é caso de permissão (o app cria a pasta depois)",
+              mod_log_permission_warn(ENOENT, "u_dump", "/data/data/com.foo/files/bepinex/log.txt") == false);
+        check("EISDIR também não", mod_log_permission_warn(EISDIR, "u_dump", "/x") == false);
     }
 
     printf("[mod_log] (smoke: nunca derruba mesmo sem conseguir escrever)\n");

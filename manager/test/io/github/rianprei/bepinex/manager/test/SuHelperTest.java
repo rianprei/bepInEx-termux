@@ -11,7 +11,9 @@ public class SuHelperTest {
         testChmodHostilRecusado();
         testCaminhoHostilRecusado();
         testValidosAceitos();
-        System.out.println("  [OK] SuHelperTest (validacao central)");
+        testOwnerFixCommand();
+        testReactivatePlan();
+        System.out.println("  [OK] SuHelperTest (validacao central + dono do state dir)");
     }
 
     private static void check(String what, boolean cond) {
@@ -96,6 +98,48 @@ public class SuHelperTest {
                 SuHelper.listFiles("/data/local/tmp/mods/$(id)").isEmpty());
         check("writeTextFile hostil nao executa",
                 !SuHelper.writeTextFile("/data/local/tmp/mods/com.foo/a.conf; id", "x=1"));
+    }
+
+    /**
+     * Causa raiz do "log.txt root:root" (rodada de device 2026-09-26): o
+     * Manager roda como root e qualquer arquivo que ele crie em
+     * /data/data/<pkg>/files fica root:root — aí o processo do jogo (outro
+     * uid) não abre mais pra append e TODOS os mods ficam mudos. O fix é
+     * devolver o dono do diretório pai depois de escrever.
+     */
+    private static void testOwnerFixCommand() {
+        String cmd = SuHelper.ownerFixCommand("/data/data/com.foo/files/bepinex/log.txt");
+        check("pega o uid:gig do PAIO com stat (toybox não tem chown --reference)",
+                cmd.contains("stat -c %u:%g '/data/data/com.foo/files/bepinex'"));
+        check("chown usa o resultado do stat no arquivo certo",
+                cmd.contains("chown \"$(stat -c %u:%g") && cmd.contains("'/data/data/com.foo/files/bepinex/log.txt'"));
+        check("devolve também o modo 0644", cmd.contains("chmod 644"));
+        check("o caminho do contador também funciona",
+                SuHelper.ownerFixCommand("/data/data/com.foo/files/bepinex/crashguard")
+                        .contains("'/data/data/com.foo/files/bepinex/crashguard'"));
+        // Caminho hostil não chega a montar comando: ensureOwner devolve false.
+        check("ensureOwner com caminho hostil não executa",
+                !SuHelper.ensureOwner("/data/data/com.foo/; id"));
+    }
+
+    /**
+     * O invariante que quebrou o device: o Manager roda como root e, se criar
+     * /data/data/<pkg>/files/bepinex, ela fica root:root 0755 — o app (outro
+     * uid) só ganha r-x, o open do log dá EACCES e todos os mods ficam
+     * mudos. Logo: o plano do Reativar NÃO pode conter mkdir.
+     */
+    private static void testReactivatePlan() {
+        String semPasta = SuHelper.reactivateCommand("com.foo", false);
+        check("sem state dir: plano é nulo (o app cria com o dono certo)", semPasta == null);
+        String comPasta = SuHelper.reactivateCommand("com.foo", true);
+        check("com state dir: plano existe", comPasta != null);
+        check("NUNCA cria o state dir do app (seria root:root)",
+                comPasta != null && !comPasta.contains("mkdir"));
+        check("apaga os dois marcadores",
+                comPasta != null && comPasta.contains("disabled_by_crashguard"));
+        check("zera o contador", comPasta != null && comPasta.contains("crashguard"));
+        check("não passa a senha do keystore em comando nenhum (não é build)",
+                comPasta != null && !comPasta.contains("pass:"));
     }
 
     private static void testValidosAceitos() {

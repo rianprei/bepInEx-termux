@@ -95,6 +95,32 @@ static inline size_t mod_log_format_line(char *out, size_t size, const char *tag
 
 // Parte em arquivo do mod_log. Recebe va_list e não o consome (quem chama
 // dá va_start/va_end) — o padrão printf(3).
+// Defender de permissão: se o log.txt não abre por EACCES/EPERM, o mod fica
+// MUDO — o jogo abre, o mod não diz nada, e o primeiro sintoma é "o mod não
+// funcionou". A causa quase sempre é o arquivo/diretório com dono errado
+// (criado por root por um script de teste ou por um su com o caminho errado) — então o
+// aviso diz isso explicitamente. Uma vez por processo: inundar o logcat a cada
+// linha seria pior que o silêncio.
+//
+// devolve true só na PRIMEIRA vez que reclama (o teste de host usa isso).
+static inline bool mod_log_permission_warn(int err, const char *tag, const char *path) {
+    static int warned = 0;
+    if (err != EACCES && err != EPERM) return false;
+    if (warned) return false;
+    warned = 1;
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_WARN, "bepinex-mod",
+                        "%s: log.txt sem permissao (dono errado?) — o mod nao vai aparecer "
+                        "no log; o processo roda com o uid do app e o arquivo/diretorio "
+                        "provavelmente foi criado por root: %s (%s)",
+                        tag, path, strerror(err));
+#else
+    fprintf(stderr, "bepinex-mod %s: %s sem permissao (dono errado?) (%s)\n",
+            tag, path, strerror(err));
+#endif
+    return true;
+}
+
 static inline void mod_log_file(const char *tag, const char *fmt, va_list ap) {
     const char *pkg = mod_pkg();
     if (!pkg) return;
@@ -111,7 +137,7 @@ static inline void mod_log_file(const char *tag, const char *fmt, va_list ap) {
     char path[352];
     if ((size_t)snprintf(path, sizeof(path), "%s/log.txt", dir) >= sizeof(path)) return;
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (fd < 0) return;
+    if (fd < 0) { mod_log_permission_warn(errno, tag, path); return; }
     // Sem rotação: passou do teto, zera (mesma semântica do loader).
     if (lseek(fd, 0, SEEK_END) >= MOD_LOG_CAP) {
         if (ftruncate(fd, 0) != 0) { /* segue: só não zera */ }
