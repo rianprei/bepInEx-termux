@@ -327,8 +327,14 @@ public class ShellExecTest {
         try {
             binDir.mkdirs();
             File stub = new File(binDir, "chcon");
+            // Imita o chcon REAL: grava o que recebeu e sai 1 se o alvo não
+            // existir. Sem isso, um `; chcon` num alvo inexistente passaria
+            // como sucesso e a sabotagem passaria batido (achado da revisão de
+            // 2026-09-27).
             String script = "#!/bin/sh" + NL
                     + "printf '%s\\n' \"$*\" >> '" + logFile.getPath() + "'" + NL
+                    + "for t; do :; done" + NL
+                    + "if [ ! -e \"$t\" ]; then exit 1; fi" + NL
                     + "exit " + exitCode + NL;
             write(stub, script);
             stub.setExecutable(true);
@@ -513,6 +519,48 @@ public class ShellExecTest {
         // sairia 0, e o check abaixo accuse
         check("chmod falhando: o chcon NÃO foi chamado (o && para a cadeia)",
                 chconLog(chconLog6).indexOf(dest6b) < 0);
+
+        // (7) O 1º COMANDO DE CADA CADEIA FALHANDO: o `&&` tem que impedir
+        // o chcon de rodar (e o chcon que roda em alvo inexistente falha, o
+        // que tornaria `;` indistinguível só pelo código de saída — por isso
+        // o teste afirma o LOG do stub, não só o exit).
+        // Cada cadeia tem seu jeito de o primeiro passo falhar de verdade:
+        //   ensureModDir  -> mkdir sob um ARQUIVO (não é diretório)
+        //   writeTextFile -> cp com origem inexistente
+        //   copyFile      -> cp -f com origem inexistente
+        //   toggleMod     -> mv com origem inexistente
+        String[] nomes = {"ensureModDir", "writeTextFile", "copyFile", "toggleMod"};
+        for (String nome : nomes) {
+            File ffRoot = tempDir("firstfail-" + nome);
+            File ffBin = new File(ffRoot, "bin");
+            File ffLog = new File(ffRoot, "chcon.log");
+            String ffPath = pathWithChconStub(ffBin, ffLog, "0");
+            String cmd;
+            if ("ensureModDir".equals(nome)) {
+                File arquivo = new File(ffRoot, "bloqueio");
+                write(arquivo, "sou um arquivo, nao um diretorio");
+                String dirAlvo = new File(arquivo, "com.foo.jogo").getPath();
+                cmd = SuHelper.ensureModDirCommand(dirAlvo);
+            } else if ("writeTextFile".equals(nome)) {
+                File inexistente = new File(ffRoot, "nao-existe.tmp");
+                cmd = SuHelper.writeTextFileCommand(inexistente.getPath(),
+                        new File(ffRoot, "destino").getPath());
+            } else if ("copyFile".equals(nome)) {
+                File inexistente = new File(ffRoot, "nao-existe.so");
+                cmd = SuHelper.copyFileCommand(inexistente.getPath(),
+                        new File(ffRoot, "destino.so").getPath(), "644");
+            } else {
+                File inexistente = new File(ffRoot, "nao-existe.so");
+                cmd = SuHelper.toggleModCommand(inexistente.getPath(),
+                        new File(ffRoot, "alvo.so.off").getPath());
+            }
+            Result rr = shWithPath(cmd, ffPath, ffRoot);
+            check(nome + ": 1o comando falhando => cadeia sai != 0", rr.code != 0);
+            check(nome + ": o chcon NÃO foi chamado (log do stub vazio)",
+                    chconLog(ffLog).trim().isEmpty());
+            check(nome + ": o Result do SuHelper traduz isso em falha (success == false)",
+                    !new SuHelper.Result(rr.code, rr.out, "", null).success);
+        }
 
         // e a variante `;` de verdade, para documentar o que o && evita
         String semiChain = SuHelper.copyFileCommand(src6.getPath(), dest6, "644")
