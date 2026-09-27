@@ -2,4 +2,4 @@
 # Texto do log combinado com o freebuff: "…field aplicado" na mesma linha do
 # sig (id|kind|classe|membro|…). Se o freebuff escolher outra frase, esta
 # regex é o único lugar a ajustar — combine o texto com ele antes de rodar.
-\[u_patch\] t1_field\.patch[|].*[|]WeaponInfo[|].*field aplicado
+\[u_patch\] t1_field\.bpatch[|].*[|]WeaponInfo[|].*field aplicado

@@ -21,7 +21,7 @@
 //   - dump_* (C5): nome de classe/método/campo do metadata do jogo, que é
 //     entrada do usuário sob o ponto de vista do mod (e o Manager consome).
 //   - up_sig_hash / up_dedupe_*: a chave de dedupe é o texto da REGRA, ou
-//     seja, o que o u_patch leu do .patch do usuário.
+//     seja, o que o u_patch leu do .bpatch do usuário.
 //
 // Compilar:
 //   clang++ -std=c++17 -g -O1 -fsanitize=fuzzer,address,undefined \
@@ -241,7 +241,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
     }
 
-    // ---- dedupe do u_patch: a chave é o texto da REGRA lida do .patch ---
+    // ---- dedupe do u_patch: a chave é o texto da REGRA lida do .bpatch ---
     {
         uint64_t h = up_sig_hash(g_buf);
         (void)up_dedupe_should_log(nullptr, 0, h);

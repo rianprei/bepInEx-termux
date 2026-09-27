@@ -66,7 +66,7 @@ zygote preAppSpecialize(pkg)            zygote preAppSpecialize(pkg)
                                         mods/<pkg>/ contém:
                                           <id>.so        mod nativo (SDK C++)
                                           u_patch.so     motor declarativo (Mod Maker)  F4
-                                          <id>.patch     regras declarativas            F4
+                                          <id>.bpatch     regras declarativas            F4
                                           u_dump.so      scanner (pedido pelo Manager)  F3
                                           <id>.conf      opções key=value
                                           <id>.json      manifest (pro Manager listar)
@@ -87,7 +87,7 @@ ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
 
 ### C1. Diretórios no device
 - Mods: `/data/local/tmp/mods/<pkg>/` (dono root, `755`; arquivos `644`). Escrito **só pelo Manager (via su) ou adb**.
-- Mod desligado: sufixo `.off` (`foo.so.off`, `foo.patch.off`). O loader só carrega `*.so` (`bc_loader_is_mod_filename`).
+- Mod desligado: sufixo `.off` (`foo.so.off`, `foo.bpatch.off`). O loader só carrega `*.so` (`bc_loader_is_mod_filename`).
 - Saída do processo do jogo (o jogo não escreve em `/data/local/tmp`): `/data/data/<pkg>/files/bepinex/`
   - `log.txt`: log de todos os mods (append, 1 linha = `HH:MM:SS [mod] msg`, corta em 256KB).
   - `dump.tsv`: saída do u_dump.
@@ -96,7 +96,7 @@ ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
 ### C2. `.bmod` (zip)
 ```
 manifest.json
-mod.so        (type=native, arm64-v8a)  |  mod.patch  (type=patch)
+mod.so        (type=native, arm64-v8a)  |  mod.bpatch  (type=patch)
 ```
 `manifest.json`:
 ```json
@@ -118,12 +118,12 @@ mod.so        (type=native, arm64-v8a)  |  mod.patch  (type=patch)
 - `id`: `[a-z0-9-]{3,48}`, vira nome de arquivo. `game`: pacote ou `"*"` (qualquer jogo do mesmo engine).
 - `engine`: `unity-il2cpp` | `unity-mono` | `cocos2dx` | `native`.
 - Option `type`: `bool` | `int` | `float` | `choice` (com `"choices": [..]`).
-- Instalação: `mod.so` → `<id>.so`, `mod.patch` → `<id>.patch`, manifest → `<id>.json`, opções → `<id>.conf`.
+- Instalação: `mod.so` → `<id>.so`, `mod.bpatch` → `<id>.bpatch`, manifest → `<id>.json`, opções → `<id>.conf`.
 
 ### C3. `.conf` (opções)
 Uma linha `key=value`, `#` é comentário. Escrito pelo Manager, lido pelo mod no boot.
 
-### C4. `.patch` (motor declarativo u_patch)
+### C4. `.bpatch` (motor declarativo u_patch)
 Uma regra por linha, campos separados por espaço, `#` é comentário:
 ```
 return  <Classe>  <Método>  <nargs>  <bool|int|float>  <valor>
@@ -162,7 +162,7 @@ O usuário escolhe um arquivo qualquer + o jogo. O Manager identifica o tipo pel
 | `.bmod` | zip com `manifest.json` | sim | C2 |
 | `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim | copia pra `mods/<pkg>/` |
 | `.so` 32-bit/x86 | ELF de outra arquitetura | não | "feito pra outra arquitetura" |
-| `.patch` | texto nas regras C4 | sim | u_patch |
+| `.bpatch` | texto nas regras C4 | sim | u_patch |
 | script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`, `Java.perform`) | sim (F11) | frida-gadget em modo script |
 | `.dll` .NET que referencia `Il2CppInterop`/`UnhollowerBaseLib` (BepInEx 6 IL2CPP / MelonLoader IL2CPP) | PE + CLI header + AssemblyRefs | depois (F12) | runtime .NET no processo |
 | `.dll` .NET Mono (BepInEx 5 / MelonLoader Mono, ex: mods do TABS PC) em jogo **Unity Mono** | AssemblyRefs sem Il2Cpp* + engine `unity-mono` | depois (F13) | mono_* + Harmony |
@@ -229,7 +229,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** dump.tsv no SA2 contém `ComplexCreature`/`HasAmmo`; no TABS, `UnitBlueprint`.
 
 ### F4 — u_patch (motor declarativo = base do Mod Maker)
-- [~] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (host OK: `up_scan_apply` + `up_foreach_line` puro (Casos 69-77) e a etapa "u_patch encoding harness" do gate passando; device: pendente — a rodada do F4 no SA2 ainda não rodou.)
+- [~] `mods/u_patch`: lê todo `*.bpatch` + `.conf` do `mod_dir()`, aplica C4. (host OK: `up_scan_apply` + `up_foreach_line` puro (Casos 69-77) e a etapa "u_patch encoding harness" do gate passando; device: pendente — a rodada do F4 no SA2 ainda não rodou.)
 - [~] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (host OK: Caso 70 confere cada palavra contra o llvm-objdump do NDK e o guard `up_method_fits` (Caso 71) recusa método curto; device: pendente.)
 - [~] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (host OK: Caso 70 + `test/device/thunk_exec` executando o thunk de verdade no qemu (8×100k threads, recursão, float) e `buga`/`bugb2` falhando de propósito; device: pendente.)
 - [~] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (host OK: revalidação do FieldInfo a cada 10 passadas, com o valor reescrito a cada 2s; device: pendente.)
@@ -253,7 +253,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [~] "Escanear jogo": copia `u_dump.so` (vem nos assets do APK), reinicia o jogo, espera `dump.tsv`, remove `u_dump.so`. (Correção do sync anterior: `manager/assets/` NÃO é um arquivo versionado — o `manager/build.sh` compila `mods/u_dump` e copia o `.so` para lá a cada build, que é por isso que a pasta não aparece no repo. host OK: `build.sh` etapas de asset + `ModMakerActivity` com guarda `hasAsset` que avisa "Componente Ausente" em vez de scanner quebrado; device: pendente — o botão Escanear nunca foi apertado num celular.)
 - [~] Busca com filtro (classe/método/campo), resultados paginados (dump pode ter 100k+ linhas). (host OK: `ModMakerActivity` + `DumpParserTest` (C5) com leitura de arquivo de 100k+ linhas; device: pendente.)
 - [~] Ação por item: método bool → "sempre verdadeiro/falso"; método int/float → "sempre N" ou "multiplicar por N"; campo estático → "fixar em N"; campo de instância → verbo `field` do C4. Gera regras C4. (host OK: `PatchGeneratorTest` (C4) cobre `return`/`mul`/`static`/`field` com round-trip; device: pendente.)
-- [~] Salvar mod: nome e descrição → cria `.patch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.patch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; F4 já está merged; device: pendente.)
+- [~] Salvar mod: nome e descrição → cria `.bpatch` + manifest `type=patch`, instala e copia `u_patch.so` (assets) se faltar. "Compartilhar" gera `.bmod` em `Download/`. (host OK: `ModMakerActivity` gera o `.bpatch`, instala e exporta o `.bmod` em `Download/` via `BmodInstaller.createBmod`; F4 já está merged; device: pendente.)
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)

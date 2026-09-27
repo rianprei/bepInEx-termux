@@ -1,4 +1,4 @@
-// u_patch — motor declarativo (FASE F4): lê todo *.patch + <id>.conf de
+// u_patch — motor declarativo (FASE F4): lê todo *.bpatch + <id>.conf de
 // /data/local/tmp/mods/<pkg>/ e aplica as regras C4 (return/mul/static).
 // Regra que não resolve vira log e o jogo segue. Nada de offset fixo: tudo
 // sai da API il2cpp exportada. Log mínimo próprio (F2 dá mod_common.h e a
@@ -25,6 +25,17 @@
 #include "u_patch_resolve.h"
 
 #define UP_TAG "u_patch"
+// Extensão do arquivo de regras. ".bpatch" e não ".patch" porque o nome
+// colidia com o .patch de diff do git e confundia o usuário na pasta de mods
+// (decisão do usuário, 2026-09-27). O formato nunca saiu em release, então
+// não há arquivo antigo para migrar.
+//
+// O COMPRIMENTO do sufixo sai desta constante (ver UP_PATCH_EXT_LEN), nunca de
+// um número escrito à mão: com o "- 6" que existia, trocar só a extensão
+// deixaria o id como "t1." e o <id>.conf do mod pararia de ser encontrado —
+// sem log, porque .conf é opcional.
+#define UP_PATCH_EXT ".bpatch"
+#define UP_PATCH_EXT_LEN (sizeof(UP_PATCH_EXT) - 1)
 #define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
@@ -83,7 +94,7 @@ static bool up_ends_with(const char *name, const char *suf) {
 
 // Lê o arquivo inteiro (até UP_FILE_MAX). Retorna malloc'd, *len = tamanho.
 // Se *truncated vier não-nulo, ganha 1 quando o arquivo era MAIOR que o teto:
-// sem esse aviso um .patch de 200KB entrava pela metade e o usuário via metade
+// sem esse aviso um .bpatch de 200KB entrava pela metade e o usuário via metade
 // das regras sem efeito e nenhum log (achado #5 do review).
 static char *up_read_file(const char *path, size_t *len, bool *truncated) {
     if (truncated) *truncated = false;
@@ -223,7 +234,7 @@ static void up_mark(const char *sig, uint8_t state) {
     if (!up_table_full_logged) {
         up_table_full_logged = true;
         up_log("tabela de %d regras cheia: regras novas NÃO são lembradas (não voltam a ser "
-               "aplicadas nem logadas a cada 2s). Reduza o .patch ou divida em mais arquivos.",
+               "aplicadas nem logadas a cada 2s). Reduza o .bpatch ou divida em mais arquivos.",
                UP_APPLIED_MAX);
     }
 }
@@ -573,7 +584,7 @@ static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, co
     return true;
 }
 
-// Corpo de UMA linha do .patch (chamado por up_foreach_line, que garante o
+// Corpo de UMA linha do .bpatch (chamado por up_foreach_line, que garante o
 // avanço — o loop infinito em linha vazia do review não tem mais onde
 // nascer, e o Caso 70 do harness conta as linhas visitadas).
 struct up_line_ctx {
@@ -642,7 +653,7 @@ static int up_line_apply(char *line, int lineno, void *vctx) {
     return 0;  // pr == 1 (vazia/comentário) só não entra no bloco acima
 }
 
-// Uma passada: lê todo *.patch (menos *.off) + <id>.conf, aplica regra nova.
+// Uma passada: lê todo *.bpatch (menos *.off) + <id>.conf, aplica regra nova.
 // Retorna quantas regras aplicou.
 static int up_scan_apply(const Il2Cpp &il) {
     int applied = 0;
@@ -651,10 +662,15 @@ static int up_scan_apply(const Il2Cpp &il) {
     if (n < 0) return 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
-        bool is_patch = up_ends_with(name, ".patch") && !up_ends_with(name, ".off");
+        bool is_patch = up_ends_with(name, UP_PATCH_EXT) && !up_ends_with(name, ".off");
         if (!is_patch) { free(ents[i]); continue; }
         char id[128] = {};
-        size_t baselen = strlen(name) - 6;  // tira ".patch"
+        size_t nlen = strlen(name);
+        // "foo.bpatch.off" também termina em ".off" e foi barrado acima; aqui
+        // so chega o nome sem ".off". A subtração é pela constante, não por um
+        // número solto.
+        if (nlen < UP_PATCH_EXT_LEN) { free(ents[i]); continue; }  // paranoia
+        size_t baselen = nlen - UP_PATCH_EXT_LEN;  // tira ".bpatch"
         if (baselen >= sizeof(id)) baselen = sizeof(id) - 1;
         memcpy(id, name, baselen);
         char ppath[448], cpath[448];
@@ -665,7 +681,7 @@ static int up_scan_apply(const Il2Cpp &il) {
         char *cbuf = up_read_file(cpath, nullptr, nullptr);  // .conf opcional
         if (!pbuf) { free(ents[i]); free(cbuf); continue; }
         if (trunc) {
-            // #5: sem este aviso, um .patch de 200KB entrava pela metade e o
+            // #5: sem este aviso, um .bpatch de 200KB entrava pela metade e o
             // usuário via metade das regras sem efeito nenhum.
             up_log("%s: arquivo maior que %d bytes — truncado em %d, as regras depois "
                    "desse byte NAO foram lidas", name, UP_FILE_MAX, UP_FILE_MAX);
@@ -741,7 +757,7 @@ static void *up_worker(void *) {
     }
     if (!up_pkg[0]) {
         up_log("pacote (C1) não resolveu em 120s — u_patch não aplica nada; "
-               "o jogo segue sem os mods deste .patch");
+               "o jogo segue sem os mods deste .bpatch");
         return nullptr;
     }
     up_log("carregado, esperando libil2cpp.so");

@@ -1,4 +1,4 @@
-// u_patch_parse.h — parser puro das regras C4 (.patch) e opções C3 (.conf).
+// u_patch_parse.h — parser puro das regras C4 (.bpatch) e opções C3 (.conf).
 // Header-only, sem dependência de plataforma: o teste host inclui direto.
 // Contrato C4 (ROADMAP-UNIVERSAL.md): uma regra por linha, campos por espaço,
 // '#' é comentário; <Classe> = Namespace.Nome ou só Nome (último '.' separa).
@@ -183,7 +183,7 @@ static inline int up_value_type_check(bool klass_is_valuetype, const char *type_
     return 0;
 }
 
-// --- #13: percorrer linhas do .patch sem loop infinito -------------------
+// --- #13: percorrer linhas do .bpatch sem loop infinito ------------------
 //
 // O scanner usa isto no lugar do while manual. O bug historico (linha vazia
 // sem avanco -> while eterno no worker, sem log) fica IMPOSSIVEL aqui: o

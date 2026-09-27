@@ -1,6 +1,6 @@
 # u_patch — motor declarativo (F4)
 
-Lê todo `*.patch` (+ `<id>.conf`) de `/data/local/tmp/mods/<pkg>/` e aplica
+Lê todo `*.bpatch` (+ `<id>.conf`) de `/data/local/tmp/mods/<pkg>/` e aplica
 as regras C4 em runtime. Regra que não resolve vira log, nunca crash.
 
 ```

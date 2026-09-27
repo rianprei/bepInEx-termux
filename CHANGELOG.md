@@ -12,6 +12,8 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 - Foi adicionado o motor de regras IL2CPP para alterar retornos, multiplicar valores e fixar campos; o formato é compartilhado entre o Manager e o carregador para evitar divergências. Os testes de host incluem harnesses e execução de thunks em QEMU; `return`/`mul`/`static` ainda não foram testados no aparelho; `field` falhou no 1º teste. (`6589f2f`, `bf9eee3`)
 - [HOST] `u_noads` tenta fechar anúncios forçados usando o callback de fechamento do SDK, cobrindo seis SDKs conhecidos. Os testes verificam alvos e fechadores, mas o uso no SA2 não foi confirmado em aparelho. (`f08164b`)
 - [HOST] O carregador aceita scripts `.js` do Frida apenas em modo script; o instalador e a checagem do binário do gadget têm testes de host. A execução no celular continua experimental e não foi validada. (`023e4c9`, `744bb6d`)
+- A extensão dos arquivos de regras do motor declarativo passou de `.patch` para `.bpatch`, para não colidir com o arquivo de diff do git e confundir quem olha a pasta de mods. Nada muda para quem usa o Manager: ele reconhece o conteúdo do arquivo, não o nome, então um arquivo de regras com a extensão antiga ou sem extensão continua sendo identificado e instalado como `<id>.bpatch`. O formato ainda não saiu em release, então não há arquivo antigo para migrar. A mudança foi verificada em testes de host e no gate, não em aparelho. (`6589f2f`)
+
 
 ### Correções
 - [HOST] Os mods passaram a compartilhar o mesmo caminho de log; a espera pelo pacote e as mensagens de timeout foram corrigidas para refletir o comportamento real. Os testes de host cobrem o helper de log, e o gate compila os componentes; não é uma nova validação em aparelho. (`df40b73`, `638b05f`, `09bcd74`)

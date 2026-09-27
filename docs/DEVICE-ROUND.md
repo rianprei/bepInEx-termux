@@ -96,7 +96,7 @@ adb shell am force-stop "$PKG"
 ```
 
 `tools/pack_bmod.sh hello` deve gerar o pacote quando houver um manifest e
-payload válidos; não distribuir `.patch` enquanto F4 não estiver na base
+payload válidos; não distribuir `.bpatch` enquanto F4 não estiver na base
 (`docs/BMOD-FORMAT.md:100-103`).
 
 ## F4 — u_patch: return, mul e field [REBOOT]
@@ -106,7 +106,7 @@ mod e usar a UI/arquivo gerado:
 
 ```bash
 adb shell su -c "cp /data/local/tmp/round-backup/$PKG/u_patch.so /data/local/tmp/mods/$PKG/u_patch.so"
-adb shell su -c "printf '%s\n' 'return ComplexCreature HasAmmo 0 bool true' > /data/local/tmp/mods/$PKG/sa2-field.patch"
+adb shell su -c "printf '%s\n' 'return ComplexCreature HasAmmo 0 bool true' > /data/local/tmp/mods/$PKG/sa2-field.bpatch"
 adb shell am force-stop "$PKG"; adb shell monkey -p "$PKG" 1
 adb shell su -c "grep -E 'patch|return|mul|field|aplic' /data/data/$PKG/files/bepinex/log.txt"
 ```
@@ -117,7 +117,7 @@ Confirmar no SA2: `return` mantém munição, `mul` altera o retorno e `field`
 mantém o campo na chamada seguinte. Restaurar:
 
 ```bash
-adb shell su -c "rm -f /data/local/tmp/mods/$PKG/sa2-field.patch /data/local/tmp/mods/$PKG/u_patch.so"
+adb shell su -c "rm -f /data/local/tmp/mods/$PKG/sa2-field.bpatch /data/local/tmp/mods/$PKG/u_patch.so"
 adb shell am force-stop "$PKG"
 ```
 
@@ -154,14 +154,14 @@ mostrar `/data/data/$PKG/files/bepinex/log.txt`
 Restaurar o switch ao estado original e usar **Reiniciar jogo**; não excluir
 arquivos de terceiros.
 
-### `.so`, `.patch` e `.bmod`
+### `.so`, `.bpatch` e `.bmod`
 
 No Manager, usar **+ Instalar mod**, escolher um `.so` de teste e confirmar a
 mensagem `Instalado:` (`manager/src/io/github/rianprei/bepinex/manager/core/LooseModInstaller.java:104`).
 Escolher um `.bmod` compatível; confirmar a tela de confirmação e a mensagem
 `Este pacote foi feito para o jogo` (`manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:363`).
 
-Para `.patch`, usar um pacote produzido por F4 e confirmar que o arquivo chega
+Para `.bpatch`, usar um pacote produzido por F4 e confirmar que o arquivo chega
 em `/data/local/tmp/mods/$PKG/`.
 
 ```bash
