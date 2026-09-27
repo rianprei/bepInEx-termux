@@ -30,7 +30,7 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | F1d crashguard | merged, validado | 2026-09-26: t_crash matou 2x, 3ª abertura sem mods e viva, aviso no log; reativar = mods voltam; contador zera após 20s vivo |
 | F2 SDK | merged, sem device | `new_mod`/`pack_bmod`/template só testados no host |
 | F3 u_dump | merged, validado | SA2: 162.804 linhas, `unity=6000.3.13f1`, Permissive e Enforcing |
-| F4 u_patch | merged, sem device | `6589f2f`: motor completo (return/mul/static/field) + `thunk_exec` por execução real no qemu + fixture C4 compartilhada; falta a rodada do `docs/DEVICE-ROUND.md:102` no SA2 |
+| F4 u_patch | merged, sem device | `6589f2f`: motor completo (return/mul/static/field) + `thunk_exec` por execução real no qemu + fixture C4 compartilhada; falta a rodada de device (roteiro no DEVICE-ROUND.md) |
 | F5/F6 Manager | merged, sem device | APK compila e os testes JVM passam no gate; o app nunca foi instalado num celular |
 | F7 zip | merged, sem device | v0.4.1 determinístico (`d34b709`); instalar o zip num celular segue pendente |
 | F8 docs | merged, sem device | 8 achados de revisão corrigidos (`15b9a3f`) |
@@ -235,7 +235,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** dump.tsv no SA2 contém `ComplexCreature`/`HasAmmo`; no TABS, `UnitBlueprint`.
 
 ### F4 — u_patch (motor declarativo = base do Mod Maker)
-- [~] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (host OK: `up_scan_apply` + `up_foreach_line` puro (Casos 69-77) + `u_patch encoding harness | PASS`; device: pendente — a rodada do F4 no SA2 ainda não rodou, ver `docs/DEVICE-ROUND.md:102`.)
+- [~] `mods/u_patch`: lê todo `*.patch` + `.conf` do `mod_dir()`, aplica C4. (host OK: `up_scan_apply` + `up_foreach_line` puro (Casos 69-77) e a etapa "u_patch encoding harness" do gate passando; device: pendente — a rodada do F4 no SA2 ainda não rodou.)
 - [~] `return`: patch de instrução arm64 (`mov w0/x0, #imm` ou `fmov s0`; `ret`) com mprotect + flush de cache. Não precisa de trampolim. (host OK: Caso 70 confere cada palavra contra o llvm-objdump do NDK e o guard `up_method_fits` (Caso 71) recusa método curto; device: pendente.)
 - [~] `mul`: DobbyHook com pool fixo de thunks (ex.: 64 slots) indexando uma tabela de regras. `// ponytail:` com o teto. (host OK: Caso 70 + `test/device/thunk_exec` executando o thunk de verdade no qemu (8×100k threads, recursão, float) e `buga`/`bugb2` falhando de propósito; device: pendente.)
 - [~] `static`: set do campo estático depois do boot e reaplica a cada 2s (o jogo pode resetar). (host OK: revalidação do FieldInfo a cada 10 passadas, com o valor reescrito a cada 2s; device: pendente.)
@@ -243,7 +243,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - [x] Parser puro e testável (harness host). (Entrega de host, não precisa de device: `u_patch_parse.h` puro, Casos 69/73/74/76 e a fixture `test/fixtures/c4_lines.tsv` — a mesma que o `PatchGenerator` do Manager lê, então os dois lados do C4 não podem divergir sem os dois testes caírem.)
 - [x] Guarda de `this` nulo no thunk `field` (achado CRÍTICO do cross-review: o jogo chama método com `this == nullptr` e o store em `[0+off]` derrubava o jogo). (host OK: `up_enc_cbz_x0` + layout com o caminho direto (Caso 77) e o teste de execução com `this=NULL`; a sabotagem sem o `cbz` faz o caso falhar.)
 - [x] Tipos e recusas antes de hookar: tamanho do campo pelo tipo real do il2cpp, classe de valor (struct) recusada, e `return`/`mul` float em método que devolve `System.Double` recusado — cada um com caso próprio. (host OK: `up_value_type_check` no Caso 73.)
-- **Verifica:** SA2 com `return ComplexCreature HasAmmo 0 bool true` → munição não trava; regra inválida → log e jogo segue.
+- **Verifica:** SA2 com `return ComplexCreature HasAmmo 0 bool true` → munição não trava; regra inválida → log e jogo segue. O roteiro pronto da rodada está em `docs/DEVICE-ROUND.md:102`.
 
 ### F5 — bepInEx Manager: núcleo (APK)
 - [~] Java puro, sem AndroidX/Gradle: build com SDK (`aapt2` + `javac --release 17` + `d8` + `apksigner`) por `manager/build.sh`, usando `~/Android/Sdk` (build-tools 37, android-36). minSdk 26. (host OK: `manager/build.sh` gera APK assinado e o `badging` confere com o `VERSION` da raiz (`dacad11`); device: pendente — o APK nunca foi instalado num celular.)
