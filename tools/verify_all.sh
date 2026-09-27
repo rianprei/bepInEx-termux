@@ -388,6 +388,37 @@ else
     echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
+# --- mods-reloc: a arvore de mods em /data/adb/bepinex --------------------
+#
+# A garantia critica e "um link simbolico no lugar do diretorio NAO e seguido".
+# Sem esta etapa a regressao seria SILENCIOSA: o gate passaria e o root
+# voltaria a mover conteudo apontado de fora para dentro da arvore privileged
+# — que e o ataque que a revisao de seguranca pegou.
+if [ -f "$ROOT/test/device/mods-reloc-test.sh" ]; then
+    run_step "migracao da arvore de mods (sem seguir link)" "$TIMEOUT_TEST" \
+        sh "$ROOT/test/device/mods-reloc-test.sh"
+else
+    record "migracao da arvore de mods (teste ausente)" FAIL 0 1
+    echo "test/device/mods-reloc-test.sh ausente: a migracao pode voltar a seguir link simbolico"
+fi
+
+# A entrega do .so por FD: o companion (root) abre e o jogo recebe o
+# DESCRITOR, sem abrir caminho nenhum (SCM_RIGHTS + android_dlopen_ext). O
+# teste usa socketpair de verdade — o SCM_RIGHTS atravessa o kernel — e cobre
+# o O_NOFOLLOW (link recusado) e o errno na resposta de erro.
+if [ -f "$ROOT/test/symbols/scm_rights_test.cpp" ]; then
+    run_step "entrega de mod por FD (SCM_RIGHTS)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        out="$2/scm_rights_test"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" \
+            "$1/test/symbols/scm_rights_test.cpp" -o "$out" || exit 1
+        "$out"
+    ' bash "$ROOT" "$TMP"
+else
+    record "entrega de mod por FD (teste ausente)" FAIL 0 1
+    echo "test/symbols/scm_rights_test.cpp ausente: o fd do mod nao e testado"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"
