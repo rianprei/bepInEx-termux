@@ -72,6 +72,11 @@ public final class HarmonyTranslator {
                 reports.add(reportPrefix + "usa Transpiler (edita IL, não traduzível)");
                 continue;
             }
+            if (candidate.target.className.contains("/")) {
+                reports.add(reportPrefix
+                        + "classe aninhada: o u_patch ainda não localiza esse tipo de classe");
+                continue;
+            }
             DllReader.TypeInfo targetType = findType(types, candidate.target.className);
             if (targetType == null) {
                 reports.add(reportPrefix + "assembly do método-alvo não está na DLL; não é possível confirmar overload");
@@ -124,7 +129,10 @@ public final class HarmonyTranslator {
             if (translated != null) return "PATCH:" + translated;
         }
         String translated = tryStaticAssign(reader, targetClass, targetMethod, patch, candidate.kind, il);
-        if (translated != null) return "PATCH:" + translated;
+        if (translated != null) {
+            if (translated.startsWith("REFUSE:")) return translated.substring("REFUSE:".length());
+            return "PATCH:" + translated;
+        }
         return refusalReason(patch, candidate.kind, il);
     }
 
@@ -192,7 +200,7 @@ public final class HarmonyTranslator {
         if (!field.isStatic() || !field.declaringType().equals(cls)) return null;
         Constant value = readConstant(valueInstruction, field.type());
         if (value == null) return null;
-        return "static " + cls + " " + field.name() + " " + value.c4Type + " " + value.value;
+        return "REFUSE:cadência diferente: Harmony escreve a cada chamada; u_patch static escreve no carregamento e reaplica a cada 2s (até 32 regras)";
     }
 
     private static String refusalReason(DllReader.MethodInfo patch, String kind,

@@ -40,7 +40,20 @@ namespace Dll2PatchFixture
         }
     }
 
-    // Caso D: Prefix/Postfix com T.CampoEstatico = CONST
+    [HarmonyPatch(typeof(Outer.Inner), "GetNested")]
+    public static class NestedClassCase
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(ref int __result)
+        {
+            __result = 1;
+            return false;
+        }
+    }
+
+    // === CASOS NÃO TRADUZÍVEIS ===
+
+    // Harmony escreve a cada chamada, enquanto o verbo C4 static reaplica a cada 2s.
     [HarmonyPatch(typeof(GameClass), "GetScore")]
     public static class StaticFieldAssign
     {
@@ -52,7 +65,15 @@ namespace Dll2PatchFixture
         }
     }
 
-    // === CASOS NÃO TRADUZÍVEIS ===
+    [HarmonyPatch(typeof(GameClass), "GetOtherScore")]
+    public static class PostfixStaticFieldAssign
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            GameClass.MaxScore = 10000;
+        }
+    }
 
     // Caso E: Transpiler (edita IL, não traduzível)
     [HarmonyPatch(typeof(GameClass), "GetAmmo")]
@@ -141,6 +162,7 @@ namespace Dll2PatchFixture
         public int GetMana() { return mana; }
         public int GetDamage() { return damage; }
         public int GetScore() { return score; }
+        public int GetOtherScore() { return score; }
         public int GetAmmo() { return ammo; }
         public int GetShield() { return shield; }
         public int GetSpeed() { return speed; }
@@ -161,6 +183,14 @@ namespace Dll2PatchFixture
         public static bool ReturnAnnotated()
         {
             return true;
+        }
+    }
+
+    public class Outer
+    {
+        public class Inner
+        {
+            public int GetNested() { return 1; }
         }
     }
 }
