@@ -32,6 +32,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ### Problemas conhecidos
 - A regra de campo (`field`) pode fechar o jogo. Não a use até a correção entrar; ela falhou no primeiro teste em aparelho. (`6589f2f`)
+- O frida-gadget **17.19.0** (released 2026-09-25) crasha com SIGSEGV (null-pointer deref, fault 0x38) na própria inicialização no POCO C75 + SA2 — antes de qualquer script. O pin foi trocado para **17.18.0** (released 2026-09-09), que carrega e roda scripts sem crash e mantém a API JS do 17.x (Module.getGlobalExportByName etc.). O 16.7.19 também funciona, mas foi descartado como pin porque a API JS do 16.x é incompatível com scripts da comunidade frida-il2cpp-bridge escritos para o 17.x. Se uma versão futura corrigir o bug, atualize o `tools/deps.lock` com a mesma prova de device. (tombstones: `~/Documentos/mods/_backup_device_2026-09-27/evidence/tombstone_f11_frida.txt` e `tombstone_f11_t1_minimal.txt`)
 
 ### Histórico preservado do Unreleased anterior
 

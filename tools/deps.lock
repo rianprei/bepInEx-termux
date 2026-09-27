@@ -1,5 +1,5 @@
 # name|version-or-commit|sha256|url
 magisk-module-installer|5b06d817d4ae5a916df88fd9efebf12537f40cdb|bcf4b1d9913f3af17755569c853e0b5a75b8005f6a18eb3f86dadcc0e968c29d|https://raw.githubusercontent.com/topjohnwu/Magisk/5b06d817d4ae5a916df88fd9efebf12537f40cdb/scripts/module_installer.sh
 shellcheck|v0.11.0|8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198|https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
-frida-gadget-xz|17.19.0|da55241ed73873176997298f2d00aa02729fc6ce935850923b6a28c587a1d9aa|https://github.com/frida/frida/releases/download/17.19.0/frida-gadget-17.19.0-android-arm64.so.xz
-frida-gadget-so|17.19.0|99a5e32fe07d9136571404a33375140386c568bb0953499c7d553056a0b8d674|derived-from-frida-gadget-xz|
+frida-gadget-xz|17.18.0|c176650121a70b4345ce3d47c422df295fc8d931fb14f75887dddc0230c79e81|https://github.com/frida/frida/releases/download/17.18.0/frida-gadget-17.18.0-android-arm64.so.xz
+frida-gadget-so|17.18.0|c87c53efc10a9b6f2f4259b7b962d403cac729d6ee6f6a83f679489f92671a3a|derived-from-frida-gadget-xz|

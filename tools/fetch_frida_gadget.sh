@@ -5,19 +5,27 @@
 # (plano F5: Manager empacotar nos assets — ainda sem código).
 # Uso: sh tools/fetch_frida_gadget.sh
 set -eu
-# Procedência dos hashes (medidos 2026-09-26, release oficial):
-#   URL: https://github.com/frida/frida/releases/download/17.19.0/frida-gadget-17.19.0-android-arm64.so.xz
-#   (página da release: https://github.com/frida/frida/releases/tag/17.19.0)
+# Procedência dos hashes (medidos 2026-09-27, release oficial):
+#   URL: https://github.com/frida/frida/releases/download/17.18.0/frida-gadget-17.18.0-android-arm64.so.xz
+#   (página da release: https://github.com/frida/frida/releases/tag/17.18.0)
 # Comandos usados:
 #   curl -sL -o fg.xz <URL> && sha256sum fg.xz && wc -c fg.xz
-#   unxz -k fg.xz && sha256sum fg && ls -l fg   (.so: 25233136 bytes)
+#   unxz -k fg.xz && sha256sum fg && ls -l fg   (.so: 25220848 bytes)
+#
+# PIN em 17.18.0 (não 17.19.0, 2026-09-27, achado em device):
+#   O gadget 17.19.0 (released 2026-09-25) crasha com SIGSEGV (null-pointer
+#   deref, fault addr 0x38) durante a própria inicialização (constructor via
+#   dlopen), antes de qualquer script rodar. O 17.18.0 (released 2026-09-09)
+#   carrega sem crash e roda o script. O 16.7.19 também funciona, mas o 17.18.0
+#   mantém a API JS do 17.x (scripts da comunidade frida-il2cpp-bridge usam
+#   Module.getGlobalExportByName etc., que não existe no 16.x).
 LOCK="$(dirname "$0")/deps.lock"
 IFS='|' read -r _ VERSION XZ_SHA256 BASE _ <<EOF
 $(grep '^frida-gadget-xz|' "$LOCK")
 EOF
 BASE="${BASE%/*}"
-XZ_SIZE="6969732"
-# sha256 do .so já desempatado (referência, medido 2026-09-26):
+XZ_SIZE="6967084"
+# sha256 do .so já desempacotado (referência, medido 2026-09-27):
 IFS='|' read -r _ _ SO_SHA256 _ _ <<EOF
 $(grep '^frida-gadget-so|' "$LOCK")
 EOF
