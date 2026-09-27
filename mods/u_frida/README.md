@@ -13,8 +13,8 @@ Isso nunca foi testado pelo app no celular (experimental). O teste no
 celular foi pelo `tools/deploy_frida.sh` (PC + adb + su).
 
 **Status no celular (2026-09-27):** o frida-gadget 17.19.0 carregou mas
-crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. Não use
-scripts `.js` até a correção.
+crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. O projeto usa
+17.18.0, que carregou e rodou o script no POCO C75 + SA2 (experimental).
 
 - **Só modo script.** O config inteiro (até 4KB) tem que ser JSON válido com
   `interaction.type` = `script` ou `script-directory`
