@@ -7,7 +7,11 @@ binário (depois de esperar o il2cpp se houver — `libil2cpp.so` à vista em
 10s, como o sa2ammo). Sem frida-server, sem patch de APK.
 
 **Quem instala hoje: só `tools/deploy_frida.sh`** (PC + adb + su). O Manager
-(F5) ainda não tem código frida — instalar pelo celular, sem PC, é plano.
+não tem suporte a Frida — instalar pelo celular, sem PC, é plano.
+
+**Status no celular (2026-09-27):** o frida-gadget 17.19.0 carregou mas
+crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. Não use
+scripts `.js` até a correção.
 
 - **Só modo script.** O config inteiro (até 4KB) tem que ser JSON válido com
   `interaction.type` = `script` ou `script-directory`
