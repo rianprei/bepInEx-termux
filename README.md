@@ -209,12 +209,12 @@ não pela extensão, e diz em português se roda. A tabela honesta:
 
 | Tipo de jogo | Funciona? | Observação |
 |---|---|---|
-| Unity IL2CPP arm64 | **sim** (experimental) | validado só em Swamp Attack 2 e Battle Cats (POCO C75, Android 16) |
+| Unity IL2CPP arm64 | **sim** (experimental) | validado só em Swamp Attack 2 (POCO C75, Android 16) |
 | Unity Mono | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
 | Unreal | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
 | Godot | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
 | Cocos2d-x | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
-| Nativo (C/C++) | **só .so próprio** | nenhum jogo testado; mods prontos são só IL2CPP |
+| Nativo (C/C++) | **só .so próprio** | Battle Cats validado pelo caminho próprio (hooks por AOB); nenhum outro jogo nativo testado |
 | Jogo 32-bit (arm32) | **não** | arm32 em andamento |
 | Jogo com vários processos (:unity, :remote) | **corrigido** (experimental) | ainda não testado no celular |
 | Celular com vários usuários/perfil de trabalho | **ainda não** | em desenvolvimento |
