@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${SCRIPT_DIR}/src"
 
-rm -rf bin obj
+rm -rf bin obj ../harmony-stubs/bin ../harmony-stubs/obj
 
 # Compila com determinismo total
 dotnet build -c Release -p:Deterministic=true -p:ContinuousIntegrationBuild=true --nologo -v quiet
