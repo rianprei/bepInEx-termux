@@ -735,7 +735,9 @@ public final class DllReader {
             String parentName = parentTypeName(parent);
             int nameOffset = row + codedSize("MemberRefParent");
             String constructorName = getString(readIndex(nameOffset, "strings"));
-            return parentName.isEmpty() ? constructorName : parentName + "." + constructorName;
+            // Construtor MemberRef de assembly REFERENCIADO (HarmonyLib externo):
+            // o nome do atributo é o TIPO declarante — o ".ctor" do final não.
+            return parentName.isEmpty() ? constructorName : parentName;
         }
         if (constructor.table == 6) {
             if (methodOwners == null || constructor.rid >= methodOwners.length

@@ -33,6 +33,7 @@ public final class Dll2PatchTest {
         DllReader reader = DllReader.parse(dll);
         testFacts(reader);
         testReturnParameterMetadata(reader);
+        testExternalHarmonyAttributes(reader);
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);
@@ -172,6 +173,16 @@ public final class Dll2PatchTest {
         DllReader.MethodInfo method = findMethod(reader, "ReturnParameterMetadataCase", "ReturnAnnotated");
         check("Param com sequência zero é metadado de retorno, não argumento",
                 method != null && "bool".equals(method.returnType()) && method.parameters().isEmpty());
+    }
+
+    private static void testExternalHarmonyAttributes(DllReader reader) throws Exception {
+        // A fixture referencia HarmonyLib como assembly EXTERNO (harmony-stubs),
+        // como um mod real: os atributos chegam como MemberRefs de construtor
+        // cujo pai é um TypeRef de fora. O DllReader tem que resolver o nome do
+        // ATRIBUTO (HarmonyLib.HarmonyPatch), não do construtor.
+        check("construtores Harmony externos resolvem o nome do atributo",
+                reader.getCustomAttributes().stream().anyMatch(attribute ->
+                        "HarmonyLib.HarmonyPatch".equals(attribute.typeName())));
     }
 
     private static void testFacts(DllReader reader) throws Exception {

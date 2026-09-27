@@ -1,14 +1,14 @@
-metadata	1072	3964
-section	.text	8192	4832	5120	512
-section	.rsrc	16384	960	1024	5632
-section	.reloc	24576	12	512	6656
-rows	TypeDef	25
-rows	MethodDef	38
-rows	CustomAttribute	43
-rows	MemberRef	14
-rows	TypeRef	18
-rows	Field	19
-rows	Param	18
+metadata	960	3544
+section	.text	8192	4300	4608	512
+section	.rsrc	16384	960	1024	5120
+section	.reloc	24576	12	512	6144
+rows	TypeDef	19
+rows	MethodDef	30
+rows	CustomAttribute	38
+rows	MemberRef	18
+rows	TypeRef	21
+rows	Field	12
+rows	Param	11
 method	1	.ctor	8272	0
 method	2	.ctor	8280	0
 method	3	Prefix	8295	1
@@ -37,13 +37,5 @@ method	25	.ctor	8603	0
 method	26	Double	8611	1
 method	27	ReturnAnnotated	8616	1
 method	28	.ctor	8619	0
-method	29	.ctor	8627	0
-method	30	.ctor	8635	1
-method	31	.ctor	8650	2
-method	32	.ctor	8672	3
-method	33	.ctor	8701	0
-method	34	.ctor	8709	0
-method	35	.ctor	8717	0
-method	36	.ctor	8725	1
-method	37	GetNested	8740	0
-method	38	.ctor	8743	0
+method	29	GetNested	8627	0
+method	30	.ctor	8630	0
