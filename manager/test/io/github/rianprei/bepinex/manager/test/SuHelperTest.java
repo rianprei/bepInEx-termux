@@ -133,6 +133,16 @@ public class SuHelperTest {
                 command.contains("am start -n 'com.example.game/.MainActivity'"));
         check("comando não resolve atividade pelo shell",
                 !command.contains("resolve-activity") && !command.contains("$("));
+        // namespace da classe pode diferir do applicationId (o Android
+        // permite launcher fora do namespace do pacote): com.foo/br.com.foo.Main
+        // é launch válido e era recusado à toa.
+        check("classe em namespace alheio ao pacote é aceita",
+                "com.foo/br.com.foo.Main".equals(
+                        SuHelper.requireActivityComponent("com.foo", "com.foo/br.com.foo.Main")));
+        checkRejeita("classe em namespace alheio com metacaractere continua recusada",
+                () -> SuHelper.requireActivityComponent("com.foo", "com.foo/br.com'.foo.Main;id"));
+        checkRejeita("classe relativa estranha continua recusada",
+                () -> SuHelper.requireActivityComponent("com.example.game", "com.example.game/."));
     }
 
     private static void testTemporaryTextFileCleanupOnInterruption() {

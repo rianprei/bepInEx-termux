@@ -119,9 +119,13 @@ public final class SuHelper {
             throw new IllegalArgumentException("atividade de início não pertence ao pacote");
         }
         String className = component.substring(separator + 1);
-        if (!ACTIVITY_CLASS_RE.matcher(className).matches()
-                || className.equals(".")
-                || (!className.startsWith(".") && !className.startsWith(pkg + "."))) {
+        // O pacote antes da '/' já foi conferido acima; a CLASSE pode estar em
+        // qualquer namespace — o Android permite launcher fora do namespace do
+        // applicationId (ex.: com.foo/br.com.foo.Main), e exigir pkg+"." na
+        // frente recusava jogo com launch válido. Para o shell basta o
+        // charset: ACTIVITY_CLASS_RE proíbe espaço, aspas, ';', '$(' e quebra
+        // de linha, então o valor entra entre aspas sem surpresa.
+        if (!ACTIVITY_CLASS_RE.matcher(className).matches() || className.equals(".")) {
             throw new IllegalArgumentException("nome da atividade de início inválido");
         }
         return component;
