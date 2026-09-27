@@ -21,8 +21,11 @@ Hoje o projeto é validado em: **Swamp Attack 2** (Unity IL2CPP, mods em
 produção: munição infinita e conteúdo extra) e **Battle Cats** (caminho
 próprio, histórico, intacto). TABS Pocket Edition é o próximo alvo. O app
 **bepInEx Manager** (instalar/ligar/desligar mods com um toque, sem terminal)
-já existe e instala `.bmod`, `.so`, `.patch` e `.js` — mas a instalação e o
-uso no celular ainda não foram verificados em aparelho (experimental). O
+já existe e instala `.bmod`, `.so`, `.patch` e `.js`. O módulo, o
+carregamento de mods `.so`, o crashguard com **Reativar**, o scanner e o
+bloqueio de anúncios foram verificados no celular (POCO C75, 26-27/09).
+A instalação de mods pelo Manager e a criação de mods pelo Mod Maker no
+celular ainda não foram testadas (experimental). O
 botão **Ação** do Magisk mostra o diagnóstico (mods instalados, log,
 SELinux) e os scripts `tools/` fazem a instalação.
 
@@ -82,9 +85,11 @@ tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 
 ### Se o seletor de arquivos do celular falhar
 
-O próprio Manager oferece **Escolher da pasta Download** quando o seletor
-volta sem arquivo. Use essa opção primeiro.
+No celular (Xiaomi), o seletor não devolveu o arquivo ao Manager. A opção
+**Escolher da pasta Download** foi criada por isso, mas ainda não foi
+testada no celular (experimental).
 
+Se o seletor voltar sem arquivo, toque em **Escolher da pasta Download**.
 Se ainda assim não funcionar, o passo a passo manual:
 
 1. Abra o **gerenciador de arquivos** do celular.
@@ -112,7 +117,7 @@ uma vez e devolve a lista de classes/métodos/campos; você busca (ex.:
 "multiplicar por N", "fixar campo em N") e salva — sem escrever uma linha.
 O mod salvo é um `.bmod` que dá pra compartilhar.
 
-**Como usar (experimental, testado só no PC):**
+**Como usar:**
 
 1. Toque em **Escanear jogo** e escolha o jogo.
 2. Navegue pela lista de classes e métodos.
@@ -121,9 +126,15 @@ O mod salvo é um `.bmod` que dá pra compartilhar.
    por N" ou "fixar campo em N".
 5. Salve e instale o mod gerado.
 
+**Status:** o **Escanear jogo** funcionou no celular (lista com 162 mil
+linhas). Criar e salvar o mod pelo app no celular ainda não foi testado
+(experimental).
+
 **Atenção:** a regra de campo (`field`) pode fechar o jogo. O primeiro teste
-no celular fechou o jogo, a correção entrou e o re-teste ainda está pendente.
-Use `return`, `mul` e `static` enquanto isso.
+no celular fechou o jogo; depois da correção, o re-teste aplicou a regra em
+8 métodos e o jogo ficou vivo por 120s. O efeito no jogo (ex.: munição
+infinita) ainda não foi confirmado por alguém jogando. As regras `return`,
+`mul` e `static` ainda não foram testadas no celular.
 
 ## Que mods rodam
 
@@ -136,7 +147,7 @@ não pela extensão, e diz em português se roda. A tabela honesta:
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
 | `.patch` (regras declarativas) | **sim** (experimental) | testado só no PC; uso no celular pendente de verificação |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
-| `.js` script Frida | experimental | via frida-gadget; execução no celular não validada |
+| `.js` script Frida | **não use** | o frida-gadget 17.19.0 fechou o jogo (SA2) no teste em celular; pode fechar o jogo até a correção |
 | `.dll` de BepInEx/MelonLoader **IL2CPP** | depois | exige runtime .NET no processo |
 | `.dll` de BepInEx/MelonLoader **Mono** em jogo Android **Mono** | depois | Harmony roda nativo em Mono |
 | `.dll` Mono de PC em jogo **IL2CPP** (ex.: mods de TABS PC) | **não automático** | os dois binários falam línguas diferentes; use o Mod Maker/SDK pra recriar |
