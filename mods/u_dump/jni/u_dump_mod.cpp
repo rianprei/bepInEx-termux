@@ -224,9 +224,15 @@ static void *worker(void *) {
     }
 
     char dir[352], path[384], tmp[448];
-    snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
-    snprintf(path, sizeof(path), "%s/dump.tsv", dir);
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    int dir_n = snprintf(dir, sizeof(dir), "/data/data/%s/files/bepinex", pkg);
+    int path_n = snprintf(path, sizeof(path), "%s/dump.tsv", dir);
+    int tmp_n = snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (dir_n <= 0 || (size_t)dir_n >= sizeof(dir) ||
+        path_n <= 0 || (size_t)path_n >= sizeof(path) ||
+        tmp_n <= 0 || (size_t)tmp_n >= sizeof(tmp)) {
+        LOG("caminho de saída longo demais para o pacote — dump abortado");
+        return nullptr;
+    }
 
     struct stat st;
     if (stat(path, &st) == 0) {
