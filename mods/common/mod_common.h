@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include "../../jni/bc_process.h"
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
@@ -33,26 +34,30 @@
 // ---- pacote do jogo (C1) ----
 
 // Núcleo puro (testável no host): 1º argumento do /proc/self/cmdline, com
-// buf/n vindos do read() real. Rejeita zygote* e buffer que não caiba.
+// buf/n vindos do read() real. Rejeita zygote*, remove :process e recusa
+// pacote inválido ou que não caiba.
 static inline bool mod_pkg_from_cmdline(const char *buf, size_t n, char *out, size_t size) {
-    if (n == 0 || n >= size) return false;
-    memcpy(out, buf, n);
-    out[n] = '\0';
-    return out[0] != '\0' && strncmp(out, "zygote", 6) != 0;
+    if (!buf || !out || size == 0 || n == 0) return false;
+    const char *end = (const char *)memchr(buf, '\0', n);
+    const size_t name_len = end ? (size_t)(end - buf) : n;
+    if (name_len == 0 || (name_len >= 6 && strncmp(buf, "zygote", 6) == 0))
+        return false;
+    return bc_process_copy_from_nice_name(buf, name_len, out, size) == BC_PROCESS_READY;
 }
 
 // Pacote do jogo, ou nullptr se ainda não souber (env ausente + processo
 // ainda zygote*). Só o fallback é cacheado (a env nunca muda após o dlopen).
 static inline const char *mod_pkg(void) {
     const char *env = getenv("BEPINEX_PKG");
-    if (env && *env) return env;
-    static char pkg[128];
+    if (env && *env)
+        return bc_process_package_valid(env, strlen(env)) ? env : nullptr;
+    static char pkg[BC_PROCESS_PACKAGE_CAP];
     static bool done;
     if (!done) {
         int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
         if (fd >= 0) {
             char buf[sizeof(pkg)];
-            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            ssize_t n = read(fd, buf, sizeof(buf));
             close(fd);
             if (n > 0) done = mod_pkg_from_cmdline(buf, (size_t)n, pkg, sizeof(pkg));
         }
