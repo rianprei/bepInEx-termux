@@ -21,6 +21,7 @@ public class TestRunner {
             ModTypeMatrixTest.run();
             RootCallBudgetTest.run();
             ShellExecTest.run();
+            Dll2PatchTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);
         } catch (Throwable t) {
