@@ -424,6 +424,50 @@ else
     record "u_patch exec test (not present)" SKIP 0 0
 fi
 
+# dll-coverage: MANIFEST.tsv ↔ DLL-COVERAGE.md ↔ README
+# O MANIFEST.tsv é a fonte da verdade do corpus; o doc e o README têm que
+# bater com ele. Apagar 1 linha do MANIFEST → gate FALHA.
+if [ -f "$ROOT/MANIFEST.tsv" ] && [ -f "$ROOT/docs/DLL-COVERAGE.md" ]; then
+    run_step "dll-coverage MANIFEST ↔ doc ↔ README" "$TIMEOUT_TEST" bash -c '
+        manifest="$1/MANIFEST.tsv"
+        doc="$1/docs/DLL-COVERAGE.md"
+        readme="$1/README.md"
+
+        # Conta IDs únicos do MANIFEST (1ª coluna)
+        manifest_count=$(cut -f1 "$manifest" | sort -u | wc -l | tr -d " ")
+        [ "$manifest_count" -gt 0 ] || { echo "MANIFEST.tsv vazio ou ilegível"; exit 1; }
+
+        # Extrai "Total de mods no corpus" do doc
+        doc_total=$(grep -oP "Total de mods no corpus \| \K[0-9]+" "$doc" || true)
+        [ -n "$doc_total" ] || { echo "DLL-COVERAGE.md: sem Total de mods"; exit 1; }
+
+        # Extrai "N mods reais" do README
+        readme_mods=$(grep -oP "medido em \K[0-9]+ mods reais" "$readme" | grep -oP "^[0-9]+" || true)
+        [ -n "$readme_mods" ] || { echo "README: sem contagem de mods"; exit 1; }
+
+        # Verifica 375+3=378 e 0/378 entre doc e README
+        doc_refusals=$(grep -oP "Recusas .* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_nested=$(grep -oP "classe aninhada.* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_total_patches=$(grep -oP "Total de patches Harmony \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_translated=$(grep -oP "\*\*\K0(?=/)" "$doc" | head -1 | tr -d " " || true)
+        # Extrai "0 de N patches" do README — N tem que bater com doc_total_patches
+        readme_patches_line=$(grep -oP "\K0 de [0-9]+ patches" "$readme" | head -1 || true)
+        readme_translated=$(echo "$readme_patches_line" | grep -oP "^0" || true)
+        readme_total_patches=$(echo "$readme_patches_line" | grep -oP "de \K[0-9]+" | head -1 || true)
+
+        [ "$manifest_count" = "$doc_total" ] || { echo "MANIFEST ($manifest_count) != doc Total ($doc_total)"; exit 1; }
+        [ "$manifest_count" = "$readme_mods" ] || { echo "MANIFEST ($manifest_count) != README mods ($readme_mods)"; exit 1; }
+        [ "$((doc_refusals + doc_nested))" = "$doc_total_patches" ] || { echo "doc: $doc_refusals + $doc_nested != $doc_total_patches"; exit 1; }
+        [ -n "$readme_total_patches" ] || { echo "README: sem 0 de N patches"; exit 1; }
+        [ "$readme_total_patches" = "$doc_total_patches" ] || { echo "README patches ($readme_total_patches) != doc ($doc_total_patches)"; exit 1; }
+        [ "$readme_translated" = "$doc_translated" ] || { echo "README traduzidos ($readme_translated) != doc ($doc_translated)"; exit 1; }
+        echo "MANIFEST=$manifest_count doc=$doc_total readme=$readme_mods patches=$doc_total_patches refusals=$doc_refusals nested=$doc_nested translated=$doc_translated"
+    ' bash "$ROOT"
+else
+    record "dll-coverage MANIFEST ↔ doc ↔ README" FAIL 0 1
+    echo "MANIFEST.tsv ou docs/DLL-COVERAGE.md ausente" >&2
+fi
+
 if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/main.cpp"; then
     run_step "VERSION matches loader" "$TIMEOUT_TEST" bash -c '
         version=$(awk "{print \$1}" "$1/VERSION")

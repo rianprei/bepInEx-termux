@@ -770,9 +770,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 - `INTEGRATION_CHECK.md` — verificação de integração build main+companion.
 - `COMPANION_TERMUX_ARCHITECTURE.md` — arquitetura completa da ponte
   companion↔Termux, incluindo o modelo de autenticação por `SO_PEERCRED`.
-- `context/` — notas técnicas de hardening, comportamento de config, e
+- `context/` — notas técnicas de comportamento de config, e
   comparação de design contra o BepInEx (o que ele resolve que este projeto
   ainda não precisa, e vice-versa).
+- `docs/DLL-COVERAGE.md` — relatório de cobertura do tradutor Harmony
+  (0/378 patches traduzíveis sem o assembly do jogo; u_dump como solução).
 
 ## Créditos
 
