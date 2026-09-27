@@ -110,7 +110,7 @@ public final class Dll2PatchTest {
         HarmonyTranslator.TranslationResult result = HarmonyTranslator.translate(dll);
         // A saída REAL do tradutor vira artefato de gate: este teste grava o
         // patchText() de verdade em test/fixtures/dll2patch/translator_output.bpatch
-        // e o harness C++ do u_patch ([Caso 79] do upatch_harness.cpp) repassa cada
+        // e o harness C++ do u_patch ([Caso 80] do upatch_harness.cpp) repassa cada
         // linha pelas funções REAIS de u_patch_parse.h. Nenhuma réplica Java no meio
         // do caminho: a gravação vem ANTES das checagens para que o gate C++ julgue
         // o que o tradutor emitir, mesmo quando alguma checagem daqui falha.
@@ -137,7 +137,7 @@ public final class Dll2PatchTest {
         check("a-d: o texto C4 traduzido e exatamente o esperado",
                 expected.equals(result.patchText()));
 
-        // A validação do lado do u_patch mora no parser C++ REAL: o Caso 79 do
+        // A validação do lado do u_patch mora no parser C++ REAL: o Caso 80 do
         // upatch_harness parseia o translator_output.bpatch gravado acima com
         // up_parse_line/up_split_class (a mesma fixture compartilhada C4,
         // test/fixtures/c4_lines.tsv, já corria no harness). A réplica Java do
@@ -159,7 +159,7 @@ public final class Dll2PatchTest {
                         || line.contains("GetScore") || line.contains("GetOtherScore")
                         || line.contains("GetNested")));
         String nestedRule = "return Dll2PatchFixture.Outer/Inner GetNested 0 int 1";
-        check("Manager aceita sintaxe C4 aninhada (o Caso 79 do harness C++ prova que "
+        check("Manager aceita sintaxe C4 aninhada (o Caso 80 do harness C++ prova que "
                         + "o split do u_patch não resolve essa classe)",
                 PatchGenerator.parse(nestedRule).size() == 1);
 

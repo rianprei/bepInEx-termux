@@ -92,6 +92,8 @@ ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
   - `log.txt`: log de todos os mods (append, 1 linha = `HH:MM:SS [mod] msg`, corta em 256KB).
   - `dump.tsv`: saída do u_dump.
   - Descobrir `<pkg>` dentro do mod: `getenv("BEPINEX_PKG")`, que o loader seta antes do `dlopen`. **Não** use `/proc/self/cmdline` no constructor: no device ele ainda vale `zygote64` nesse momento (achado 2026-09-26, u_patch leu `mods/zygote64`). Fallback só se a env faltar: cmdline, esperando sair de `zygote*`.
+  - Identidade do pacote: o loader prefere o último componente de `app_data_dir`; se estiver ausente/inválido, usa `nice_name` sem o sufixo `:processo` (por exemplo, `com.foo:unity` → `com.foo`). O nome precisa caber inteiro; pacote inválido ou longo demais é recusado, nunca truncado.
+  - Processo: carrega no principal e em processos normais `:sufixo` do mesmo pacote, pois a engine pode existir só no processo secundário. Recusa child zygote, `app_zygote` e UID isolado. `is_top_app` não é filtro: processos normais em segundo plano também podem carregar a engine. A regra vale igualmente para o matcher especial do Battle Cats.
 
 ### C2. `.bmod` (zip)
 ```

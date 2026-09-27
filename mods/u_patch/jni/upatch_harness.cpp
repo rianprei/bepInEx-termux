@@ -20,7 +20,7 @@ static int count_cb(char *line, int lineno, void *vctx) {
     return 0;
 }
 
-// --- round-trip real (Caso 79): tradutor JVM -> parser C++ -----------------
+// --- round-trip real (Caso 80): tradutor JVM -> parser C++ -----------------
 //
 // O Dll2PatchTest (gate JVM) grava o patchText() REAL do HarmonyTranslator em
 // test/fixtures/dll2patch/translator_output.bpatch — o mesmo artefato .bpatch
@@ -667,7 +667,7 @@ int main() {
         check("a extensao do motor e .bpatch", strcmp(UP_PATCH_EXT, ".bpatch") == 0);
     }
 
-    printf("\n[Caso 79] round-trip real: saída do tradutor JVM → parser C++ (gate)\n");
+    printf("\n[Caso 80] round-trip real: saída do tradutor JVM → parser C++ (gate)\n");
     {
         // O arquivo é gerado pelo gate JVM (Dll2PatchTest grava o patchText()
         // real do HarmonyTranslator) e versionado com o golden — o verify_all
