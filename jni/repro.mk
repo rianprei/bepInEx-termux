@@ -1,15 +1,4 @@
-ifeq ($(BEPINEX_OBJCOPY),)
-# $(shell) roda em sh, nao bash: por isso o for com "c in ...", e nada de
-# $(...) aninhado. O globs do NDK cobrem qualquer versao instalada.
-BEPINEX_OBJCOPY := $(shell \
-    if [ -n "$$NDK" ] && [ -x "$$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" ]; then \
-        printf '%s' "$$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"; \
-    else \
-        for c in "$$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy; do \
-            if [ -x "$$c" ]; then printf '%s' "$$c"; break; fi; \
-        done; \
-    fi)
-endif# jni/repro.mk — build reproduzível: os MESMOS bytes em QUALQUER diretório.
+# jni/repro.mk — build reproduzível: os MESMOS bytes em QUALQUER máquina.
 #
 # ACHADO (device POCO C75, SA2, tombstone_07_f4field): o tombstone traz o
 # build-id do u_patch.so (041d9b51...) e nada mais, porque o .so de release
@@ -24,7 +13,7 @@ endif# jni/repro.mk — build reproduzível: os MESMOS bytes em QUALQUER diretó
 #     /tmp/.../repro-a -> 62c539ed35f464a0cc4ceb8cf35db0b6c213fc56
 #     /tmp/.../repro-b -> e38e4fa87d67dc98669d9aaf0f61bcf0e4e0bde1
 #
-# Dois builds de release do MESMO commit, em máquinas diferentes, produce
+# Dois builds de release do MESMO commit, em máquinas diferentes, produzem
 # dois build-id diferentes — e o cruzamento "qual .so era esse?" vira adivinhação.
 # Foi exatamente o que aconteceu: para achar a linha do crash eu tive que
 # compilar 12 commits e comparar layout na mão.
@@ -53,62 +42,39 @@ endif
 
 BEPINEX_REPRO_PREFIX ?= /bepinex-termux
 
-# O objcopy que tira o DWARF do prebuilt (ver bepinex_prebuilt, no fim).
+# --- a raiz do NDK, do NDK ----------------------------------------------------
 #
-# Busca o do toolchain e cai para o do PATH. $(NDK) NAO chega no make durante o
-# parse do Android.mk — era isso que deixava a variavel vazia e a limpeza
-# falhar com "objcopy falhou", e o prebuilt inteiro voltava a vazar o /home de
-# quem o compilou. Por isso a lista de candidatos e explicita.
-# Define BEPINEX_OBJCOPY=... para forcar um binario.
-ifeq ($(BEPINEX_OBJCOPY),)
-BEPINEX_OBJCOPY := $(shell \
-    for c in "$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy" \
-             "$(HOME)"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy \
-             "$$(command -v llvm-objcopy 2>/dev/null)" \
-             "$$(command -v objcopy 2>/dev/null)"; do \
-        if [ -x "$$c" ]; then printf '%s' "$$c"; break; fi; \
-    done)
+# ACHADO DA REVISÃO DE a1783f5: a raiz do NDK era descoberta por um glob em
+# "$HOME/Android/Sdk/ndk/*". Funciona NESTA máquina e só nesta: com o NDK em
+# /opt/android-ndk, em ANDROID_NDK_HOME, num CI, ou no home de outro usuário, o
+# glob não acha e o prefix-map da raiz do NDK SOME — que é justamente o item 3
+# (caminho de máquina vaza e o build-id muda).
+#
+# $(NDK_ROOT) é a variável que o próprio NDK define em build/core/init.mk, e o
+# init.mk entra em build-local.mk na LINHA 48, antes do add-application.mk (linha
+# 199) que é quem inclui o Android.mk deste projeto. Ou seja: está definido
+# exatamente no ponto de uso.
+#
+# $(NDK) NÃO serve: essa é a variável de AMBIENTE do ndk-build e ela não chega
+# no make durante o parse. Foi o que deixou a busca anterior caindo no glob.
+ifeq ($(strip $(NDK_ROOT)),)
+    $(error NDK_ROOT vazio no make: o build nao esta rodando pelo ndk-build deste NDK (init.mk define e aborta se faltar), ou o Android.mk esta sendo included fora do NDK)
 endif
 
-# Só a RAIZ é mapeada, nunca $(CURDIR).
-#
-# $(CURDIR) é o diretório de onde o ndk-build foi CHAMADO, e o mesmo projeto é
-# compilável de mais de um lugar (o verify_all chama o loader da raiz do repo,
-# o build_module.sh também, e a pessoa na mão pode cd jni). Mapear o CURDIR
-# colocaria o prefixo do resultado em /bepinex-termux ou /bepinex-termux/src
-# conforme o cwd, e o build-id voltaria a depender do diretório — que é
-# exatamente o que este arquivo existe para impedir. Mapeando só a raiz, o
-# mesmo commit dá o mesmo build-id de qualquer diretório, inclusive de dentro
-# de jni/.
+# Só a raiz do NDK. Não $(CURDIR): o mesmo projeto é compilável de mais de um
+# lugar (o verify_all e o build_module.sh chamam da raiz do repo; a pessoa na
+# mão pode cd jni). Mapear o CURDIR colocaria o prefixo em /bepinex-termux ou
+# /bepinex-termux/src conforme o cwd, e o build-id voltaria a depender do
+# diretório — que é o que este arquivo existe para impedir.
 #
 # -ffile-prefix-map cobre __FILE__ e o DWARF; -fdebug-prefix-map é o mesmo
 # para o DWARF (o clang aceita os dois, e manter os dois deixa a intenção
 # explícita para quem for mexer nisso depois).
-# A RAIZ DO NDK TAMBEM. Sem ela, o DWARF carrega
-# /home/<voce>/Android/Sdk/ndk/<versao>/sysroot/usr/include... — que e a mesma
-# clase de vazamento do prebuilt (o home de quem compilou) e, pior, quebra a
-# reprodutibilidade: o mesmo commit, numa maquina com o NDK em outro caminho,
-# daria um .so e um build-id diferentes. O prefixo /ndk e fixo.
-# A raiz do NDK tambem. Sem ela, o DWARF carrega
-# /home/<voce>/Android/Sdk/ndk/<versao>/sysroot/usr/include... — a mesma classe de
-# vazaamento do prebuilt (o home de quem compilou) e, pior, quebra a
-# reprodutibilidade: o mesmo commit, numa maquina com o NDK em outro caminho,
-# daria um .so e um build-id diferentes. O prefixo /ndk e fixo.
-#
-# $NDK NAO chega no make neste ponto (so no shell, mais tarde), entao a raiz vem
-# do mesmo glob que o objcopy usa. Mais de um NDK instalado nao faz mal: cada um
-# que existir ganha a sua propria replace, e o que nao for usado e inerte.
-BEPINEX_REPRO_FLAGS_NDK := $(shell \
-    for d in "$$HOME"/Android/Sdk/ndk/*; do \
-        [ -d "$$d" ] || continue; \
-        printf ' -ffile-prefix-map=%s=%s/ndk -fdebug-prefix-map=%s=%s/ndk' \
-            "$$d" "$(BEPINEX_REPRO_PREFIX)" "$$d" "$(BEPINEX_REPRO_PREFIX)"; \
-    done)
-
 BEPINEX_REPRO_FLAGS := \
     -ffile-prefix-map=$(BEPINEX_REPRO_ROOT)=$(BEPINEX_REPRO_PREFIX) \
     -fdebug-prefix-map=$(BEPINEX_REPRO_ROOT)=$(BEPINEX_REPRO_PREFIX) \
-    $(BEPINEX_REPRO_FLAGS_NDK)
+    -ffile-prefix-map=$(NDK_ROOT)=$(BEPINEX_REPRO_PREFIX)/ndk \
+    -fdebug-prefix-map=$(NDK_ROOT)=$(BEPINEX_REPRO_PREFIX)/ndk
 
 APP_CFLAGS += $(BEPINEX_REPRO_FLAGS)
 APP_CPPFLAGS += $(BEPINEX_REPRO_FLAGS)
@@ -131,9 +97,7 @@ APP_STRIP_MODE := none
 #
 # A correção é REMOVER o DWARF do prebuilt no build, com objcopy, e linkar
 # contra a cópia limpa. O que o prebuilt de fato nos dá são os SÍMBOLOS (Dobby
-# é uma biblioteca de hook: o backtrace precisa de nome de função), e o
-# llvm-objcopy tira só as seções .debug_*, que não entram em código nem em
-# símbolo.
+# é uma biblioteca de hook: o backtrace precisa de nome de função).
 #
 # O que isso NÃO muda: o .text. Conferido membro a membro nos 40 objetos do
 # libdobby.a — .text byte a byte igual antes e depois. E os símbolos definidos
@@ -141,30 +105,87 @@ APP_STRIP_MODE := none
 #
 # O que muda: perdemos o NÚMERO DE LINHA das funções internas do Dobby. Um crash
 # dentro da trampoline ainda resolve para o nome da função, que é o que o
-# symbolize.sh precisa. Em troca, o release não carrega o caminho de ninguém.
-# O prebuilt versionado NÃO é alterado — a cópia limpa é do build.
+# symbolize.sh precisa. O prebuilt VERSIONADO não é alterado — a cópia limpa é
+# do build.
 #
 # Uso no Android.mk:
 #   LOCAL_SRC_FILES := $(call bepinex_prebuilt,jni/lib/$(TARGET_ARCH_ABI)/libdobby.a)
 #
 # O caminho é SEMPRE relativo à RAIZ do repo (que este arquivo já conhece), e
 # não ao jni/ do módulo: o prebuilt mora na raiz em qualquer caso, e usar
-# LOCAL_PATH aqui dependia de ele ja estar resolvido no momento em que a
+# LOCAL_PATH aqui dependia de ele já estar resolvido no momento em que a
 # variável é expandida — e no loader e nos mods ele não é.
+
+# O objcopy DO NDK DESTE BUILD. O glob é dentro de $(NDK_ROOT) (e não em
+# $HOME), porque o host tag varia (linux-x86_64, darwin-x86_64, darwin-arm64) e
+# o NDK é a única fonte da verdade. $(NDK_ROOT) não tem como faltar: o init.mk
+# aborta o build se faltar.
+BEPINEX_OBJCOPY := $(firstword $(wildcard \
+    $(NDK_ROOT)/toolchains/llvm/prebuilt/*/bin/llvm-objcopy))
+ifeq ($(strip $(BEPINEX_OBJCOPY)),)
+    $(error llvm-objcopy nao encontrado em '$(NDK_ROOT)/toolchains/llvm/prebuilt/*/bin/llvm-objcopy'. Sem ele o prebuilt volta a levar o caminho de quem o compilou. Defina BEPINEX_OBJCOPY=... para apontar um binario.)
+endif
+
+# b.epinex_prebuilt <caminho-relativo-a-raiz>
+#
+# Devolve o caminho da cópia limpa, ou ABORTA com a mensagem.
+#
+# A antes-disto devolvia "" em qualquer erro, e o ndk-build quebrava depois com
+# "LOCAL_SRC_FILES should only contain one item" — uma mensagem que não diz
+# NADA sobre a causa. Pior: se o link por acaso funcionasse (o objcopy falha
+# mas o arquivo antigo continua lá), o prebuilt inteiro voltava a vazar sem
+# ninguém ver. Falha de limpeza tem que ser BARULHENTA e nomeada.
+#
+# O shell nunca devolve vazio: em erro ele imprime "BEPINEX-ERRO <motivo>", e a
+# verificação acontece numa SEGUNDA call. Isso é proposital: num único corpo de
+# define, o make expande tudo de uma vez e um $(eval) no meio chega tarde demais
+# para o $(if) que vem depois (verificado: dava string vazia com _v já
+# preenchido depois). Passando o valor como ARGUMENTO de outra call, o shell
+# roda primeiro e o $(error) enxerga o resultado.
 define bepinex_prebuilt
-$(strip $(shell \
+$(call _bp_check,$(strip $(shell \
     src="$(BEPINEX_REPRO_ROOT)/$(1)"; \
-    [ -f "$$src" ] || { echo "bepinex: prebuilt ausente: $$src" >&2; echo ""; exit 0; }; \
-    outdir="$(BEPINEX_REPRO_ROOT)/obj/prebuilt-limpo"; \
-    mkdir -p "$$outdir" || exit 0; \
-    out="$$outdir/$(notdir $(1))"; \
-    if [ ! -f "$$out" ] || [ "$$src" -nt "$$out" ]; then \
-        $(BEPINEX_OBJCOPY) --remove-section=.debug_info \
-            --remove-section=.debug_abbrev --remove-section=.debug_line \
-            --remove-section=.debug_str --remove-section=.debug_loc \
-            --remove-section=.debug_ranges --remove-section=.debug_aranges \
-            --remove-section=.debug_line_str --remove-section=.debug_str_offsets \
-            "$$src" "$$out" 2>/dev/null || { echo "bepinex: objcopy falhou em $$src" >&2; echo ""; exit 0; }; \
+    if [ ! -f "$$src" ]; then echo "BEPINEX-ERRO prebuilt ausente: $$src"; exit 0; fi; \
+    if ! command -v sha256sum >/dev/null 2>&1; then \
+        echo "BEPINEX-ERRO sha256sum ausente: o nome da copia limpa e o sha256 do conteudo"; \
+        exit 0; \
     fi; \
-    echo "$$out"))
+    outdir="$(BEPINEX_REPRO_ROOT)/obj/prebuilt-limpo"; \
+    if ! mkdir -p "$$outdir"; then echo "BEPINEX-ERRO nao criei $$outdir"; exit 0; fi; \
+    sum=$$(sha256sum "$$src" | cut -d" " -f1); \
+    out="$$outdir/$$sum.a"; \
+    if [ ! -f "$$out" ]; then \
+        tmp=$$(mktemp "$$outdir/.tmp.XXXXXX") || { \
+            echo "BEPINEX-ERRO mktemp falhou em $$outdir"; exit 0; }; \
+        if ! $(BEPINEX_OBJCOPY) --strip-debug "$$src" "$$tmp" 2>/dev/null; then \
+            rm -f "$$tmp"; \
+            echo "BEPINEX-ERRO objcopy --strip-debug falhou em $$src (objcopy: $(BEPINEX_OBJCOPY))"; \
+            exit 0; \
+        fi; \
+        mv -f "$$tmp" "$$out" || { rm -f "$$tmp"; \
+            echo "BEPINEX-ERRO mv falhou em $$out"; exit 0; }; \
+    fi; \
+    echo "$$out")))
 endef
+
+define _bp_check
+$(if $(filter BEPINEX-ERRO,$(firstword $(1))),\
+    $(error bepinex_prebuilt: $(wordlist 2,$(words $(1)),$(1))),\
+    $(1))
+endef
+
+# --- gancho de prova (test/symbols/ndk_path_test.sh) ------------------------
+#
+# Fica NO FIM de propósito: dentro de um $(warning), o make expande na hora, e
+# as variáveis ainda não existiam no meio do arquivo (OBJCOPY vinha vazio).
+#
+# "NDK_ROOT está definido no ponto de uso" só se prova DENTRO de um ndk-build de
+# verdade: em make puro, sem o init.mk do NDK, NDK_ROOT estaria vazio e a
+# afirmação seria falsa — foi o que a primeira versão deste check mediu.
+#
+# O NDK resolve o próprio caminho (um symlink vira o caminho real), então o que
+# entra no prefix-map é o caminho REAL que o compilador vai ver. O gate compara
+# contra o NDK_ROOT observado, e não contra o symlink.
+ifeq ($(BEPINEX_REPRO_DEBUG),1)
+$(warning BEPINEX-PROBE NDK_ROOT=[$(NDK_ROOT)] OBJCOPY=[$(BEPINEX_OBJCOPY)] FLAGS=[$(BEPINEX_REPRO_FLAGS)])
+endif

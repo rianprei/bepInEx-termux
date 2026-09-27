@@ -392,6 +392,21 @@ else
     echo "test/symbols/ship_stripped_test.sh ausente: o .so nao-stripado vaza para o .bmod/APK/device"
 fi
 
+# O build não pode depender de ONDE o NDK está. A raiz do NDK era descoberta por
+# um glob em "$HOME/Android/Sdk/ndk/*", que funciona nesta máquina e só nesta:
+# com o NDK em /opt, em ANDROID_NDK_HOME, num CI ou no home de outro usuário o
+# glob não acha, o prefix-map da raiz do NDK some, e o caminho de máquina volta
+# a vazar com o build-id mudando — exatamente o item 3.
+# A etapa compila a mesma árvore com o NDK no $HOME e com o NDK apontado para um
+# caminho FORA do $HOME, e exige sha256 idêntico do símbolo e do .so entregue.
+if [ -f "$ROOT/test/symbols/ndk_path_test.sh" ]; then
+    run_step "build independe do caminho do NDK" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ndk_path_test.sh"
+else
+    record "build independe do caminho do NDK (teste ausente)" FAIL 0 1
+    echo "test/symbols/ndk_path_test.sh ausente: o build-id volta a depender de onde o NDK esta"
+fi
+
 # tools/symbolize.sh: o crash do usuário tem que virar função:linha em 1
 # comando. O teste cruza um tombstone sintético, o tombstone REAL do device e
 # o cruzamento histórico do offset 0x1bb34 com o build que o gerou.
