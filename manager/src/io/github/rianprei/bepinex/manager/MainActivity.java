@@ -28,6 +28,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.InFlightFlag;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
@@ -418,10 +419,14 @@ public class MainActivity extends Activity {
     }
 
     private void installSelectedFile(File file, String packageName, String engine) {
+        // Duplo toque no mesmo diálogo não pode disparar o segundo install
+        // enquanto o primeiro está em voo (dois su + resultado sobreposto).
+        final InFlightFlag installInFlight = new InFlightFlag();
+        if (!installInFlight.begin()) return;
         SelectedFileWork.install(FILE_EXECUTOR, file, packageName, engine, (result, error) ->
                 mMainHandler.post(() -> {
                     SelectedFileStager.delete(file);
-                    if (isFinishing()) return;
+                    installInFlight.end();
                     if (error != null) {
                         showImportMessage("Não instalado", "Falha ao instalar o arquivo: "
                                 + error.getMessage());

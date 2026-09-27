@@ -21,6 +21,7 @@ public class TestRunner {
             C4FixtureTest.run();
             ModTypeMatrixTest.run();
             RootCallBudgetTest.run();
+        InFlightFlagTest.run();
             ShellExecTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");
             System.exit(0);

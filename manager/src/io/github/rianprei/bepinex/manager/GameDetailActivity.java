@@ -24,6 +24,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.InFlightFlag;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
@@ -235,9 +236,14 @@ public class GameDetailActivity extends Activity {
     }
 
     private void installStagedFile(File file) {
+        // Duplo toque não repete o install do mesmo arquivo (o segundo su
+        // pode falhar por concorrência e sobrepor "Sucesso" com falha).
+        final InFlightFlag installInFlight = new InFlightFlag();
+        if (!installInFlight.begin()) return;
         SelectedFileWork.install(FILE_EXECUTOR, file, mPkg, mEngine, (result, error) ->
                 mMainHandler.post(() -> {
                     SelectedFileStager.delete(file);
+                    installInFlight.end();
                     if (isFinishing()) return;
                     String title = error != null || !result.success ? "Não instalado" : "Sucesso";
                     String message = error != null
