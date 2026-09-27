@@ -406,13 +406,18 @@ if [ -f "$ROOT/MANIFEST.tsv" ] && [ -f "$ROOT/docs/DLL-COVERAGE.md" ]; then
         doc_refusals=$(grep -oP "Recusas .* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
         doc_nested=$(grep -oP "classe aninhada.* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
         doc_total_patches=$(grep -oP "Total de patches Harmony \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
-        doc_translated=$(grep -oP "\*\*0/\K[0-9]+" "$doc" | head -1 | tr -d " " || true)
-        readme_translated=$(grep -oP "\K0 de [0-9]+" "$readme" | grep -oP "^0" || true)
+        doc_translated=$(grep -oP "\*\*\K0(?=/)" "$doc" | head -1 | tr -d " " || true)
+        # Extrai "0 de N patches" do README — N tem que bater com doc_total_patches
+        readme_patches_line=$(grep -oP "\K0 de [0-9]+ patches" "$readme" | head -1 || true)
+        readme_translated=$(printf '%s' "$readme_patches_line" | grep -oP "^0" || true)
+        readme_total_patches=$(printf '%s' "$readme_patches_line" | grep -oP "de \K[0-9]+" | head -1 || true)
 
         [ "$manifest_count" = "$doc_total" ] || { echo "MANIFEST ($manifest_count) != doc Total ($doc_total)"; exit 1; }
         [ "$manifest_count" = "$readme_mods" ] || { echo "MANIFEST ($manifest_count) != README mods ($readme_mods)"; exit 1; }
         [ "$((doc_refusals + doc_nested))" = "$doc_total_patches" ] || { echo "doc: $doc_refusals + $doc_nested != $doc_total_patches"; exit 1; }
-        [ "$readme_translated" = "0" ] || { echo "README: traduzidos != 0"; exit 1; }
+        [ -n "$readme_total_patches" ] || { echo "README: sem '0 de N patches'"; exit 1; }
+        [ "$readme_total_patches" = "$doc_total_patches" ] || { echo "README patches ($readme_total_patches) != doc ($doc_total_patches)"; exit 1; }
+        [ "$readme_translated" = "$doc_translated" ] || { echo "README traduzidos ($readme_translated) != doc ($doc_translated)"; exit 1; }
         echo "MANIFEST=$manifest_count doc=$doc_total readme=$readme_mods patches=$doc_total_patches refusals=$doc_refusals nested=$doc_nested translated=$doc_translated"
     ' bash "$ROOT"
 else
