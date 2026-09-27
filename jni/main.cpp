@@ -120,6 +120,80 @@ static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
     return fd;
 }
 
+// A LISTA tambem vem pelo socket: a arvore e root-only e o jogo nao pode (e nao
+// deve) scandir() nela. O companion enumera, e devolve um nome por linha, ja
+// filtrado para .so e ja ordenado.
+static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why, size_t whycap) {
+    out[0] = '\0';
+    why[0] = '\0';
+    int sock = bc_fd_socket();
+    if (sock < 0) {
+        snprintf(why, whycap, "sem canal com o companion");
+        return -1;
+    }
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, "LS", dir);
+    int total = -1;
+    if (n <= 0) {
+        snprintf(why, whycap, "caminho invalido para o pedido de lista");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        snprintf(why, whycap, "companion nao recebeu o pedido de lista");
+    } else {
+        // "<n>\n" e depois n linhas de nome.
+        char buf[4096];
+        size_t used = 0, head = 0;
+        char *nl = NULL;
+        for (;;) {
+            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
+            if (r < 0) {
+                if (errno == EINTR) continue;
+                snprintf(why, whycap, "companion nao respondeu a lista em 5s");
+                break;
+            }
+            if (r == 0) { snprintf(why, whycap, "companion fechou antes da lista"); break; }
+            used += (size_t)r;
+            buf[used] = '\0';
+            nl = (char *)memchr(buf, '\n', used);
+            if (nl != NULL) break;
+            if (used >= sizeof(buf) - 1) { snprintf(why, whycap, "resposta de lista grande demais"); break; }
+        }
+        if (nl != NULL) {
+            *nl = '\0';
+            head = (size_t)(nl - buf) + 1;
+            total = atoi(buf);
+            if (total < 0) { snprintf(why, whycap, "resposta de lista invalida"); total = -1; }
+            else if ((size_t)total > cap / 2) { snprintf(why, whycap, "lista maior que o buffer"); total = -1; }
+            else {
+                // o resto ja esta em buf+head
+                char *rest = buf + head;
+                size_t rlen = used - head;
+                // NORMALIZA: a resposta vem com o total no fim por construcao
+                // do companion; aqui consumed so o que veio.
+                if ((size_t)total > 0 && rlen > 0) {
+                    char *p2 = rest;
+                    for (int k = 0; k < total; k++) {
+                        char *e = strchr(p2, '\n');
+                        if (e == NULL) break;
+                        *e = '\0';
+                        if (p2[0] != '\0') {
+                            size_t l = strlen(p2);
+                            if (l + 2 < cap) { memcpy(out, p2, l); out[l++] = '\n'; out[l] = '\0'; }
+                        }
+                        p2 = e + 1;
+                    }
+                }
+            }
+        }
+    }
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    return total;
+}
+
 // dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
 // nao carrega — e o motivo vai para o log. Nao ha fallback para dlopen por
 // caminho: o caminho nao e mais acessivel ao jogo, e um fallback seria
@@ -1974,12 +2048,25 @@ static int load_generic_pkg_mods(const char *pkg) {
         LOGE("%s: caminho da pasta de mods longo demais; mods recusados", pkg);
         return 0;
     }
-    // Ordem alfabética (igual BC_MODS_DIR): readdir sozinho não garante
-    // ordem, e mod que depende de outro precisa de carga determinística.
-    struct dirent **ents = nullptr;
-    int n = scandir(dir, &ents, nullptr, alphasort);
+    // A LISTA vem do companion, e nao de scandir(): a arvore e root-only e o
+    // jogo nao tem (nem deve ter) search nela. O companion enumera com
+    // lstat, ja filtra .so e ja ordena — determinismo de carga preservado.
+    char list[4096] = {0};
+    char why[192] = {0};
+    char rel[320];
+    snprintf(rel, sizeof(rel), "%s", strrchr(dir, '/') ? strrchr(dir, '/') + 1 : dir);
+    int n = bc_mod_list_request(rel, list, sizeof(list), why, sizeof(why));
     if (n < 0) {
-        LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
+        // A tag do contrato C1 e o nome do proprio pacote (o log ainda nao
+        // tem nome de mod: nao veio nenhum).
+        char tag[64];
+        snprintf(tag, sizeof(tag), "%s", pkg);
+        LOGI("%s: lista de %s indisponivel (%s) — sem mods por pacote", pkg, dir, why);
+        pkg_log_line(pkg, tag, "lista de mods indisponivel: %s", why);
+        return 0;
+    }
+    if (n == 0) {
+        LOGI("%s: %s vazia — sem mods por pacote", pkg, dir);
         return 0;
     }
     // Contrato C1: o mod descobre o próprio pacote por getenv("BEPINEX_PKG"),
@@ -1991,8 +2078,19 @@ static int load_generic_pkg_mods(const char *pkg) {
     // nenhum mod deste jogo entra (e o aviso vai pro log C1).
     if (crashguard_gate(pkg, "crashguard")) return 0;
     int loaded = 0;
-    for (int i = 0; i < n; i++) {
-        const char *name = ents[i]->d_name;
+    // A lista vem em "nome\n" repetido. O cursor avanca de um nome para o
+    // seguinte; n e o total que o companion informou.
+    const char *cursor = list;
+    for (int i = 0; i < n && cursor != NULL && *cursor != '\0'; i++) {
+        const char *eol = strchr(cursor, '\n');
+        if (eol == NULL) break;
+        char nome[256];
+        size_t nl = (size_t)(eol - cursor);
+        if (nl >= sizeof(nome)) { cursor = eol + 1; continue; }
+        memcpy(nome, cursor, nl);
+        nome[nl] = '\0';
+        cursor = eol + 1;
+        const char *name = nome;
         if (bc_loader_is_mod_filename(name)) {
             // Tag do contrato C1 = nome do mod sem o ".so" (o filtro acima
             // garante que o nome termina com .so).
@@ -2002,7 +2100,6 @@ static int load_generic_pkg_mods(const char *pkg) {
             int path_len = snprintf(path, sizeof(path), "%s/%s", dir, name);
             if (path_len <= 0 || (size_t)path_len >= sizeof(path)) {
                 LOGE("%s: caminho do mod %s longo demais; recusado", pkg, name);
-                free(ents[i]);
                 continue;
             }
             char soname[128];
@@ -2014,7 +2111,6 @@ static int load_generic_pkg_mods(const char *pkg) {
                      "o gadget so entra pelo u_frida como frida-gadget.bin",
                      pkg, name, soname);
                 pkg_log_line(pkg, tag, "parece o frida-gadget (soname %s): recusado", soname);
-                free(ents[i]);
                 continue;
             }
             // POR FD, como o outro caminho de carga. A arvore e root-only e o
@@ -2033,9 +2129,7 @@ static int load_generic_pkg_mods(const char *pkg) {
                 loaded++;
             }
         }
-        free(ents[i]);
     }
-    free(ents);
     return loaded;
 }
 

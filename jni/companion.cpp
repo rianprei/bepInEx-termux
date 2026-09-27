@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <errno.h>
 #include <sys/system_properties.h>
 #include <stdio.h>
@@ -750,6 +751,7 @@ static void handle_push_mod(int fd, const char *name, long size) {
 // Entrega por FD — definidos mais abaixo, junto do resto do transporte.
 static void handle_mod_fd(int fd, const char *path);
 static void handle_mod_txt(int fd, const char *path);
+static void handle_mod_list(int fd, const char *dir);
 
 bool handle_termux_request(int client_fd) {
     char buf[4096];
@@ -806,6 +808,8 @@ bool handle_termux_request(int client_fd) {
             handle_mod_fd(client_fd, buf + 7);
         } else if (strncmp(buf, "mod_txt ", 8) == 0) {
             handle_mod_txt(client_fd, buf + 8);
+        } else if (strncmp(buf, "mod_list ", 9) == 0) {
+            handle_mod_list(client_fd, buf + 9);
         } else if (strncmp(buf, "toggle_mod ", 11) == 0) {
             handle_toggle_mod(client_fd, buf + 11);
         } else if (strncmp(buf, "set_mod ", 8) == 0) {
@@ -949,6 +953,48 @@ static bool bc_path_in_mods_root(const char *path) {
     if (strncmp(path, BC_MODS_ROOT, root) != 0) return false;
     if (path[root] == '\0') return true;
     return path[root] == '/';
+}
+
+// A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
+// root-only (root:root 0700, sem search para appdomain) — e nao deve: quem
+// enumera e o root. O formato e um nome por linha, ja filtrado para o que o
+// loader carrega (.so e nada mais), ordenado no ROOT (o readdir do root e
+// imprevisivel e um mod pode depender de outro).
+static void handle_mod_list(int fd, const char *dir) {
+    char path[512];
+    int pw = snprintf(path, sizeof(path), "%s/%s", BC_MODS_ROOT, dir);
+    if (pw <= 0 || (size_t)pw >= sizeof(path) || !bc_path_in_mods_root(path)) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        return;
+    }
+    // lstat pelo root: um link dentro da arvore nao e seguido, e um item que
+    // nao for arquivo regular NAO entra na lista (o jogo nao tem como abrir).
+    DIR *d = opendir(path);
+    if (d == nullptr) {
+        // Sem mods nao e erro: o jogo so nao carrega nada.
+        bc_fd_send_data(fd, "0\n", 2);
+        return;
+    }
+    char line[512];
+    int total = 0;
+    struct dirent *de;
+    while ((de = readdir(d)) != nullptr) {
+        if (de->d_name[0] == '.') continue;
+        if (!bc_loader_is_mod_filename(de->d_name)) continue;
+        char full[1024];
+        int fw = snprintf(full, sizeof(full), "%s/%s", path, de->d_name);
+        if (fw <= 0 || (size_t)fw >= sizeof(full)) continue;
+        struct stat st;
+        if (lstat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        int n = snprintf(line, sizeof(line), "%s\n", de->d_name);
+        if (n > 0 && bc_fd_send_data(fd, line, (size_t)n) < 0) break;
+        total++;
+    }
+    closedir(d);
+    snprintf(line, sizeof(line), "%d\n", total);
+    bc_fd_send_data(fd, line, strlen(line));
 }
 
 static void handle_mod_fd(int fd, const char *path) {
