@@ -89,10 +89,22 @@ struct Il2Cpp {
     // (achado no device: objeto lixo no campo, SIGSEGV em chamada de interface).
     // ponytail: buffer de 64 bytes, struct maior estoura; usar
     // il2cpp_class_value_size se aparecer campo desses.
+    //
+    // A cadeia class_from_type -> class_is_valuetype SEM check era o mesmo
+    // buraco do type confusion de u_patch (device SA2): qualquer um dos dois
+    // devolvendo null entrava no il2cpp com x0 = 0. Aqui a degradação é
+    // silenciosa (trata como referência, que é o caso comum) em vez de
+    // derrubar o jogo; quem chama decide se um struct é erro.
     void copy_field(void *src, void *dst, void *field) const {
+        if (!src || !dst || !field) return;
         alignas(16) uint8_t buf[64];
         field_get_value(src, field, buf);
-        bool vt = class_is_valuetype(class_from_type(field_get_type(field)));
+        bool vt = false;
+        if (field_get_type && class_from_type && class_is_valuetype) {
+            const void *t = field_get_type(field);
+            void *k = t ? class_from_type((void *)t) : nullptr;
+            if (k) vt = class_is_valuetype(k);
+        }
         field_set_value(dst, field, vt ? (void *)buf : *(void **)buf);
     }
     // Método estático por nome na classe dada.
