@@ -28,13 +28,11 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import io.github.rianprei.bepinex.manager.core.BmodInstaller;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
-import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
-import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
+import io.github.rianprei.bepinex.manager.core.SelectedFileWork;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.GameInfo;
@@ -47,9 +45,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_FILE = 1001;
+    private static final Executor FILE_EXECUTOR =
+            command -> new Thread(command, "mod-file-import").start();
 
     private TextView mTvStatusRoot;
     private TextView mTvStatusModule;
@@ -348,34 +349,42 @@ public class MainActivity extends Activity {
             mPendingImportFile = file;
             return;
         }
-        try {
-            ModContentDetector.Detection detection = ModContentDetector.detect(
-                    LooseModInstaller.probe(file), true);
-            ModManifest manifest = detection.kind == ModContentDetector.Kind.BMOD
-                    ? BmodInstaller.inspect(file) : null;
-            SelectedFileRouter.Decision decision = SelectedFileRouter.decide(detection, manifest);
-            if (decision.action == SelectedFileRouter.Action.REJECT) {
-                showImportMessage("Arquivo não aceito", decision.message);
-                SelectedFileStager.delete(file);
-            } else if (decision.action == SelectedFileRouter.Action.INSTALL_DECLARED_GAME) {
-                new AlertDialog.Builder(this)
-                        .setTitle("Instalar mod")
-                        .setMessage("Este pacote foi feito para o jogo " + decision.packageName
-                                + ". Deseja continuar?")
-                        .setPositiveButton("Instalar", (dialog, which) -> {
-                            GameInfo target = findGame(decision.packageName);
-                            installSelectedFile(file, decision.packageName,
-                                    target != null ? target.engine : null);
-                        })
-                        .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
-                        .show();
-            } else {
-                showSelectGameDialogForFile(file, manifest);
-            }
-        } catch (Exception e) {
+        SelectedFileWork.inspect(FILE_EXECUTOR, file, (inspection, error) ->
+                mMainHandler.post(() -> {
+                    if (isFinishing()) {
+                        SelectedFileStager.delete(file);
+                        return;
+                    }
+                    if (error != null) {
+                        SelectedFileStager.delete(file);
+                        showImportMessage("Não foi possível abrir o arquivo",
+                                "O arquivo não pôde ser identificado: " + error.getMessage());
+                        return;
+                    }
+                    showInspectionResult(file, inspection);
+                }));
+    }
+
+    private void showInspectionResult(File file, SelectedFileWork.Inspection inspection) {
+        SelectedFileRouter.Decision decision = inspection.decision();
+        ModManifest manifest = inspection.manifest();
+        if (decision.action == SelectedFileRouter.Action.REJECT) {
+            showImportMessage("Arquivo não aceito", decision.message);
             SelectedFileStager.delete(file);
-            showImportMessage("Não foi possível abrir o arquivo",
-                    "O arquivo não pôde ser identificado: " + e.getMessage());
+        } else if (decision.action == SelectedFileRouter.Action.INSTALL_DECLARED_GAME) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Instalar mod")
+                    .setMessage("Este pacote foi feito para o jogo " + decision.packageName
+                            + ". Deseja continuar?")
+                    .setPositiveButton("Instalar", (dialog, which) -> {
+                        GameInfo target = findGame(decision.packageName);
+                        installSelectedFile(file, decision.packageName,
+                                target != null ? target.engine : null);
+                    })
+                    .setNegativeButton("Cancelar", (dialog, which) -> SelectedFileStager.delete(file))
+                    .show();
+        } else {
+            showSelectGameDialogForFile(file, manifest);
         }
     }
 
@@ -415,10 +424,18 @@ public class MainActivity extends Activity {
     }
 
     private void installSelectedFile(File file, String packageName, String engine) {
-        LooseModInstaller.Result result = LooseModInstaller.installFromFile(file, packageName, engine);
-        SelectedFileStager.delete(file);
-        showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
-        loadStatusAndApps();
+        SelectedFileWork.install(FILE_EXECUTOR, file, packageName, engine, (result, error) ->
+                mMainHandler.post(() -> {
+                    SelectedFileStager.delete(file);
+                    if (isFinishing()) return;
+                    if (error != null) {
+                        showImportMessage("Não instalado", "Falha ao instalar o arquivo: "
+                                + error.getMessage());
+                        return;
+                    }
+                    showImportMessage(result.success ? "Sucesso" : "Não instalado", result.message);
+                    loadStatusAndApps();
+                }));
     }
 
     private void showImportMessage(String title, String message) {

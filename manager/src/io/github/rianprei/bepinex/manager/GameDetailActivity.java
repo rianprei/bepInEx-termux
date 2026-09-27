@@ -27,8 +27,8 @@ import android.widget.Toast;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
-import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
+import io.github.rianprei.bepinex.manager.core.SelectedFileWork;
 import io.github.rianprei.bepinex.manager.core.ManifestParser;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.ModInfo;
@@ -41,9 +41,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 public class GameDetailActivity extends Activity {
     private static final int REQUEST_PICK_BMOD_FOR_GAME = 1002;
+    private static final Executor FILE_EXECUTOR =
+            command -> new Thread(command, "mod-file-import").start();
 
     private String mPkg;
     private String mAppName;
@@ -232,14 +235,20 @@ public class GameDetailActivity extends Activity {
     }
 
     private void installStagedFile(File file) {
-        LooseModInstaller.Result res = LooseModInstaller.installFromFile(file, mPkg, mEngine);
-        SelectedFileStager.delete(file);
-        new AlertDialog.Builder(this)
-                .setTitle(res.success ? "Sucesso" : "Não instalado")
-                .setMessage(res.message)
-                .setPositiveButton("OK", null)
-                .show();
-        loadMods();
+        SelectedFileWork.install(FILE_EXECUTOR, file, mPkg, mEngine, (result, error) ->
+                mMainHandler.post(() -> {
+                    SelectedFileStager.delete(file);
+                    if (isFinishing()) return;
+                    String title = error != null || !result.success ? "Não instalado" : "Sucesso";
+                    String message = error != null
+                            ? "Falha ao instalar o arquivo: " + error.getMessage() : result.message;
+                    new AlertDialog.Builder(this)
+                            .setTitle(title)
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                    loadMods();
+                }));
     }
 
     private String resolveDisplayName(Uri uri) {

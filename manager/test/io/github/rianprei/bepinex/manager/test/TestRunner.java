@@ -12,6 +12,7 @@ public class TestRunner {
             ModContentDetectorTest.run();
             SelectedFileRouterTest.run();
             SelectedFileStagerTest.run();
+            SelectedFileWorkTest.run();
             CrashGuardStateTest.run();
             BuildVersionTest.run();
             SuHelperTest.run();
