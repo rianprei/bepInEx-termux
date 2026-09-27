@@ -591,7 +591,7 @@ public class ShellExecTest {
         write(hostile, "conteudo-hostil");
         File outside = new File(root, "outside.so");
         write(outside, "fora das pastas compartilhadas");
-        File symlink = new File(documents, "atalho.so");
+        File symlink = new File(download, "atalho.so");
         try {
             Files.createSymbolicLink(symlink.toPath(), outside.toPath());
         } catch (Exception e) {
@@ -603,6 +603,10 @@ public class ShellExecTest {
         check("listagem root executa em sh", listing.code == 0);
         List<String> paths = DownloadFilePicker.parseListing(listing.out,
                 download.getPath(), documents.getPath());
+        File symlinkCopy = new File(root, "symlink-copy.bin");
+        Result symlinkCopyResult = sh(DownloadFilePicker.copyToCacheCommand(symlink.getPath(),
+                symlinkCopy.getPath(), download.getPath(), documents.getPath()), root);
+        check("cópia revalida e recusa links simbólicos", symlinkCopyResult.code != 0);
         check("arquivo com espaço aparece intacto", paths.contains(normal.getPath()));
         check("arquivo oculto também aparece", paths.contains(hidden.getPath()));
         check("nome com aspas, $(), e ; aparece intacto", paths.contains(hostile.getPath()));
@@ -630,11 +634,6 @@ public class ShellExecTest {
                 "conteudo-hostil".equals(new String(readBytes(copied), StandardCharsets.UTF_8)));
         check("nome hostil não executou comando durante a cópia",
                 !new File(root, "injected").exists());
-        File symlinkCopy = new File(root, "symlink-copy.bin");
-        Result symlinkCopyResult = sh(DownloadFilePicker.copyToCacheCommand(symlink.getPath(),
-                symlinkCopy.getPath(), download.getPath(), documents.getPath()), root);
-        check("cópia revalida e recusa links simbólicos", symlinkCopyResult.code != 0);
-
         File empty = new File(root, "Empty");
         check("pasta vazia criada", empty.mkdirs());
         Result emptyListing = sh(DownloadFilePicker.listCommand(empty.getPath(),

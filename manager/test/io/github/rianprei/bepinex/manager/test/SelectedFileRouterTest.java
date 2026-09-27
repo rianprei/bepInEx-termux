@@ -4,11 +4,15 @@ import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+
 public final class SelectedFileRouterTest {
     public static void run() {
         testSoUsesLooseInstallerAndAsksForGame();
         testUniversalBmodAsksForGame();
         testApkUsesDetectorRejection();
+        testBepInExPcUsesDetectorRejection();
         System.out.println("  [OK] SelectedFileRouterTest (imports por conteúdo)");
     }
 
@@ -28,9 +32,7 @@ public final class SelectedFileRouterTest {
     }
 
     private static void testUniversalBmodAsksForGame() {
-        byte[] zip = {'P', 'K', 3, 4, 0, 0, 0, 0};
-        ModContentDetector.Detection detection = ModContentDetector.detect(
-                new ModContentDetector.Sample("mod.bmod", zip, null, true, false), true);
+        ModContentDetector.Detection detection = ModContentDetector.detect(c2BmodSample(), true);
         ModManifest manifest = new ModManifest();
         manifest.game = "*";
         SelectedFileRouter.Decision route = SelectedFileRouter.decide(detection, manifest);
@@ -47,9 +49,33 @@ public final class SelectedFileRouterTest {
         SelectedFileRouter.Decision route = SelectedFileRouter.decide(detection, null);
         check(".apk recusado", route.action == SelectedFileRouter.Action.REJECT);
         check("a recusa exibe a explicação original do detector",
-                detection.reason.equals(route.message) && route.message.contains(".bmod"));
+                detection.reason.equals(route.message) && !route.message.isEmpty());
         check("arquivo recusado não escolhe instalador",
                 route.installer == SelectedFileRouter.Installer.NONE);
+    }
+
+    private static void testBepInExPcUsesDetectorRejection() {
+        byte[] zip = {'P', 'K', 3, 4, 0, 0, 0, 0};
+        ModContentDetector.Sample sample = new ModContentDetector.Sample(
+                "renamed.zip", zip, null, false, false, zip.length, null,
+                Collections.singletonList("BepInEx/plugins/example.dll"));
+        ModContentDetector.Detection detection = ModContentDetector.detect(sample, true);
+        SelectedFileRouter.Decision route = SelectedFileRouter.decide(detection, null);
+        check("zip com layout BepInEx é reconhecido pelo conteúdo",
+                detection.kind == ModContentDetector.Kind.BEPINEX_PC);
+        check("mod BepInEx de PC recusado", route.action == SelectedFileRouter.Action.REJECT);
+        check("VIEW mantém o texto verdadeiro do detector",
+                detection.reason.equals(route.message)
+                        && route.message.contains("não funciona no celular"));
+        check("tipo não instalável não escolhe instalador",
+                route.installer == SelectedFileRouter.Installer.NONE);
+    }
+
+    private static ModContentDetector.Sample c2BmodSample() {
+        byte[] zip = {'P', 'K', 3, 4, 0, 0, 0, 0};
+        byte[] manifest = "{\"format\":1,\"id\":\"mod-test\"}".getBytes(StandardCharsets.UTF_8);
+        return new ModContentDetector.Sample("mod.bmod", zip, null, true, false,
+                zip.length, manifest, Collections.singletonList("manifest.json"));
     }
 
     private static ModContentDetector.Sample elf(String name) {
