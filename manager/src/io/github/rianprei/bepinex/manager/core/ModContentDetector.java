@@ -225,22 +225,24 @@ public final class ModContentDetector {
                     return new Detection(Kind.DOTNET_IL2CPP, "assembly .NET para IL2CPP", false,
                             "Este .dll e um mod .NET de IL2CPP (BepInEx 6 / MelonLoader IL2CPP). "
                                     + "Ele precisa do runtime .NET dentro do processo do jogo, que o "
-                                    + "bepInEx-termux ainda nao tem (F12, nao implementado). O "
-                                    + "Manager instala, mas o mod nao roda: use o Mod Maker (regras "
-                                    + ".patch) ou espere a F12.", null, null);
+                                    + "bepInEx-termux ainda nao tem (F12, nao implementado). Nao roda "
+                                    + "ainda; em breve a traducao de patches simples (.dll para .patch) "
+                                    + "cuida dos casos faceis. Enquanto isso, use o Mod Maker (regras "
+                                    + ".patch).", null, null);
                 }
                 if (engineIl2cpp) {
                     return new Detection(Kind.DOTNET_MONO, "assembly .NET de PC (Mono)", false,
                             "Este .dll e mod de PC (BepInEx 5 / MelonLoader Mono, o formato dos "
                                     + "mods de PC) e o jogo deste celular e IL2CPP. NAO RODA: jogo "
-                                    + "IL2CPP nao tem runtime Mono, entao o .dll nem carrega. Para "
-                                    + "mudar esse jogo Use o Mod Maker (regras .patch) ou procure a "
-                                    + "versao IL2CPP do mod (F12).", null, null);
+                                    + "IL2CPP nao tem runtime Mono, entao o .dll nem carrega. Em breve a "
+                                    + "traducao de patches simples (.dll para .patch) cuida dos casos "
+                                    + "faceis; por ora, use o Mod Maker (regras .patch).", null, null);
                 }
                 return new Detection(Kind.DOTNET_MONO, "assembly .NET (Mono)", false,
                         "Este .dll e mod .NET de Mono (BepInEx 5 / MelonLoader Mono). Para rodar "
                                 + "precisa do runtime Mono carregado no processo do jogo (F13, nao "
-                                + "implementado). Em jogo Unity Mono o caminho existe; em IL2CPP nao.",
+                                + "implementado): ainda nao suportado; em breve traducao de patches "
+                                + "simples. Em jogo Unity Mono o caminho existe; em IL2CPP nao.",
                         null, null);
             }
             return new Detection(Kind.PE_NATIVE, "executavel/binario de Windows", false,
