@@ -1,0 +1,42 @@
+metadata	1028	3552
+section	.text	8192	4376	4608	512
+section	.rsrc	16384	960	1024	5120
+section	.reloc	24576	12	512	6144
+rows	TypeDef	20
+rows	MethodDef	31
+rows	CustomAttribute	39
+rows	MemberRef	14
+rows	TypeRef	18
+rows	Field	19
+rows	Param	16
+method	1	.ctor	8272	0
+method	2	.ctor	8280	0
+method	3	Prefix	8295	1
+method	4	Postfix	8302	1
+method	5	Postfix	8308	1
+method	6	Prefix	8316	0
+method	7	Transpiler	8332	0
+method	8	Prefix	8458	1
+method	9	Postfix	8469	1
+method	10	Prefix	8480	1
+method	11	Prefix	8490	1
+method	12	GetHealth	8497	0
+method	13	GetMana	8505	0
+method	14	GetDamage	8513	0
+method	15	GetScore	8521	0
+method	16	GetAmmo	8529	0
+method	17	GetShield	8537	0
+method	18	GetSpeed	8545	0
+method	19	GetName	8553	0
+method	20	GetStat	8561	0
+method	21	GetStat	8569	1
+method	22	.ctor	8579	0
+method	23	Double	8587	1
+method	24	.ctor	8592	0
+method	25	.ctor	8600	1
+method	26	.ctor	8615	2
+method	27	.ctor	8637	3
+method	28	.ctor	8666	0
+method	29	.ctor	8674	0
+method	30	.ctor	8682	0
+method	31	.ctor	8690	1

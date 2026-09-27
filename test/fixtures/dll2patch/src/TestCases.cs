@@ -19,9 +19,9 @@ namespace Dll2PatchFixture
     }
 
     // Caso B: Postfix com __result = CONST;
-    [HarmonyPatch(typeof(GameClass), "GetMana")]
     public static class PostfixResultConst
     {
+        [HarmonyPatch(typeof(GameClass), "GetMana")]
         [HarmonyPostfix]
         public static void Postfix(ref int __result)
         {
@@ -61,7 +61,14 @@ namespace Dll2PatchFixture
         [HarmonyTranspiler]
         public static void Transpiler()
         {
-            // Transpiler edita IL — não traduzível
+            if (GameClass.Noise == 1) GameClass.Noise = 2;
+            if (GameClass.Noise == 2) GameClass.Noise = 3;
+            if (GameClass.Noise == 3) GameClass.Noise = 4;
+            if (GameClass.Noise == 4) GameClass.Noise = 5;
+            if (GameClass.Noise == 5) GameClass.Noise = 6;
+            if (GameClass.Noise == 6) GameClass.Noise = 7;
+            if (GameClass.Noise == 7) GameClass.Noise = 8;
+            if (GameClass.Noise == 8) GameClass.Noise = 9;
         }
     }
 
@@ -119,6 +126,7 @@ namespace Dll2PatchFixture
     public class GameClass
     {
         public static int MaxScore;
+        public static int Noise;
         public int health;
         public int mana;
         public int damage;

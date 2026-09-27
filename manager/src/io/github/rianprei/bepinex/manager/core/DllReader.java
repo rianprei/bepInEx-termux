@@ -3,861 +3,1063 @@ package io.github.rianprei.bepinex.manager.core;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-/**
- * Parser mínimo de PE/CLI (ECMA-335) para assemblies .NET.
- * Lê metadata e corpos IL dos métodos. Sem dependência externa.
- * Entrada malformada lança {@link DllReaderException} com mensagem PT-BR.
- *
- * Tabela de opcodes: gerada via reflexão do dotnet (System.Reflection.Emit.OpCodes)
- * e commited como test/fixtures/dll2patch/opcodes_table.csv.
- */
+/** Leitura limitada de assemblies PE/CLI e metadata ECMA-335. */
 public final class DllReader {
+    public static final int MAX_FILE_SIZE = 64 * 1024 * 1024;
+    private static final int MAX_SECTIONS = 96;
+    private static final int MAX_STREAMS = 64;
+    private static final int MAX_TABLE_ROWS = 250_000;
+    private static final int MAX_TOTAL_PARAMETERS = 250_000;
+    private static final int MAX_TOTAL_IL_SIZE = 16 * 1024 * 1024;
+    private static final int MAX_INSTRUCTIONS = 100_000;
+    private static final int TABLE_COUNT = 64;
 
     public static final class DllReaderException extends Exception {
-        public DllReaderException(String message) { super(message); }
-    }
+        public DllReaderException(String message) {
+            super(message);
+        }
 
-    // --- estruturas públicas ---
-    public record MethodInfo(String name, int flags, int paramCount, byte[] ilBody, int rva) {}
-    public record FieldInfo(String name, int flags) {}
-    public record TypeInfo(String name, String namespace, List<MethodInfo> methods, List<FieldInfo> fields) {}
-    public record CustomAttributeInfo(String typeName, String targetName, String targetKind) {}
-
-    // --- tabela de opcodes ECMA-335 ---
-    // Gerada via reflexão do dotnet. Value,Name,OperandType,Size
-        // Tabela de opcodes ECMA-335 gerada via reflexão do dotnet.
-    // Commited como test/fixtures/dll2patch/opcodes_table.csv.
-    // Formato: nome,operandType,size
-        // Tabela de opcodes ECMA-335 gerada via reflexão do dotnet.
-    // Commited como test/fixtures/dll2patch/opcodes_table.csv.
-    // Formato: nome,operandType,size
-    private static final String[] OPCODE_TABLE = {
-        "unknown_0x00,InlineNone,1",
-        "unknown_0x01,InlineNone,1",
-        "unknown_0x02,InlineNone,1",
-        "ldarg.1,InlineNone,1",
-        "ldarg.2,InlineNone,1",
-        "ldarg.3,InlineNone,1",
-        "ldloc.0,InlineNone,1",
-        "ldloc.1,InlineNone,1",
-        "ldloc.2,InlineNone,1",
-        "ldloc.3,InlineNone,1",
-        "stloc.0,InlineNone,1",
-        "stloc.1,InlineNone,1",
-        "stloc.2,InlineNone,1",
-        "stloc.3,InlineNone,1",
-        "ldarg.s,ShortInlineVar,1",
-        "ldarga.s,ShortInlineVar,1",
-        "starg.s,ShortInlineVar,1",
-        "ldloc.s,ShortInlineVar,1",
-        "ldloca.s,ShortInlineVar,1",
-        "stloc.s,ShortInlineVar,1",
-        "ldnull,InlineNone,1",
-        "ldc.i4.m1,InlineNone,1",
-        "ldc.i4.0,InlineNone,1",
-        "ldc.i4.1,InlineNone,1",
-        "ldc.i4.2,InlineNone,1",
-        "ldc.i4.3,InlineNone,1",
-        "ldc.i4.4,InlineNone,1",
-        "ldc.i4.5,InlineNone,1",
-        "ldc.i4.6,InlineNone,1",
-        "ldc.i4.7,InlineNone,1",
-        "ldc.i4.8,InlineNone,1",
-        "ldc.i4.s,ShortInlineI,1",
-        "ldc.i4,InlineI,1",
-        "ldc.i8,InlineI8,1",
-        "ldc.r4,ShortInlineR,1",
-        "ldc.r8,InlineR,1",
-        "unknown_0x24,InlineNone,1",
-        "dup,InlineNone,1",
-        "pop,InlineNone,1",
-        "jmp,InlineMethod,1",
-        "call,InlineMethod,1",
-        "calli,InlineSig,1",
-        "ret,InlineNone,1",
-        "br.s,ShortInlineBrTarget,1",
-        "brfalse.s,ShortInlineBrTarget,1",
-        "brtrue.s,ShortInlineBrTarget,1",
-        "beq.s,ShortInlineBrTarget,1",
-        "bge.s,ShortInlineBrTarget,1",
-        "bgt.s,ShortInlineBrTarget,1",
-        "ble.s,ShortInlineBrTarget,1",
-        "blt.s,ShortInlineBrTarget,1",
-        "bne.un.s,ShortInlineBrTarget,1",
-        "bge.un.s,ShortInlineBrTarget,1",
-        "bgt.un.s,ShortInlineBrTarget,1",
-        "ble.un.s,ShortInlineBrTarget,1",
-        "blt.un.s,ShortInlineBrTarget,1",
-        "br,InlineBrTarget,1",
-        "brfalse,InlineBrTarget,1",
-        "brtrue,InlineBrTarget,1",
-        "beq,InlineBrTarget,1",
-        "bge,InlineBrTarget,1",
-        "bgt,InlineBrTarget,1",
-        "ble,InlineBrTarget,1",
-        "blt,InlineBrTarget,1",
-        "bne.un,InlineBrTarget,1",
-        "bge.un,InlineBrTarget,1",
-        "bgt.un,InlineBrTarget,1",
-        "ble.un,InlineBrTarget,1",
-        "blt.un,InlineBrTarget,1",
-        "switch,InlineSwitch,1",
-        "ldind.i1,InlineNone,1",
-        "ldind.u1,InlineNone,1",
-        "ldind.i2,InlineNone,1",
-        "ldind.u2,InlineNone,1",
-        "ldind.i4,InlineNone,1",
-        "ldind.u4,InlineNone,1",
-        "ldind.i8,InlineNone,1",
-        "ldind.i,InlineNone,1",
-        "ldind.r4,InlineNone,1",
-        "ldind.r8,InlineNone,1",
-        "ldind.ref,InlineNone,1",
-        "stind.ref,InlineNone,1",
-        "stind.i1,InlineNone,1",
-        "stind.i2,InlineNone,1",
-        "stind.i4,InlineNone,1",
-        "stind.i8,InlineNone,1",
-        "stind.r4,InlineNone,1",
-        "stind.r8,InlineNone,1",
-        "add,InlineNone,1",
-        "sub,InlineNone,1",
-        "mul,InlineNone,1",
-        "div,InlineNone,1",
-        "div.un,InlineNone,1",
-        "rem,InlineNone,1",
-        "rem.un,InlineNone,1",
-        "and,InlineNone,1",
-        "or,InlineNone,1",
-        "xor,InlineNone,1",
-        "shl,InlineNone,1",
-        "shr,InlineNone,1",
-        "shr.un,InlineNone,1",
-        "neg,InlineNone,1",
-        "not,InlineNone,1",
-        "conv.i1,InlineNone,1",
-        "conv.i2,InlineNone,1",
-        "conv.i4,InlineNone,1",
-        "conv.i8,InlineNone,1",
-        "conv.r4,InlineNone,1",
-        "conv.r8,InlineNone,1",
-        "conv.u4,InlineNone,1",
-        "conv.u8,InlineNone,1",
-        "callvirt,InlineMethod,1",
-        "cpobj,InlineType,1",
-        "ldobj,InlineType,1",
-        "ldstr,InlineString,1",
-        "newobj,InlineMethod,1",
-        "castclass,InlineType,1",
-        "isinst,InlineType,1",
-        "conv.r.un,InlineNone,1",
-        "unknown_0x77,InlineNone,1",
-        "unknown_0x78,InlineNone,1",
-        "unbox,InlineType,1",
-        "throw,InlineNone,1",
-        "ldfld,InlineField,1",
-        "ldflda,InlineField,1",
-        "stfld,InlineField,1",
-        "ldsfld,InlineField,1",
-        "ldsflda,InlineField,1",
-        "stsfld,InlineField,1",
-        "stobj,InlineType,1",
-        "conv.ovf.i1.un,InlineNone,1",
-        "conv.ovf.i2.un,InlineNone,1",
-        "conv.ovf.i4.un,InlineNone,1",
-        "conv.ovf.i8.un,InlineNone,1",
-        "conv.ovf.u1.un,InlineNone,1",
-        "conv.ovf.u2.un,InlineNone,1",
-        "conv.ovf.u4.un,InlineNone,1",
-        "conv.ovf.u8.un,InlineNone,1",
-        "conv.ovf.i.un,InlineNone,1",
-        "conv.ovf.u.un,InlineNone,1",
-        "box,InlineType,1",
-        "newarr,InlineType,1",
-        "ldlen,InlineNone,1",
-        "ldelema,InlineType,1",
-        "ldelem.i1,InlineNone,1",
-        "ldelem.u1,InlineNone,1",
-        "ldelem.i2,InlineNone,1",
-        "ldelem.u2,InlineNone,1",
-        "ldelem.i4,InlineNone,1",
-        "ldelem.u4,InlineNone,1",
-        "ldelem.i8,InlineNone,1",
-        "ldelem.i,InlineNone,1",
-        "ldelem.r4,InlineNone,1",
-        "ldelem.r8,InlineNone,1",
-        "ldelem.ref,InlineNone,1",
-        "stelem.i,InlineNone,1",
-        "stelem.i1,InlineNone,1",
-        "stelem.i2,InlineNone,1",
-        "stelem.i4,InlineNone,1",
-        "stelem.i8,InlineNone,1",
-        "stelem.r4,InlineNone,1",
-        "stelem.r8,InlineNone,1",
-        "stelem.ref,InlineNone,1",
-        "ldelem,InlineType,1",
-        "stelem,InlineType,1",
-        "unbox.any,InlineType,1",
-        "unknown_0xa6,InlineNone,1",
-        "unknown_0xa7,InlineNone,1",
-        "unknown_0xa8,InlineNone,1",
-        "unknown_0xa9,InlineNone,1",
-        "unknown_0xaa,InlineNone,1",
-        "unknown_0xab,InlineNone,1",
-        "unknown_0xac,InlineNone,1",
-        "unknown_0xad,InlineNone,1",
-        "unknown_0xae,InlineNone,1",
-        "unknown_0xaf,InlineNone,1",
-        "unknown_0xb0,InlineNone,1",
-        "unknown_0xb1,InlineNone,1",
-        "unknown_0xb2,InlineNone,1",
-        "conv.ovf.i1,InlineNone,1",
-        "conv.ovf.u1,InlineNone,1",
-        "conv.ovf.i2,InlineNone,1",
-        "conv.ovf.u2,InlineNone,1",
-        "conv.ovf.i4,InlineNone,1",
-        "conv.ovf.u4,InlineNone,1",
-        "conv.ovf.i8,InlineNone,1",
-        "conv.ovf.u8,InlineNone,1",
-        "unknown_0xbb,InlineNone,1",
-        "unknown_0xbc,InlineNone,1",
-        "unknown_0xbd,InlineNone,1",
-        "unknown_0xbe,InlineNone,1",
-        "unknown_0xbf,InlineNone,1",
-        "unknown_0xc0,InlineNone,1",
-        "unknown_0xc1,InlineNone,1",
-        "refanyval,InlineType,1",
-        "ckfinite,InlineNone,1",
-        "unknown_0xc4,InlineNone,1",
-        "unknown_0xc5,InlineNone,1",
-        "mkrefany,InlineType,1",
-        "unknown_0xc7,InlineNone,1",
-        "unknown_0xc8,InlineNone,1",
-        "unknown_0xc9,InlineNone,1",
-        "unknown_0xca,InlineNone,1",
-        "unknown_0xcb,InlineNone,1",
-        "unknown_0xcc,InlineNone,1",
-        "unknown_0xcd,InlineNone,1",
-        "unknown_0xce,InlineNone,1",
-        "unknown_0xcf,InlineNone,1",
-        "ldtoken,InlineTok,1",
-        "conv.u2,InlineNone,1",
-        "conv.u1,InlineNone,1",
-        "conv.i,InlineNone,1",
-        "conv.ovf.i,InlineNone,1",
-        "conv.ovf.u,InlineNone,1",
-        "add.ovf,InlineNone,1",
-        "add.ovf.un,InlineNone,1",
-        "mul.ovf,InlineNone,1",
-        "mul.ovf.un,InlineNone,1",
-        "sub.ovf,InlineNone,1",
-        "sub.ovf.un,InlineNone,1",
-        "endfinally,InlineNone,1",
-        "leave,InlineBrTarget,1",
-        "leave.s,ShortInlineBrTarget,1",
-        "stind.i,InlineNone,1",
-        "conv.u,InlineNone,1",
-        "unknown_0xe1,InlineNone,1",
-        "unknown_0xe2,InlineNone,1",
-        "unknown_0xe3,InlineNone,1",
-        "unknown_0xe4,InlineNone,1",
-        "unknown_0xe5,InlineNone,1",
-        "unknown_0xe6,InlineNone,1",
-        "unknown_0xe7,InlineNone,1",
-        "unknown_0xe8,InlineNone,1",
-        "unknown_0xe9,InlineNone,1",
-        "unknown_0xea,InlineNone,1",
-        "unknown_0xeb,InlineNone,1",
-        "unknown_0xec,InlineNone,1",
-        "unknown_0xed,InlineNone,1",
-        "unknown_0xee,InlineNone,1",
-        "unknown_0xef,InlineNone,1",
-        "unknown_0xf0,InlineNone,1",
-        "unknown_0xf1,InlineNone,1",
-        "unknown_0xf2,InlineNone,1",
-        "unknown_0xf3,InlineNone,1",
-        "unknown_0xf4,InlineNone,1",
-        "unknown_0xf5,InlineNone,1",
-        "unknown_0xf6,InlineNone,1",
-        "unknown_0xf7,InlineNone,1",
-        "prefix7,InlineNone,1",
-        "prefix6,InlineNone,1",
-        "prefix5,InlineNone,1",
-        "prefix4,InlineNone,1",
-        "prefix3,InlineNone,1",
-        "prefix2,InlineNone,1",
-        "prefix1,InlineNone,1",
-        "prefixref,InlineNone,1",
-    };
-
-    // Parse da tabela de opcodes: nome -> [operandType, size]
-    private static final String[][] PARSED_OPCODES = new String[256][];
-
-    static {
-        for (int i = 0; i < 256; i++) {
-            PARSED_OPCODES[i] = OPCODE_TABLE[i].split(",");
+        public DllReaderException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
+    public record Section(String name, long virtualAddress, long virtualSize,
+                          long rawSize, long rawOffset) {}
+    public record ParameterInfo(String name, String type) {}
+    public record MethodInfo(int rid, String name, int flags, String returnType,
+                             List<ParameterInfo> parameters, byte[] ilBody,
+                             long rva, boolean fatHeader) {
+        public int paramCount() {
+            return parameters.size();
+        }
+    }
+    public record FieldInfo(String name, int flags, String type) {}
+    public record TypeInfo(int rid, String name, String namespace,
+                           List<MethodInfo> methods, List<FieldInfo> fields) {
+        public String fullName() {
+            return namespace == null || namespace.isEmpty() ? name : namespace + "." + name;
+        }
+    }
+    public record CustomAttributeInfo(String typeName, int parentTable, int parentRid,
+                                      String parentTypeName, String parentMemberName,
+                                      String typeArgument, String methodArgument) {}
+    public record DecodedInstruction(String opcode, String operandType,
+                                     long operand, int position) {}
+    public record FieldReference(String declaringType, String name, String type, boolean isStatic) {}
+
+    private record Stream(int offset, int size) {
+        int end() {
+            return offset + size;
+        }
+    }
+    private record MethodSignature(String returnType, List<String> parameterTypes) {}
+    private record DecodedIndex(int table, int rid) {}
+
     private final byte[] data;
-    private final int peOffset;
-    private final int optionalHeaderSize;
-    private final int comDescriptorRva;
-    private final int metadataRootRva;
-    private final int metadataRootOffset;
-    private int stringsOffset;
-    private int blobOffset;
-    private int usOffset;
-    private int guidOffset;
-    private final int[] tableRowCounts;
-    private final long[] tableValid;
-    private final int[] tableOffsets;
+    private final List<Section> sections;
+    private final int metadataStartOffset;
+    private final int metadataSize;
+    private final Stream tablesStream;
+    private final Stream stringsStream;
+    private final Stream blobStream;
+    private final Stream userStringsStream;
+    private final int[] rowCounts = new int[TABLE_COUNT];
+    private final int[] tableOffsets = new int[TABLE_COUNT];
     private final int heapSizes;
+    private List<TypeInfo> cachedTypes;
+    private List<CustomAttributeInfo> cachedAttributes;
+    private int[] methodOwners;
+    private int[] fieldOwners;
 
     private DllReader(byte[] data) throws DllReaderException {
         this.data = data;
-        this.peOffset = readInt32(0x3C);
-        if (peOffset < 0 || peOffset + 4 > data.length)
-            throw new DllReaderException("offset de PE header inválido: " + peOffset);
-        if (readInt32(peOffset) != 0x00004550)
-            throw new DllReaderException("não é um arquivo PE (assinatura PE não encontrada)");
-        int coffOffset = peOffset + 4;
-        int numSections = readInt16(coffOffset + 2);
-        this.optionalHeaderSize = readInt16(coffOffset + 16);
-        int optionalOffset = coffOffset + 20;
-        if (optionalHeaderSize < 112)
-            throw new DllReaderException("optional header muito pequeno: " + optionalHeaderSize);
-        int ddOffset = optionalOffset + 96;
-        this.comDescriptorRva = readInt32(ddOffset + 14 * 8);
-        if (comDescriptorRva == 0)
-            throw new DllReaderException("não é um assembly .NET (sem COM Descriptor / CLI header)");
-        int comOffset = rvaToFileOffset(comDescriptorRva);
-        int cliHeaderRva = readInt32(comOffset + 8);
-        this.metadataRootRva = readInt32(comOffset + 12);
-        this.metadataRootOffset = rvaToFileOffset(metadataRootRva);
-        if (metadataRootOffset < 0)
-            throw new DllReaderException("metadata root RVA inválido");
-        if (readInt32(metadataRootOffset) != 0x424A5342)
-            throw new DllReaderException("metadata root inválido (assinatura BSJB não encontrada)");
-        int versionLen = readInt32(metadataRootOffset + 12);
-        int streamsOffset = metadataRootOffset + 16 + versionLen;
-        streamsOffset = (streamsOffset + 3) & ~3;
-        int numStreams = readInt16(streamsOffset - 2);
-        this.stringsOffset = -1;
-        this.blobOffset = -1;
-        this.usOffset = -1;
-        this.guidOffset = -1;
-        int off = streamsOffset;
-        for (int i = 0; i < numStreams; i++) {
-            int streamOffset = readInt32(off);
-            int streamSize = readInt32(off + 4);
-            int nameStart = off + 8;
-            int nameEnd = nameStart;
-            while (nameEnd < data.length && data[nameEnd] != 0) nameEnd++;
-            String name = new String(data, nameStart, nameEnd - nameStart, StandardCharsets.UTF_8);
-            int absOffset = metadataRootOffset + streamOffset;
-            if ("#Strings".equals(name)) this.stringsOffset = absOffset;
-            else if ("#Blob".equals(name)) this.blobOffset = absOffset;
-            else if ("#US".equals(name)) this.usOffset = absOffset;
-            else if ("#GUID".equals(name)) this.guidOffset = absOffset;
-            off = nameEnd + 1;
-            while ((off - streamsOffset) % 4 != 0) off++;
+        Arrays.fill(tableOffsets, -1);
+
+        int peOffset = checkedInt(u32(0x3c), "e_lfanew");
+        requireRange(peOffset, 24, "cabeçalho COFF");
+        if (u32(peOffset) != 0x00004550L) {
+            throw error("assinatura PE ausente");
         }
-        if (stringsOffset < 0 || blobOffset < 0)
-            throw new DllReaderException("streams #Strings e/ou #Blob não encontrados");
-        int tablesOffset = findTablesOffset();
-        this.heapSizes = data[tablesOffset + 6];
-        long valid = readInt64(tablesOffset + 8);
-        this.tableValid = new long[64];
-        for (int i = 0; i < 64; i++) tableValid[i] = (valid >> i) & 1;
-        int rowCountsOffset = tablesOffset + 16;
-        this.tableRowCounts = new int[64];
-        for (int i = 0; i < 64; i++) {
-            if (tableValid[i] == 1) {
-                tableRowCounts[i] = readInt32(rowCountsOffset);
-                rowCountsOffset += 4;
-            }
+        int coff = peOffset + 4;
+        int sectionCount = u16(coff + 2);
+        int optionalSize = u16(coff + 16);
+        if (sectionCount <= 0 || sectionCount > MAX_SECTIONS) {
+            throw error("quantidade de seções PE inválida: " + sectionCount);
         }
-        this.tableOffsets = new int[64];
-        for (int i = 0; i < 64; i++) {
-            if (tableValid[i] == 1) {
-                tableOffsets[i] = rowCountsOffset;
-                rowCountsOffset += tableRowCounts[i] * tableRowSize(i);
-            }
-        }
-    }
 
-    private int findTablesOffset() throws DllReaderException {
-        int versionLen = readInt32(metadataRootOffset + 12);
-        int off = metadataRootOffset + 16 + versionLen;
-        off = (off + 3) & ~3;
-        int numStreams = readInt16(off - 2);
-        int p = off;
-        for (int i = 0; i < numStreams; i++) {
-            int nameStart = p + 8;
-            int nameEnd = nameStart;
-            while (nameEnd < data.length && data[nameEnd] != 0) nameEnd++;
-            String name = new String(data, nameStart, nameEnd - nameStart, StandardCharsets.UTF_8);
-            if ("#~".equals(name)) return metadataRootOffset + readInt32(p);
-            p = nameEnd + 1;
-            while ((p - off) % 4 != 0) p++;
-        }
-        throw new DllReaderException("stream #~ não encontrado");
-    }
-
-    // Tipos de índice como constantes de string (evita problema de ordem de declaração de classes)
-    private static final String TYPEDEF_OR_REF = "TypeDefOrRef";
-    private static final String HAS_CUSTOM_ATTRIBUTE = "HasCustomAttribute";
-    private static final String CUSTOM_ATTRIBUTE_TYPE = "CustomAttributeType";
-    private static final String MEMBER_REF_PARENT = "MemberRefParent";
-    private static final String RESOLUTION_SCOPE = "ResolutionScope";
-    private static final String HAS_CONSTANT = "HasConstant";
-    private static final String HAS_SEMANTICS = "HasSemantics";
-    private static final String METHOD_DEF_OR_REF = "MethodDefOrRef";
-    private static final String STRINGS = "Strings";
-    private static final String BLOB = "Blob";
-    private static final String GUID = "GUID";
-    private static final String FIELD = "Field";
-    private static final String METHOD_DEF = "MethodDef";
-    private static final String PARAM = "Param";
-    private static final String MEMBER_FORWARDED = "MemberForwarded";
-    private static final String IMPLEMENTATION = "Implementation";
-    private static final String HAS_FIELD_MARSHAL = "HasFieldMarshal";
-    private static final String HAS_DECL_SECURITY = "HasDeclSecurity";
-
-    private int tableRowSize(int tableIndex) throws DllReaderException {
-        return switch (tableIndex) {
-            case 0x00 -> 10;
-            case 0x01 -> idxSize(TYPEDEF_OR_REF) + idxSize(RESOLUTION_SCOPE);
-            case 0x02 -> 4 + idxSize(STRINGS) * 2 + idxSize(TYPEDEF_OR_REF) + idxSize(FIELD) + idxSize(METHOD_DEF);
-            case 0x04 -> 2 + idxSize(STRINGS) + idxSize(BLOB);
-            case 0x06 -> 4 + 2 + 2 + idxSize(STRINGS) + idxSize(BLOB) + idxSize(PARAM);
-            case 0x08 -> 2 + 2 + idxSize(STRINGS);
-            case 0x09 -> 2 + idxSize(METHOD_DEF_OR_REF);
-            case 0x0A -> idxSize(MEMBER_REF_PARENT) + idxSize(STRINGS) + idxSize(BLOB);
-            case 0x0B -> 1 + 1 + idxSize(HAS_CONSTANT) + idxSize(BLOB);
-            case 0x0C -> idxSize(HAS_CUSTOM_ATTRIBUTE) + idxSize(CUSTOM_ATTRIBUTE_TYPE) + idxSize(BLOB);
-            case 0x20 -> 4 + 2 + 2 + idxSize(STRINGS) + idxSize(STRINGS) + idxSize(STRINGS) + idxSize(BLOB);
-            case 0x1B -> 1 + 1 + idxSize(HAS_SEMANTICS);
-            default -> throw new DllReaderException("tabela 0x" + Integer.toHexString(tableIndex) + " não suportada");
-        };
-    }
-
-    private int idxSize(String type) throws DllReaderException {
-        if (TYPEDEF_OR_REF.equals(type)) return 2;
-        if (HAS_CUSTOM_ATTRIBUTE.equals(type)) return 4;
-        if (CUSTOM_ATTRIBUTE_TYPE.equals(type)) return 2;
-        if (MEMBER_REF_PARENT.equals(type)) return 2;
-        if (RESOLUTION_SCOPE.equals(type)) return 2;
-        if (HAS_CONSTANT.equals(type)) return 2;
-        if (HAS_SEMANTICS.equals(type)) return 2;
-        if (METHOD_DEF_OR_REF.equals(type)) return 2;
-        if (STRINGS.equals(type)) return (heapSizes & 1) != 0 ? 4 : 2;
-        if (BLOB.equals(type)) return (heapSizes & 4) != 0 ? 4 : 2;
-        if (GUID.equals(type)) return (heapSizes & 2) != 0 ? 4 : 2;
-        if (FIELD.equals(type) || METHOD_DEF.equals(type) || PARAM.equals(type)) return 2;
-        if (MEMBER_FORWARDED.equals(type)) return 2;
-        if (IMPLEMENTATION.equals(type)) return 2;
-        if (HAS_FIELD_MARSHAL.equals(type)) return 2;
-        if (HAS_DECL_SECURITY.equals(type)) return 2;
-        throw new DllReaderException("tipo de índice desconhecido: " + type);
-    }
-
-    private int readInt8(int off) { return data[off] & 0xFF; }
-    private int readInt16(int off) {
-        return (data[off] & 0xFF) | ((data[off + 1] & 0xFF) << 8);
-    }
-    private int readInt32(int off) {
-        return (data[off] & 0xFF) | ((data[off + 1] & 0xFF) << 8) |
-               ((data[off + 2] & 0xFF) << 16) | ((data[off + 3] & 0xFF) << 24);
-    }
-    private long readInt64(int off) {
-        return (readInt32(off) & 0xFFFFFFFFL) | ((readInt32(off + 4) & 0xFFFFFFFFL) << 32);
-    }
-
-    private int rvaToFileOffset(int rva) {
-        int coffOffset = peOffset + 4;
-        int numSections = readInt16(coffOffset + 2);
-        int optionalSize = readInt16(coffOffset + 16);
-        int sectionOffset = coffOffset + 20 + optionalSize;
-        for (int i = 0; i < numSections; i++) {
-            int sOff = sectionOffset + i * 40;
-            int virtualSize = readInt32(sOff + 8);
-            int virtualAddress = readInt32(sOff + 12);
-            int rawSize = readInt32(sOff + 16);
-            int rawOffset = readInt32(sOff + 20);
-            if (rva >= virtualAddress && rva < virtualAddress + virtualSize) {
-                int delta = rva - virtualAddress;
-                if (delta < rawSize) return rawOffset + delta;
-            }
-        }
-        return -1;
-    }
-
-    private String getString(int index) throws DllReaderException {
-        if (index < 0 || index >= data.length - stringsOffset)
-            throw new DllReaderException("índice de #Strings fora dos limites: " + index);
-        int abs = stringsOffset + index;
-        if (abs >= data.length) throw new DllReaderException("string fora dos limites");
-        int end = abs;
-        while (end < data.length && data[end] != 0) end++;
-        if (end >= data.length) throw new DllReaderException("string não terminada em null");
-        return new String(data, abs, end - abs, StandardCharsets.UTF_8);
-    }
-
-    private byte[] getBlob(int index) throws DllReaderException {
-        int abs = blobOffset + index;
-        if (abs >= data.length) throw new DllReaderException("blob fora dos limites");
-        int first = data[abs] & 0xFF;
-        int len;
-        int contentStart;
-        if ((first & 0x80) == 0) {
-            len = first;
-            contentStart = abs + 1;
-        } else if ((first & 0xC0) == 0x80) {
-            len = ((first & 0x3F) << 8) | (data[abs + 1] & 0xFF);
-            contentStart = abs + 2;
+        int optional = coff + 20;
+        requireRange(optional, optionalSize, "optional header");
+        if (optionalSize < 2) throw error("optional header truncado");
+        int magic = u16(optional);
+        int directoryStart;
+        int directoryCountOffset;
+        if (magic == 0x10b) {
+            directoryStart = 96;
+            directoryCountOffset = 92;
+        } else if (magic == 0x20b) {
+            directoryStart = 112;
+            directoryCountOffset = 108;
         } else {
-            len = ((first & 0x1F) << 24) | ((data[abs + 1] & 0xFF) << 16) |
-                  ((data[abs + 2] & 0xFF) << 8) | (data[abs + 3] & 0xFF);
-            contentStart = abs + 4;
+            throw error("formato de optional header PE não suportado");
         }
-        if (contentStart + len > data.length)
-            throw new DllReaderException("blob além do fim do arquivo");
-        return Arrays.copyOfRange(data, contentStart, contentStart + len);
-    }
-
-    private String[] getTypeName(int rid) throws DllReaderException {
-        int base = tableOffsets[0x02];
-        int rowSize = tableRowSize(0x02);
-        int rowOff = base + (rid - 1) * rowSize;
-        int nameIdx = readInt32(rowOff + 4);
-        int nsIdx = readInt32(rowOff + 8);
-        return new String[]{getString(nameIdx), getString(nsIdx)};
-    }
-
-    private String[] getRefName(int rid) throws DllReaderException {
-        int base = tableOffsets[0x01];
-        int rowSize = tableRowSize(0x01);
-        int rowOff = base + (rid - 1) * rowSize;
-        int nameIdx = readInt32(rowOff);
-        int nsIdx = readInt32(rowOff + 4);
-        return new String[]{getString(nameIdx), getString(nsIdx)};
-    }
-
-    private MethodInfo getMethod(int rid) throws DllReaderException {
-        int base = tableOffsets[0x06];
-        int rowSize = tableRowSize(0x06);
-        int rowOff = base + (rid - 1) * rowSize;
-        int rva = readInt32(rowOff);
-        int flags = readInt16(rowOff + 8);
-        int nameIdx = readInt32(rowOff + 12);
-        String name = getString(nameIdx);
-        int nextRid = rid + 1;
-        int paramStart = readInt32(rowOff + 20);
-        int paramEnd;
-        if (tableValid[0x06] == 1 && nextRid <= tableRowCounts[0x06]) {
-            int nextOff = base + nextRid * rowSize;
-            paramEnd = readInt32(nextOff + 20);
-        } else {
-            paramEnd = tableValid[0x08] == 1 ? tableRowCounts[0x08] + 1 : paramStart;
+        requireRange(optional, directoryStart, "optional header");
+        int directoryCount = checkedInt(u32(optional + directoryCountOffset), "diretórios PE");
+        if (directoryCount <= 14 || directoryStart + 15L * 8L > optionalSize) {
+            throw error("diretório CLI ausente no optional header");
         }
-        int paramCount = Math.max(0, paramEnd - paramStart);
-        byte[] ilBody = new byte[0];
-        if (rva != 0) {
-            int ilOffset = rvaToFileOffset(rva);
-            if (ilOffset >= 0 && ilOffset < data.length) {
-                ilBody = readIlBody(ilOffset);
-            }
+
+        int sectionTable = optional + optionalSize;
+        requireRange(sectionTable, sectionCount * 40, "tabela de seções PE");
+        List<Section> parsedSections = new ArrayList<>(sectionCount);
+        for (int i = 0; i < sectionCount; i++) {
+            int row = sectionTable + i * 40;
+            String name = ascii(row, 8);
+            parsedSections.add(new Section(name, u32(row + 12), u32(row + 8),
+                    u32(row + 16), u32(row + 20)));
         }
-        return new MethodInfo(name, flags, paramCount, ilBody, rva);
+        this.sections = Collections.unmodifiableList(parsedSections);
+
+        int cliDirectory = optional + directoryStart + 14 * 8;
+        long cliRva = u32(cliDirectory);
+        long cliSize = u32(cliDirectory + 4);
+        if (cliRva == 0 || cliSize < 16) throw error("assembly sem cabeçalho CLI válido");
+        int cliOffset = rvaToFileOffset(cliRva);
+        long declaredCliSize = u32(cliOffset);
+        if (declaredCliSize < 16 || declaredCliSize > cliSize) {
+            throw error("tamanho do cabeçalho CLI inválido");
+        }
+        long metadataRva = u32(cliOffset + 8);
+        long declaredMetadataSize = u32(cliOffset + 12);
+        if (metadataRva == 0 || declaredMetadataSize < 20 || declaredMetadataSize > data.length) {
+            throw error("diretório de metadata CLI inválido");
+        }
+        this.metadataStartOffset = rvaToFileOffset(metadataRva);
+        this.metadataSize = checkedInt(declaredMetadataSize, "tamanho da metadata");
+        requireRange(metadataStartOffset, metadataSize, "metadata CLI");
+        if (u32(metadataStartOffset) != 0x424a5342L) {
+            throw error("metadata root sem assinatura BSJB");
+        }
+
+        Stream[] streams = parseStreams();
+        this.tablesStream = streams[0];
+        this.stringsStream = streams[1];
+        this.blobStream = streams[2];
+        this.userStringsStream = streams[3];
+        this.heapSizes = u8(tablesStream.offset + 6);
+        parseTables();
     }
 
-    private byte[] readIlBody(int offset) throws DllReaderException {
-        if (offset >= data.length) return new byte[0];
-        int first = data[offset] & 0xFF;
-        int size;
-        int codeStart;
-        if ((first & 3) == 2) {
-            size = (first >> 2) * 4;
-            codeStart = offset + 1;
-        } else if ((first & 3) == 3) {
-            if (offset + 12 > data.length) throw new DllReaderException("fat header IL truncado");
-            int flags = readInt16(offset);
-            size = flags & 0x0FFF;
-            codeStart = offset + 12;
-        } else {
-            throw new DllReaderException("formato de header IL desconhecido: 0x" + Integer.toHexString(first));
+    public static DllReader parse(byte[] bytes) throws DllReaderException {
+        if (bytes == null) throw new DllReaderException("arquivo DLL nulo");
+        if (bytes.length < 64) throw new DllReaderException("arquivo pequeno demais para ser PE");
+        if (bytes.length > MAX_FILE_SIZE) {
+            throw new DllReaderException("arquivo DLL excede o limite de " + MAX_FILE_SIZE + " bytes");
         }
-        if (codeStart + size > data.length)
-            throw new DllReaderException("corpo IL além do fim do arquivo");
-        return Arrays.copyOfRange(data, codeStart, codeStart + size);
+        if (u8(bytes, 0) != 'M' || u8(bytes, 1) != 'Z') {
+            throw new DllReaderException("assinatura MZ ausente: não é um arquivo PE");
+        }
+        try {
+            DllReader reader = new DllReader(bytes);
+            reader.getTypes();
+            reader.getCustomAttributes();
+            return reader;
+        } catch (DllReaderException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new DllReaderException("arquivo PE/CLI malformado: " + safeMessage(e), e);
+        }
     }
 
-    private String[] getMemberRefInfo(int rid) throws DllReaderException {
-        int base = tableOffsets[0x0A];
-        int rowSize = tableRowSize(0x0A);
-        int rowOff = base + (rid - 1) * rowSize;
-        int classIdx = readInt32(rowOff);
-        int nameIdx = readInt32(rowOff + 4);
-        String name = getString(nameIdx);
-        int tag = classIdx & 7;
-        int parentRid = classIdx >> 3;
-        String parentName;
-        switch (tag) {
-            case 0:
-                parentName = getTypeName(parentRid)[0];
-                break;
-            case 1:
-                parentName = getRefName(parentRid)[0];
-                break;
-            default:
-                parentName = "?";
-        }
-        return new String[]{parentName, name};
+    public int metadataStartOffset() {
+        return metadataStartOffset;
     }
 
-    private String getFieldName(int rid) throws DllReaderException {
-        int base = tableOffsets[0x04];
-        int rowSize = tableRowSize(0x04);
-        int rowOff = base + (rid - 1) * rowSize;
-        int nameIdx = readInt32(rowOff + 2);
-        return getString(nameIdx);
+    public int metadataSize() {
+        return metadataSize;
     }
 
-    private CustomAttributeInfo getCustomAttribute(int rid) throws DllReaderException {
-        int base = tableOffsets[0x0C];
-        int rowSize = tableRowSize(0x0C);
-        int rowOff = base + (rid - 1) * rowSize;
-        int parentIdx = readInt32(rowOff);
-        int typeIdx = readInt32(rowOff + 4);
-        int parentTag = parentIdx & 31;
-        int parentRid = parentIdx >> 5;
-        String targetName;
-        String targetKind;
-        switch (parentTag) {
-            case 0:
-                targetName = getMethod(parentRid).name;
-                targetKind = "method";
-                break;
-            case 1:
-                targetName = getFieldName(parentRid);
-                targetKind = "field";
-                break;
-            case 2:
-                targetName = getRefName(parentRid)[0];
-                targetKind = "class";
-                break;
-            case 3:
-                targetName = getTypeName(parentRid)[0];
-                targetKind = "class";
-                break;
-            default:
-                targetName = "?";
-                targetKind = "?";
-        }
-        int typeTag = typeIdx & 7;
-        int typeRid = typeIdx >> 3;
-        String typeName;
-        if (typeTag == 0) {
-            String[] info = getMemberRefInfo(typeRid);
-            typeName = info[0] + "." + info[1];
-        } else {
-            typeName = "?";
-        }
-        return new CustomAttributeInfo(typeName, targetName, targetKind);
+    public int tableRowCount(int table) throws DllReaderException {
+        if (table < 0 || table >= TABLE_COUNT) throw error("índice de tabela inválido: " + table);
+        return rowCounts[table];
     }
 
-    public static DllReader parse(byte[] data) throws DllReaderException {
-        if (data == null) throw new DllReaderException("dados nulos");
-        if (data.length < 64) throw new DllReaderException("arquivo muito pequeno para ser PE: " + data.length + " bytes");
-        if ((data[0] & 0xFF) != 0x4D || (data[1] & 0xFF) != 0x5A)
-            throw new DllReaderException("não é um arquivo PE (MZ não encontrado)");
-        return new DllReader(data);
+    public List<Section> sections() {
+        return sections;
+    }
+
+    public String userString(int heapOffset) throws DllReaderException {
+        if (heapOffset < 0 || heapOffset >= userStringsStream.size) {
+            throw error("índice de #US fora dos limites: " + heapOffset);
+        }
+        int cursor = userStringsStream.offset + heapOffset;
+        int length = readCompressedUInt(cursor, userStringsStream.end());
+        cursor += compressedSize(u8(cursor));
+        if (length == 0 || (length & 1) == 0) {
+            throw error("entrada de #US inválida");
+        }
+        requireRange(cursor, length, userStringsStream.end(), "#US");
+        return new String(data, cursor, length - 1, StandardCharsets.UTF_16LE);
     }
 
     public List<TypeInfo> getTypes() throws DllReaderException {
-        List<TypeInfo> types = new ArrayList<>();
-        if (tableValid[0x02] != 1) return types;
-        for (int rid = 1; rid <= tableRowCounts[0x02]; rid++) {
-            String[] nameNs = getTypeName(rid);
-            String name = nameNs[0];
-            String ns = nameNs[1];
-            List<MethodInfo> methods = new ArrayList<>();
-            List<FieldInfo> fields = new ArrayList<>();
-            if (tableValid[0x06] == 1) {
-                int mBase = tableOffsets[0x06];
-                int mRowSize = tableRowSize(0x06);
-                int tBase = tableOffsets[0x02];
-                int tRowSize = tableRowSize(0x02);
-                int tRowOff = tBase + (rid - 1) * tRowSize;
-                int methodListIdx = readInt32(tRowOff + 20);
-                int nextMethodListIdx;
-                if (rid < tableRowCounts[0x02]) {
-                    int nextRowOff = tBase + rid * tRowSize;
-                    nextMethodListIdx = readInt32(nextRowOff + 20);
-                } else {
-                    nextMethodListIdx = tableRowCounts[0x06] + 1;
-                }
-                for (int i = methodListIdx; i < nextMethodListIdx && i <= tableRowCounts[0x06]; i++) {
-                    methods.add(getMethod(i));
-                }
-            }
-            if (tableValid[0x04] == 1) {
-                int tBase = tableOffsets[0x02];
-                int tRowSize = tableRowSize(0x02);
-                int tRowOff = tBase + (rid - 1) * tRowSize;
-                int fieldListIdx = readInt32(tRowOff + 16);
-                int nextFieldListIdx;
-                if (rid < tableRowCounts[0x02]) {
-                    int nextRowOff = tBase + rid * tRowSize;
-                    nextFieldListIdx = readInt32(nextRowOff + 16);
-                } else {
-                    nextFieldListIdx = tableRowCounts[0x04] + 1;
-                }
-                for (int i = fieldListIdx; i < nextFieldListIdx && i <= tableRowCounts[0x04]; i++) {
-                    int fBase = tableOffsets[0x04];
-                    int fRowSize = tableRowSize(0x04);
-                    int fRowOff = fBase + (i - 1) * fRowSize;
-                    int fNameIdx = readInt32(fRowOff + 2);
-                    int fFlags = readInt16(fRowOff);
-                    fields.add(new FieldInfo(getString(fNameIdx), fFlags));
-                }
-            }
-            types.add(new TypeInfo(name, ns, methods, fields));
+        if (cachedTypes != null) return cachedTypes;
+        List<TypeInfo> result = new ArrayList<>();
+        int[] fieldStarts = new int[rowCounts[2]];
+        int[] methodStarts = new int[rowCounts[2]];
+        long totalParameters = 0;
+        long totalIlSize = 0;
+        for (int rid = 1; rid <= rowCounts[2]; rid++) {
+            int row = tableRow(2, rid);
+            int cursor = row + 4;
+            String name = getString(readIndex(cursor, "strings"));
+            cursor += indexSize("strings");
+            String namespace = getString(readIndex(cursor, "strings"));
+            cursor += indexSize("strings") + codedSize("TypeDefOrRef");
+            fieldStarts[rid - 1] = readIndex(cursor, "table:4");
+            cursor += indexSize("table:4");
+            methodStarts[rid - 1] = readIndex(cursor, "table:6");
+            result.add(new TypeInfo(rid, name, namespace, new ArrayList<>(), new ArrayList<>()));
         }
-        return types;
+
+        methodOwners = new int[rowCounts[6] + 1];
+        fieldOwners = new int[rowCounts[4] + 1];
+        for (int rid = 1; rid <= rowCounts[2]; rid++) {
+            int fieldEnd = rid < rowCounts[2] ? fieldStarts[rid] : rowCounts[4] + 1;
+            int methodEnd = rid < rowCounts[2] ? methodStarts[rid] : rowCounts[6] + 1;
+            validateListRange(fieldStarts[rid - 1], fieldEnd, rowCounts[4], "FieldList");
+            validateListRange(methodStarts[rid - 1], methodEnd, rowCounts[6], "MethodList");
+            TypeInfo type = result.get(rid - 1);
+            for (int fieldRid = fieldStarts[rid - 1]; fieldRid < fieldEnd; fieldRid++) {
+                fieldOwners[fieldRid] = rid;
+                type.fields.add(readField(fieldRid));
+            }
+            for (int methodRid = methodStarts[rid - 1]; methodRid < methodEnd; methodRid++) {
+                methodOwners[methodRid] = rid;
+                MethodInfo method = getMethodByRid(methodRid);
+                totalParameters += method.parameters().size();
+                totalIlSize += method.ilBody().length;
+                if (totalParameters > MAX_TOTAL_PARAMETERS) {
+                    throw error("assembly tem parâmetros demais no total");
+                }
+                if (totalIlSize > MAX_TOTAL_IL_SIZE) {
+                    throw error("corpos IL excedem o limite total permitido");
+                }
+                type.methods.add(method);
+            }
+        }
+        cachedTypes = Collections.unmodifiableList(result);
+        return cachedTypes;
     }
 
     public List<CustomAttributeInfo> getCustomAttributes() throws DllReaderException {
-        List<CustomAttributeInfo> attrs = new ArrayList<>();
-        if (tableValid[0x0C] != 1) return attrs;
-        for (int rid = 1; rid <= tableRowCounts[0x0C]; rid++) {
-            attrs.add(getCustomAttribute(rid));
+        if (cachedAttributes != null) return cachedAttributes;
+        getTypes();
+        List<CustomAttributeInfo> attributes = new ArrayList<>();
+        for (int rid = 1; rid <= rowCounts[12]; rid++) {
+            int row = tableRow(12, rid);
+            int parentIndex = readIndex(row, "coded:HasCustomAttribute");
+            DecodedIndex parent = decodeCoded("HasCustomAttribute", parentIndex);
+            int typeIndex = readIndex(row + codedSize("HasCustomAttribute"), "coded:CustomAttributeType");
+            DecodedIndex constructor = decodeCoded("CustomAttributeType", typeIndex);
+            String typeName = attributeTypeName(constructor);
+            String parentType = null;
+            String parentName = null;
+            if (parent.table == 2) {
+                TypeInfo type = getType(parent.rid);
+                parentType = type.fullName();
+                parentName = type.name;
+            } else if (parent.table == 6) {
+                MethodInfo method = getMethodByRid(parent.rid);
+                parentType = getType(methodOwners[parent.rid]).fullName();
+                parentName = method.name;
+            } else if (parent.table == 4) {
+                parentName = readField(parent.rid).name;
+            }
+            String typeArgument = null;
+            String methodArgument = null;
+            if (simpleName(typeName).equals("HarmonyPatch")) {
+                int valueOffset = row + codedSize("HasCustomAttribute") + codedSize("CustomAttributeType");
+                byte[] value = getBlob(readIndex(valueOffset, "blob"));
+                String[] arguments = readHarmonyPatchArguments(value);
+                if (arguments != null) {
+                    typeArgument = arguments[0];
+                    methodArgument = arguments[1];
+                }
+            }
+            attributes.add(new CustomAttributeInfo(typeName, parent.table, parent.rid,
+                    parentType, parentName, typeArgument, methodArgument));
         }
-        return attrs;
+        cachedAttributes = Collections.unmodifiableList(attributes);
+        return cachedAttributes;
     }
 
-    // Decodificar IL em instruções
+    public MethodInfo getMethodByRid(int rid) throws DllReaderException {
+        if (rid < 1 || rid > rowCounts[6]) throw error("índice MethodDef fora dos limites: " + rid);
+        int row = tableRow(6, rid);
+        long rva = u32(row);
+        int flags = u16(row + 6);
+        int cursor = row + 8;
+        String name = getString(readIndex(cursor, "strings"));
+        cursor += indexSize("strings");
+        int signatureIndex = readIndex(cursor, "blob");
+        cursor += indexSize("blob");
+        int firstParam = readIndex(cursor, "table:8");
+        int nextParam = rid < rowCounts[6]
+                ? readIndex(tableRow(6, rid + 1) + methodParamListOffset(), "table:8")
+                : rowCounts[8] + 1;
+        validateListRange(firstParam, nextParam, rowCounts[8], "ParamList");
+        MethodSignature signature = readMethodSignature(getBlob(signatureIndex));
+        if (nextParam - firstParam > signature.parameterTypes.size()) {
+            throw error("tabela Param tem mais parâmetros que a assinatura do método " + name);
+        }
+        List<ParameterInfo> parameters = new ArrayList<>(signature.parameterTypes.size());
+        Map<Integer, String> parameterNames = new HashMap<>();
+        for (int paramRid = firstParam; paramRid < nextParam; paramRid++) {
+            int paramRow = tableRow(8, paramRid);
+            int sequence = u16(paramRow + 2);
+            if (sequence < 1 || sequence > signature.parameterTypes.size()
+                    || parameterNames.containsKey(sequence)) {
+                throw error("sequência Param inválida no método " + name);
+            }
+            parameterNames.put(sequence, getString(readIndex(paramRow + 4, "strings")));
+        }
+        for (int i = 0; i < signature.parameterTypes.size(); i++) {
+            parameters.add(new ParameterInfo(parameterNames.getOrDefault(i + 1, ""),
+                    signature.parameterTypes.get(i)));
+        }
+        Body body = rva == 0 ? new Body(new byte[0], false) : readMethodBody(rva);
+        return new MethodInfo(rid, name, flags, signature.returnType,
+                Collections.unmodifiableList(parameters), body.code, rva, body.fat);
+    }
+
+    public FieldReference resolveField(long token) throws DllReaderException {
+        int table = (int) ((token >>> 24) & 0xff);
+        int rid = (int) (token & 0x00ff_ffff);
+        if (table == 4) {
+            if (rid < 1 || rid > rowCounts[4]) throw error("token Field fora dos limites");
+            getTypes();
+            int ownerRid = fieldOwners[rid];
+            FieldInfo field = readField(rid);
+            return new FieldReference(getType(ownerRid).fullName(), field.name, field.type,
+                    (field.flags & 0x0010) != 0);
+        }
+        if (table == 10) {
+            if (rid < 1 || rid > rowCounts[10]) throw error("token MemberRef fora dos limites");
+            int row = tableRow(10, rid);
+            int parentIndex = readIndex(row, "coded:MemberRefParent");
+            DecodedIndex parent = decodeCoded("MemberRefParent", parentIndex);
+            int nameOffset = row + codedSize("MemberRefParent");
+            String name = getString(readIndex(nameOffset, "strings"));
+            byte[] signature = getBlob(readIndex(nameOffset + indexSize("strings"), "blob"));
+            String declaringType = parentTypeName(parent);
+            String fieldType = signature.length > 1 && u8(signature, 0) == 0x06
+                    ? readFieldSignature(signature) : "desconhecido";
+            return new FieldReference(declaringType, name, fieldType, true);
+        }
+        throw error("token IL 0x" + Long.toHexString(token) + " não é um campo");
+    }
+
     public static List<DecodedInstruction> decodeIl(byte[] il) throws DllReaderException {
-        List<DecodedInstruction> instructions = new ArrayList<>();
-        int pos = 0;
-        while (pos < il.length) {
-            int startPos = pos;
-            int b = il[pos++] & 0xFF;
-            String opcodeName;
-            String operandType;
-            int operandSize;
+        if (il == null) throw new DllReaderException("corpo IL nulo");
+        if (il.length > MAX_FILE_SIZE) throw new DllReaderException("corpo IL excede o limite permitido");
+        List<DecodedInstruction> decoded = new ArrayList<>();
+        int position = 0;
+        while (position < il.length) {
+            if (decoded.size() >= MAX_INSTRUCTIONS) throw new DllReaderException("corpo IL tem instruções demais");
+            int start = position;
+            int opcodeValue = u8(il, position++);
+            if (opcodeValue == 0xfe) {
+                if (position >= il.length) throw new DllReaderException("opcode IL de dois bytes truncado");
+                opcodeValue = 0xfe00 | u8(il, position++);
+            }
+            Ecma335OpCodes.OpCode opcode = Ecma335OpCodes.TABLE[opcodeValue];
+            if (opcode == null) throw new DllReaderException("opcode IL desconhecido: 0x" + Integer.toHexString(opcodeValue));
             long operand = 0;
-
-            if (b == 0xFE) {
-                // Opcode de 2 bytes
-                if (pos >= il.length) throw new DllReaderException("opcode de 2 bytes truncado em 0x" + Integer.toHexString(startPos));
-                int b2 = il[pos++] & 0xFF;
-                int idx = 0xFE00 | b2;
-                if (idx >= PARSED_OPCODES.length || PARSED_OPCODES[idx] == null)
-                    throw new DllReaderException("opcode de 2 bytes desconhecido: 0xFE" + Integer.toHexString(b2));
-                String[] parts = PARSED_OPCODES[idx];
-                opcodeName = parts[0];
-                operandType = parts[1];
-                operandSize = Integer.parseInt(parts[2]);
-            } else {
-                if (PARSED_OPCODES[b] == null)
-                    throw new DllReaderException("opcode desconhecido: 0x" + Integer.toHexString(b));
-                String[] parts = PARSED_OPCODES[b];
-                opcodeName = parts[0];
-                operandType = parts[1];
-                operandSize = Integer.parseInt(parts[2]);
+            switch (opcode.operandType()) {
+                case "InlineNone" -> { }
+                case "ShortInlineI" -> {
+                    requireIl(il, position, 1, opcode.name());
+                    operand = (byte) il[position++];
+                }
+                case "InlineI", "InlineBrTarget" -> {
+                    requireIl(il, position, 4, opcode.name());
+                    operand = i32(il, position);
+                    position += 4;
+                }
+                case "InlineI8", "InlineR" -> {
+                    requireIl(il, position, 8, opcode.name());
+                    operand = i64(il, position);
+                    position += 8;
+                }
+                case "ShortInlineR" -> {
+                    requireIl(il, position, 4, opcode.name());
+                    operand = i32(il, position) & 0xffff_ffffL;
+                    position += 4;
+                }
+                case "ShortInlineVar" -> {
+                    requireIl(il, position, 1, opcode.name());
+                    operand = u8(il, position++);
+                }
+                case "InlineVar" -> {
+                    requireIl(il, position, 2, opcode.name());
+                    operand = u16(il, position);
+                    position += 2;
+                }
+                case "ShortInlineBrTarget" -> {
+                    requireIl(il, position, 1, opcode.name());
+                    operand = (byte) il[position++];
+                }
+                case "InlineField", "InlineMethod", "InlineSig", "InlineString",
+                     "InlineTok", "InlineType" -> {
+                    requireIl(il, position, 4, opcode.name());
+                    operand = u32(il, position);
+                    position += 4;
+                }
+                case "InlineSwitch" -> {
+                    requireIl(il, position, 4, opcode.name());
+                    int count = i32(il, position);
+                    position += 4;
+                    if (count < 0 || count > 100_000 || (long) position + (long) count * 4 > il.length) {
+                        throw new DllReaderException("tabela de destinos switch inválida");
+                    }
+                    operand = count;
+                    position += count * 4;
+                }
+                default -> throw new DllReaderException("tipo de operando IL não suportado: " + opcode.operandType());
             }
-
-            // Ler operando baseado no tipo
-            switch (operandType) {
-                case "ShortInlineI":
-                    if (pos + 1 > il.length) throw new DllReaderException("operando ShortInlineI truncado");
-                    operand = (byte) il[pos]; // signed
-                    pos += 1;
-                    break;
-                case "InlineI":
-                    if (pos + 4 > il.length) throw new DllReaderException("operando InlineI truncado");
-                    operand = readInt32(il, pos);
-                    pos += 4;
-                    break;
-                case "InlineI8":
-                    if (pos + 8 > il.length) throw new DllReaderException("operando InlineI8 truncado");
-                    operand = readInt64(il, pos);
-                    pos += 8;
-                    break;
-                case "ShortInlineR":
-                    if (pos + 4 > il.length) throw new DllReaderException("operando ShortInlineR truncado");
-                    operand = readInt32(il, pos);
-                    pos += 4;
-                    break;
-                case "InlineR":
-                    if (pos + 8 > il.length) throw new DllReaderException("operando InlineR truncado");
-                    operand = readInt64(il, pos);
-                    pos += 8;
-                    break;
-                case "ShortInlineVar":
-                    if (pos + 1 > il.length) throw new DllReaderException("operando ShortInlineVar truncado");
-                    operand = il[pos] & 0xFF;
-                    pos += 1;
-                    break;
-                case "InlineVar":
-                    if (pos + 2 > il.length) throw new DllReaderException("operando InlineVar truncado");
-                    operand = readInt16(il, pos);
-                    pos += 2;
-                    break;
-                case "InlineBrTarget":
-                    if (pos + 4 > il.length) throw new DllReaderException("operando InlineBrTarget truncado");
-                    operand = readInt32(il, pos);
-                    pos += 4;
-                    break;
-                case "ShortInlineBrTarget":
-                    if (pos + 1 > il.length) throw new DllReaderException("operando ShortInlineBrTarget truncado");
-                    operand = (byte) il[pos];
-                    pos += 1;
-                    break;
-                case "InlineSwitch":
-                    if (pos + 4 > il.length) throw new DllReaderException("operando InlineSwitch truncado");
-                    int n = readInt32(il, pos);
-                    pos += 4;
-                    if (pos + n * 4 > il.length) throw new DllReaderException("operando InlineSwitch além do fim");
-                    pos += n * 4;
-                    operand = n;
-                    break;
-                case "InlineMethod":
-                case "InlineField":
-                case "InlineType":
-                case "InlineString":
-                case "InlineSig":
-                case "InlineTok":
-                    if (pos + 4 > il.length) throw new DllReaderException("operando " + operandType + " truncado");
-                    operand = readInt32(il, pos);
-                    pos += 4;
-                    break;
-                case "InlineNone":
-                    break;
-                default:
-                    throw new DllReaderException("tipo de operando desconhecido: " + operandType);
-            }
-
-            instructions.add(new DecodedInstruction(opcodeName, operandType, operand, startPos));
+            decoded.add(new DecodedInstruction(opcode.name(), opcode.operandType(), operand, start));
         }
-        return instructions;
+        return decoded;
     }
 
-    public record DecodedInstruction(String opcode, String operandType, long operand, int position) {}
+    private record Body(byte[] code, boolean fat) {}
 
-    private static int readInt16(byte[] data, int pos) {
-        return (data[pos] & 0xFF) | ((data[pos + 1] & 0xFF) << 8);
+    private Body readMethodBody(long rva) throws DllReaderException {
+        int offset = rvaToFileOffset(rva);
+        int first = u8(offset);
+        int format = first & 3;
+        if (format == 2) {
+            int codeSize = first >>> 2;
+            requireRange(offset + 1, codeSize, "corpo IL tiny");
+            return new Body(Arrays.copyOfRange(data, offset + 1, offset + 1 + codeSize), false);
+        }
+        if (format != 3) throw error("cabeçalho IL tem formato inválido");
+        int flagsAndSize = u16(offset);
+        int headerDwords = (flagsAndSize >>> 12) & 0x0f;
+        if (headerDwords < 3) throw error("cabeçalho IL fat menor que 12 bytes");
+        int headerSize = headerDwords * 4;
+        requireRange(offset, headerSize, "cabeçalho IL fat");
+        int codeSize = checkedInt(u32(offset + 4), "tamanho do corpo IL");
+        if (codeSize > 4 * 1024 * 1024) throw error("corpo IL excede 4 MiB");
+        int codeOffset = checkedAdd(offset, headerSize, "corpo IL");
+        requireRange(codeOffset, codeSize, "corpo IL fat");
+        return new Body(Arrays.copyOfRange(data, codeOffset, codeOffset + codeSize), true);
     }
-    private static int readInt32(byte[] data, int pos) {
-        return (data[pos] & 0xFF) | ((data[pos + 1] & 0xFF) << 8) |
-               ((data[pos + 2] & 0xFF) << 16) | ((data[pos + 3] & 0xFF) << 24);
+
+    private Stream[] parseStreams() throws DllReaderException {
+        int versionLength = checkedInt(u32(metadataStartOffset + 12), "tamanho da versão da metadata");
+        if (versionLength > metadataSize - 20) throw error("string de versão da metadata truncada");
+        long afterVersion = (long) metadataStartOffset + 16L + versionLength;
+        int streamHeader = checkedInt((afterVersion + 3L) & ~3L, "cabeçalho de streams");
+        requireRange(streamHeader, 4, metadataStartOffset + metadataSize, "cabeçalho de streams");
+        int streamCount = u16(streamHeader + 2);
+        if (streamCount <= 0 || streamCount > MAX_STREAMS) throw error("quantidade de streams inválida");
+        int cursor = streamHeader + 4;
+        Stream tables = null;
+        Stream strings = null;
+        Stream blob = null;
+        Stream userStrings = null;
+        for (int i = 0; i < streamCount; i++) {
+            requireRange(cursor, 8, metadataStartOffset + metadataSize, "descritor de stream");
+            long relativeOffset = u32(cursor);
+            long streamSize = u32(cursor + 4);
+            int nameStart = cursor + 8;
+            int nameEnd = nameStart;
+            int rootEnd = metadataStartOffset + metadataSize;
+            while (nameEnd < rootEnd && data[nameEnd] != 0 && nameEnd - nameStart <= 32) nameEnd++;
+            if (nameEnd >= rootEnd || nameEnd - nameStart > 32) throw error("nome de stream inválido");
+            String name = new String(data, nameStart, nameEnd - nameStart, StandardCharsets.US_ASCII);
+            long absOffset = (long) metadataStartOffset + relativeOffset;
+            if (streamSize > Integer.MAX_VALUE || absOffset > Integer.MAX_VALUE) {
+                throw error("stream excede os limites");
+            }
+            requireRange((int) absOffset, (int) streamSize, rootEnd, "stream " + name);
+            Stream stream = new Stream((int) absOffset, (int) streamSize);
+            switch (name) {
+                case "#~", "#-" -> tables = stream;
+                case "#Strings" -> strings = stream;
+                case "#Blob" -> blob = stream;
+                case "#US" -> userStrings = stream;
+                default -> { }
+            }
+            cursor = (nameEnd + 1 + 3) & ~3;
+        }
+        if (tables == null || strings == null || blob == null || userStrings == null) {
+            throw error("faltam streams #~, #Strings, #Blob ou #US");
+        }
+        return new Stream[]{tables, strings, blob, userStrings};
     }
-    private static long readInt64(byte[] data, int pos) {
-        return (readInt32(data, pos) & 0xFFFFFFFFL) | ((readInt32(data, pos + 4) & 0xFFFFFFFFL) << 32);
+
+    private void parseTables() throws DllReaderException {
+        requireRange(tablesStream.offset, 24, tablesStream.end(), "cabeçalho #~");
+        long valid = i64(tablesStream.offset + 8);
+        int cursor = tablesStream.offset + 24;
+        long totalRows = 0;
+        for (int table = 0; table < TABLE_COUNT; table++) {
+            if (((valid >>> table) & 1L) == 0) continue;
+            requireRange(cursor, 4, tablesStream.end(), "contagem de linhas #~");
+            long count = u32(cursor);
+            cursor += 4;
+            if (count > MAX_TABLE_ROWS) throw error("tabela " + table + " excede o limite de linhas");
+            rowCounts[table] = (int) count;
+            totalRows += count;
+            if (totalRows > MAX_TABLE_ROWS) throw error("metadata excede o limite total de linhas");
+        }
+        for (int table = 0; table < TABLE_COUNT; table++) {
+            if (((valid >>> table) & 1L) == 0) continue;
+            tableOffsets[table] = cursor;
+            int rowSize = tableRowSize(table);
+            long byteSize = (long) rowSize * rowCounts[table];
+            if (byteSize > Integer.MAX_VALUE) throw error("tabela metadata grande demais");
+            requireRange(cursor, (int) byteSize, tablesStream.end(), "tabela metadata " + table);
+            cursor += (int) byteSize;
+        }
+    }
+
+    private int tableRowSize(int table) throws DllReaderException {
+        return switch (table) {
+            case 0 -> 2 + indexSize("strings") + 3 * indexSize("guid");
+            case 1 -> codedSize("ResolutionScope") + 2 * indexSize("strings");
+            case 2 -> 4 + 2 * indexSize("strings") + codedSize("TypeDefOrRef")
+                    + indexSize("table:4") + indexSize("table:6");
+            case 3 -> indexSize("table:4");
+            case 4 -> 2 + indexSize("strings") + indexSize("blob");
+            case 5 -> indexSize("table:6");
+            case 6 -> 4 + 2 + 2 + indexSize("strings") + indexSize("blob") + indexSize("table:8");
+            case 7 -> indexSize("table:8");
+            case 8 -> 2 + 2 + indexSize("strings");
+            case 9 -> indexSize("table:2") + codedSize("TypeDefOrRef");
+            case 10 -> codedSize("MemberRefParent") + indexSize("strings") + indexSize("blob");
+            case 11 -> 2 + codedSize("HasConstant") + indexSize("blob");
+            case 12 -> codedSize("HasCustomAttribute") + codedSize("CustomAttributeType") + indexSize("blob");
+            case 13 -> codedSize("HasFieldMarshal") + indexSize("blob");
+            case 14 -> 2 + codedSize("HasDeclSecurity") + indexSize("blob");
+            case 15 -> 2 + 4 + indexSize("table:2");
+            case 16 -> 4 + indexSize("table:4");
+            case 17 -> indexSize("blob");
+            case 18 -> indexSize("table:2") + indexSize("table:20");
+            case 19 -> indexSize("table:20");
+            case 20 -> 2 + indexSize("strings") + codedSize("TypeDefOrRef");
+            case 21 -> indexSize("table:2") + indexSize("table:23");
+            case 22 -> indexSize("table:23");
+            case 23 -> 2 + indexSize("strings") + indexSize("blob");
+            case 24 -> 2 + indexSize("table:6") + codedSize("HasSemantics");
+            case 25 -> indexSize("table:2") + 2 * codedSize("MethodDefOrRef");
+            case 26 -> indexSize("strings");
+            case 27 -> indexSize("blob");
+            case 28 -> 2 + codedSize("MemberForwarded") + indexSize("strings") + indexSize("table:26");
+            case 29 -> 4 + indexSize("table:4");
+            case 30 -> 8;
+            case 31 -> 4;
+            case 32 -> 4 + 2 * 4 + 4 + indexSize("blob") + 2 * indexSize("strings");
+            case 33 -> 4;
+            case 34 -> 12;
+            case 35 -> 2 * 4 + 4 + 2 * indexSize("blob") + 2 * indexSize("strings");
+            case 36 -> 4 + indexSize("table:35");
+            case 37 -> 12 + indexSize("table:35");
+            case 38 -> 4 + indexSize("strings") + indexSize("blob");
+            case 39 -> 4 + 4 + 2 * indexSize("strings") + codedSize("Implementation");
+            case 40 -> 4 + 4 + indexSize("strings") + codedSize("Implementation");
+            case 41 -> 2 * indexSize("table:2");
+            case 42 -> 2 + 2 + codedSize("TypeOrMethodDef") + indexSize("strings");
+            case 43 -> codedSize("MethodDefOrRef") + indexSize("blob");
+            case 44 -> indexSize("table:42") + codedSize("TypeDefOrRef");
+            default -> throw error("tabela metadata ECMA-335 não suportada: " + table);
+        };
+    }
+
+    private int indexSize(String kind) throws DllReaderException {
+        if ("strings".equals(kind)) return (heapSizes & 0x01) != 0 ? 4 : 2;
+        if ("guid".equals(kind)) return (heapSizes & 0x02) != 0 ? 4 : 2;
+        if ("blob".equals(kind)) return (heapSizes & 0x04) != 0 ? 4 : 2;
+        if (kind.startsWith("table:")) {
+            int table = Integer.parseInt(kind.substring(6));
+            if (table < 0 || table >= TABLE_COUNT) throw error("índice de tabela inválido");
+            return rowCounts[table] >= 0x1_0000 ? 4 : 2;
+        }
+        throw error("heap ou tabela desconhecida: " + kind);
+    }
+
+    private int codedSize(String kind) throws DllReaderException {
+        int bits;
+        int[] tables;
+        switch (kind) {
+            case "TypeDefOrRef" -> { bits = 2; tables = new int[]{2, 1, 27}; }
+            case "HasConstant" -> { bits = 2; tables = new int[]{4, 8, 23}; }
+            case "HasCustomAttribute" -> {
+                bits = 5;
+                tables = new int[]{6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17,
+                        26, 27, 32, 35, 38, 39, 40, 42, 44, 43};
+            }
+            case "HasFieldMarshal" -> { bits = 1; tables = new int[]{4, 8}; }
+            case "HasDeclSecurity" -> { bits = 2; tables = new int[]{2, 6, 32}; }
+            case "MemberRefParent" -> { bits = 3; tables = new int[]{2, 1, 26, 6, 27}; }
+            case "HasSemantics" -> { bits = 1; tables = new int[]{20, 23}; }
+            case "MethodDefOrRef" -> { bits = 1; tables = new int[]{6, 10}; }
+            case "MemberForwarded" -> { bits = 1; tables = new int[]{4, 6}; }
+            case "Implementation" -> { bits = 2; tables = new int[]{38, 35, 39}; }
+            case "CustomAttributeType" -> { bits = 3; tables = new int[]{-1, -1, 6, 10}; }
+            case "ResolutionScope" -> { bits = 2; tables = new int[]{0, 26, 35, 1}; }
+            case "TypeOrMethodDef" -> { bits = 1; tables = new int[]{2, 6}; }
+            default -> throw error("índice coded desconhecido: " + kind);
+        }
+        int maxRows = 0;
+        for (int table : tables) {
+            if (table >= 0) maxRows = Math.max(maxRows, rowCounts[table]);
+        }
+        return maxRows >= (1 << (16 - bits)) ? 4 : 2;
+    }
+
+    private DecodedIndex decodeCoded(String kind, int value) throws DllReaderException {
+        int bits;
+        int[] tables;
+        switch (kind) {
+            case "TypeDefOrRef" -> { bits = 2; tables = new int[]{2, 1, 27}; }
+            case "HasCustomAttribute" -> {
+                bits = 5;
+                tables = new int[]{6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17,
+                        26, 27, 32, 35, 38, 39, 40, 42, 44, 43};
+            }
+            case "MemberRefParent" -> { bits = 3; tables = new int[]{2, 1, 26, 6, 27}; }
+            case "CustomAttributeType" -> { bits = 3; tables = new int[]{-1, -1, 6, 10}; }
+            default -> throw error("índice coded sem decodificador: " + kind);
+        }
+        int tag = value & ((1 << bits) - 1);
+        int rid = value >>> bits;
+        if (tag >= tables.length || rid == 0 || tables[tag] < 0 || rid > rowCounts[tables[tag]]) {
+            throw error("índice coded inválido em " + kind + ": " + value);
+        }
+        return new DecodedIndex(tables[tag], rid);
+    }
+
+    private FieldInfo readField(int rid) throws DllReaderException {
+        int row = tableRow(4, rid);
+        int flags = u16(row);
+        int nameIndex = readIndex(row + 2, "strings");
+        int signatureIndex = readIndex(row + 2 + indexSize("strings"), "blob");
+        return new FieldInfo(getString(nameIndex), flags, readFieldSignature(getBlob(signatureIndex)));
+    }
+
+    private MethodSignature readMethodSignature(byte[] signature) throws DllReaderException {
+        SigReader reader = new SigReader(signature);
+        int callingConvention = reader.readByte();
+        if ((callingConvention & 0x10) != 0) reader.readCompressed();
+        int parameterCount = reader.readCompressed();
+        if (parameterCount > 1024) throw error("método tem parâmetros demais");
+        String returnType = reader.readType(0);
+        List<String> parameters = new ArrayList<>(parameterCount);
+        for (int i = 0; i < parameterCount; i++) {
+            if (reader.peek() == 0x41) reader.readByte();
+            parameters.add(reader.readType(0));
+        }
+        if (!reader.atEnd()) throw error("bytes extras na assinatura de método");
+        return new MethodSignature(returnType, parameters);
+    }
+
+    private String readFieldSignature(byte[] signature) throws DllReaderException {
+        SigReader reader = new SigReader(signature);
+        if (reader.readByte() != 0x06) throw error("assinatura de campo inválida");
+        String type = reader.readType(0);
+        if (!reader.atEnd()) throw error("bytes extras na assinatura de campo");
+        return type;
+    }
+
+    private String readTypeName(int codedIndex) throws DllReaderException {
+        DecodedIndex decoded = decodeCoded("TypeDefOrRef", codedIndex);
+        if (decoded.table == 2) return getType(decoded.rid).fullName();
+        if (decoded.table == 1) return typeRefName(decoded.rid);
+        return "TypeSpec#" + decoded.rid;
+    }
+
+    private String typeRefName(int rid) throws DllReaderException {
+        int row = tableRow(1, rid);
+        int cursor = row + codedSize("ResolutionScope");
+        String name = getString(readIndex(cursor, "strings"));
+        String namespace = getString(readIndex(cursor + indexSize("strings"), "strings"));
+        return namespace.isEmpty() ? name : namespace + "." + name;
+    }
+
+    private TypeInfo getType(int rid) throws DllReaderException {
+        if (rid < 1 || rid > rowCounts[2]) throw error("índice TypeDef fora dos limites: " + rid);
+        if (cachedTypes != null) return cachedTypes.get(rid - 1);
+        int row = tableRow(2, rid);
+        String name = getString(readIndex(row + 4, "strings"));
+        String namespace = getString(readIndex(row + 4 + indexSize("strings"), "strings"));
+        return new TypeInfo(rid, name, namespace, Collections.emptyList(), Collections.emptyList());
+    }
+
+    private String parentTypeName(DecodedIndex parent) throws DllReaderException {
+        return switch (parent.table) {
+            case 2 -> getType(parent.rid).fullName();
+            case 1 -> typeRefName(parent.rid);
+            case 6 -> methodOwners != null && parent.rid < methodOwners.length
+                    ? getType(methodOwners[parent.rid]).fullName() : "";
+            case 26 -> getString(readIndex(tableRow(26, parent.rid), "strings"));
+            case 27 -> "TypeSpec#" + parent.rid;
+            default -> "";
+        };
+    }
+
+    private String attributeTypeName(DecodedIndex constructor) throws DllReaderException {
+        if (constructor.table == 10) {
+            int row = tableRow(10, constructor.rid);
+            DecodedIndex parent = decodeCoded("MemberRefParent",
+                    readIndex(row, "coded:MemberRefParent"));
+            String parentName = parentTypeName(parent);
+            int nameOffset = row + codedSize("MemberRefParent");
+            String constructorName = getString(readIndex(nameOffset, "strings"));
+            return parentName.isEmpty() ? constructorName : parentName + "." + constructorName;
+        }
+        if (constructor.table == 6) {
+            if (methodOwners == null || constructor.rid >= methodOwners.length
+                    || methodOwners[constructor.rid] == 0) {
+                throw error("construtor de atributo sem tipo proprietário");
+            }
+            return getType(methodOwners[constructor.rid]).fullName();
+        }
+        return "";
+    }
+
+    private String[] readHarmonyPatchArguments(byte[] blob) throws DllReaderException {
+        if (blob.length < 2 || u16(blob, 0) != 1) return null;
+        int cursor = 2;
+        String type = readSerString(blob, cursor);
+        if (type == null) return null;
+        cursor += serStringEncodedSize(blob, cursor);
+        String method = readSerString(blob, cursor);
+        if (method == null) return null;
+        cursor += serStringEncodedSize(blob, cursor);
+        if (cursor + 2 != blob.length || u16(blob, cursor) != 0) return null;
+        return new String[]{type, method};
+    }
+
+    private static String readSerString(byte[] bytes, int offset) throws DllReaderException {
+        if (offset < 0 || offset >= bytes.length) throw new DllReaderException("SerString truncada");
+        if (u8(bytes, offset) == 0xff) return null;
+        int length = readCompressed(bytes, offset);
+        int prefix = compressedSize(u8(bytes, offset));
+        long start = (long) offset + prefix;
+        long end = start + length;
+        if (end > bytes.length) throw new DllReaderException("SerString excede o blob");
+        return new String(bytes, (int) start, length, StandardCharsets.UTF_8);
+    }
+
+    private static int serStringEncodedSize(byte[] bytes, int offset) throws DllReaderException {
+        int length = readCompressed(bytes, offset);
+        return compressedSize(u8(bytes, offset)) + length;
+    }
+
+    private String getString(int index) throws DllReaderException {
+        if (index == 0) return "";
+        if (index < 0 || index >= stringsStream.size) throw error("índice #Strings fora dos limites: " + index);
+        int start = stringsStream.offset + index;
+        int end = start;
+        while (end < stringsStream.end() && data[end] != 0) {
+            if (end - start >= 1024 * 1024) throw error("string metadata excede 1 MiB");
+            end++;
+        }
+        if (end == stringsStream.end()) throw error("string #Strings sem terminador");
+        return new String(data, start, end - start, StandardCharsets.UTF_8);
+    }
+
+    private byte[] getBlob(int index) throws DllReaderException {
+        if (index == 0) return new byte[0];
+        if (index < 0 || index >= blobStream.size) throw error("índice #Blob fora dos limites: " + index);
+        int start = blobStream.offset + index;
+        int length = readCompressedUInt(start, blobStream.end());
+        int prefix = compressedSize(u8(start));
+        long contentStart = (long) start + prefix;
+        long end = contentStart + length;
+        if (end > blobStream.end()) throw error("blob excede o stream #Blob");
+        return Arrays.copyOfRange(data, (int) contentStart, (int) end);
+    }
+
+    private int readIndex(int offset, String kind) throws DllReaderException {
+        int size;
+        if (kind.startsWith("coded:")) size = codedSize(kind.substring(6));
+        else size = indexSize(kind);
+        requireRange(offset, size, "índice metadata");
+        return size == 2 ? u16(offset) : checkedInt(u32(offset), "índice metadata");
+    }
+
+    private int tableRow(int table, int rid) throws DllReaderException {
+        if (table < 0 || table >= TABLE_COUNT || rid < 1 || rid > rowCounts[table]
+                || tableOffsets[table] < 0) {
+            throw error("índice da tabela " + table + " fora dos limites: " + rid);
+        }
+        long offset = (long) tableOffsets[table] + (long) (rid - 1) * tableRowSize(table);
+        return checkedInt(offset, "linha metadata");
+    }
+
+    private int methodParamListOffset() throws DllReaderException {
+        return 8 + indexSize("strings") + indexSize("blob");
+    }
+
+    private void validateListRange(int start, int end, int rowCount, String label) throws DllReaderException {
+        if (start < 1 || end < start || end > rowCount + 1) {
+            throw error(label + " fora dos limites");
+        }
+    }
+
+    private int rvaToFileOffset(long rva) throws DllReaderException {
+        for (Section section : sections) {
+            long span = Math.max(section.virtualSize, section.rawSize);
+            long virtualEnd = section.virtualAddress + span;
+            if (rva >= section.virtualAddress && rva < virtualEnd) {
+                long delta = rva - section.virtualAddress;
+                if (delta >= section.rawSize) throw error("RVA está em dados não armazenados no arquivo");
+                long offset = section.rawOffset + delta;
+                if (offset < 0 || offset >= data.length) throw error("RVA aponta fora do arquivo");
+                return (int) offset;
+            }
+        }
+        throw error("RVA não pertence a nenhuma seção PE: 0x" + Long.toHexString(rva));
+    }
+
+    private String ascii(int offset, int length) throws DllReaderException {
+        requireRange(offset, length, "campo PE");
+        int end = offset;
+        while (end < offset + length && data[end] != 0) end++;
+        return new String(data, offset, end - offset, StandardCharsets.US_ASCII);
+    }
+
+    private int readCompressedUInt(int offset, int limit) throws DllReaderException {
+        if (offset < 0 || offset >= limit) throw error("inteiro comprimido truncado");
+        return readCompressed(data, offset, limit);
+    }
+
+    private static int readCompressed(byte[] bytes, int offset) throws DllReaderException {
+        return readCompressed(bytes, offset, bytes.length);
+    }
+
+    private static int readCompressed(byte[] bytes, int offset, int limit) throws DllReaderException {
+        if (offset < 0 || offset >= limit) throw new DllReaderException("inteiro comprimido truncado");
+        int first = u8(bytes, offset);
+        if ((first & 0x80) == 0) return first;
+        if ((first & 0xc0) == 0x80) {
+            if (offset + 2 > limit) throw new DllReaderException("inteiro comprimido de 2 bytes truncado");
+            return ((first & 0x3f) << 8) | u8(bytes, offset + 1);
+        }
+        if ((first & 0xe0) == 0xc0) {
+            if (offset + 4 > limit) throw new DllReaderException("inteiro comprimido de 4 bytes truncado");
+            return ((first & 0x1f) << 24) | (u8(bytes, offset + 1) << 16)
+                    | (u8(bytes, offset + 2) << 8) | u8(bytes, offset + 3);
+        }
+        throw new DllReaderException("prefixo de inteiro comprimido reservado");
+    }
+
+    private static int compressedSize(int first) throws DllReaderException {
+        if ((first & 0x80) == 0) return 1;
+        if ((first & 0xc0) == 0x80) return 2;
+        if ((first & 0xe0) == 0xc0) return 4;
+        throw new DllReaderException("prefixo de inteiro comprimido reservado");
+    }
+
+    private void requireRange(int offset, int length, String what) throws DllReaderException {
+        requireRange(offset, length, data.length, what);
+    }
+
+    private void requireRange(int offset, int length, int limit, String what) throws DllReaderException {
+        if (offset < 0 || length < 0 || (long) offset + length > limit || limit > data.length) {
+            throw error(what + " truncado ou fora dos limites");
+        }
+    }
+
+    private int checkedAdd(int a, int b, String what) throws DllReaderException {
+        return checkedInt((long) a + b, what);
+    }
+
+    private int checkedInt(long value, String what) throws DllReaderException {
+        if (value < 0 || value > Integer.MAX_VALUE) throw error(what + " fora dos limites");
+        return (int) value;
+    }
+
+    private DllReaderException error(String message) {
+        return new DllReaderException(message);
+    }
+
+    private static String simpleName(String fullName) {
+        if (fullName == null) return "";
+        int dot = fullName.lastIndexOf('.');
+        String name = dot < 0 ? fullName : fullName.substring(dot + 1);
+        return name.endsWith("Attribute") ? name.substring(0, name.length() - 9) : name;
+    }
+
+    private static String safeMessage(RuntimeException e) {
+        String message = e.getMessage();
+        return message == null ? e.getClass().getSimpleName() : message;
+    }
+
+    private static void requireIl(byte[] il, int offset, int length, String opcode) throws DllReaderException {
+        if (offset < 0 || length < 0 || (long) offset + length > il.length) {
+            throw new DllReaderException("operando truncado no opcode " + opcode);
+        }
+    }
+
+    private static int u8(byte[] bytes, int offset) throws DllReaderException {
+        if (offset < 0 || offset >= bytes.length) throw new DllReaderException("leitura de byte fora dos limites");
+        return bytes[offset] & 0xff;
+    }
+
+    private int u8(int offset) throws DllReaderException {
+        requireRange(offset, 1, "byte");
+        return data[offset] & 0xff;
+    }
+
+    private int u16(int offset) throws DllReaderException {
+        requireRange(offset, 2, "inteiro de 2 bytes");
+        return (data[offset] & 0xff) | ((data[offset + 1] & 0xff) << 8);
+    }
+
+    private long u32(int offset) throws DllReaderException {
+        requireRange(offset, 4, "inteiro de 4 bytes");
+        return (data[offset] & 0xffL) | ((data[offset + 1] & 0xffL) << 8)
+                | ((data[offset + 2] & 0xffL) << 16) | ((data[offset + 3] & 0xffL) << 24);
+    }
+
+    private long i64(int offset) throws DllReaderException {
+        requireRange(offset, 8, "inteiro de 8 bytes");
+        return u32(offset) | (u32(offset + 4) << 32);
+    }
+
+    private static int u16(byte[] bytes, int offset) throws DllReaderException {
+        if (offset < 0 || (long) offset + 2 > bytes.length) throw new DllReaderException("inteiro truncado");
+        return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8);
+    }
+
+    private static int i32(byte[] bytes, int offset) throws DllReaderException {
+        if (offset < 0 || (long) offset + 4 > bytes.length) throw new DllReaderException("inteiro truncado");
+        return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8)
+                | ((bytes[offset + 2] & 0xff) << 16) | ((bytes[offset + 3] & 0xff) << 24);
+    }
+
+    private static long u32(byte[] bytes, int offset) throws DllReaderException {
+        return i32(bytes, offset) & 0xffff_ffffL;
+    }
+
+    private static long i64(byte[] bytes, int offset) throws DllReaderException {
+        return (i32(bytes, offset) & 0xffff_ffffL) | ((long) i32(bytes, offset + 4) << 32);
+    }
+
+    private final class SigReader {
+        private final byte[] bytes;
+        private int cursor;
+
+        SigReader(byte[] bytes) {
+            this.bytes = bytes;
+        }
+
+        int readByte() throws DllReaderException {
+            if (cursor >= bytes.length) throw error("assinatura CLI truncada");
+            return bytes[cursor++] & 0xff;
+        }
+
+        int peek() throws DllReaderException {
+            if (cursor >= bytes.length) throw error("assinatura CLI truncada");
+            return bytes[cursor] & 0xff;
+        }
+
+        int readCompressed() throws DllReaderException {
+            int value = DllReader.readCompressed(bytes, cursor);
+            cursor += compressedSize(bytes[cursor] & 0xff);
+            return value;
+        }
+
+        String readType(int depth) throws DllReaderException {
+            if (depth > 16) throw error("tipo CLI aninhado demais");
+            int element = readByte();
+            return switch (element) {
+                case 0x01 -> "void";
+                case 0x02 -> "bool";
+                case 0x03 -> "char";
+                case 0x04 -> "int8";
+                case 0x05 -> "uint8";
+                case 0x06 -> "int16";
+                case 0x07 -> "uint16";
+                case 0x08 -> "int";
+                case 0x09 -> "uint";
+                case 0x0a -> "long";
+                case 0x0b -> "ulong";
+                case 0x0c -> "float";
+                case 0x0d -> "double";
+                case 0x0e -> "string";
+                case 0x0f -> readType(depth + 1) + "*";
+                case 0x10 -> readType(depth + 1) + "&";
+                case 0x11 -> "valuetype " + readTypeName(readCompressed());
+                case 0x12 -> readTypeName(readCompressed());
+                case 0x13 -> "!" + readCompressed();
+                case 0x14 -> readArray(depth);
+                case 0x15 -> readGenericInstance(depth);
+                case 0x16 -> "typedref";
+                case 0x18 -> "native int";
+                case 0x19 -> "native uint";
+                case 0x1b -> {
+                    readMethodSignatureBytes(depth + 1);
+                    yield "methodptr";
+                }
+                case 0x1c -> "object";
+                case 0x1d -> readType(depth + 1) + "[]";
+                case 0x1e -> "!!" + readCompressed();
+                case 0x1f, 0x20 -> {
+                    readCompressed();
+                    yield readType(depth + 1);
+                }
+                case 0x41, 0x45 -> readType(depth + 1);
+                default -> throw error("tipo de elemento CLI não suportado: 0x" + Integer.toHexString(element));
+            };
+        }
+
+        private String readArray(int depth) throws DllReaderException {
+            String element = readType(depth + 1);
+            int rank = readCompressed();
+            int sizes = readCompressed();
+            if (rank > 64 || sizes > rank) throw error("array CLI inválido");
+            for (int i = 0; i < sizes; i++) readCompressed();
+            int lowerBounds = readCompressed();
+            if (lowerBounds > rank) throw error("limites de array CLI inválidos");
+            for (int i = 0; i < lowerBounds; i++) readCompressed();
+            return element + "[,]";
+        }
+
+        private String readGenericInstance(int depth) throws DllReaderException {
+            int kind = readByte();
+            if (kind != 0x11 && kind != 0x12) throw error("instância genérica CLI inválida");
+            String type = readTypeName(readCompressed());
+            int count = readCompressed();
+            if (count > 256) throw error("tipo CLI tem argumentos genéricos demais");
+            List<String> args = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) args.add(readType(depth + 1));
+            return type + "<" + String.join(",", args) + ">";
+        }
+
+        private void readMethodSignatureBytes(int depth) throws DllReaderException {
+            if (depth > 16) throw error("assinatura CLI aninhada demais");
+            int convention = readByte();
+            if ((convention & 0x10) != 0) readCompressed();
+            int count = readCompressed();
+            if (count > 1024) throw error("assinatura CLI tem parâmetros demais");
+            readType(depth + 1);
+            for (int i = 0; i < count; i++) readType(depth + 1);
+        }
+
+        boolean atEnd() {
+            return cursor == bytes.length;
+        }
     }
 }
