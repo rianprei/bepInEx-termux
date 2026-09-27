@@ -53,7 +53,27 @@ chmod 755 "$TMP/arm-gcc" "$TMP/arm-g++"
     -DDOBBY_DEBUG=OFF -DNearBranch=ON -DPlugin.SymbolResolver=ON \
     -DPlugin.ImportTableReplace=OFF -DPlugin.Android.BionicLinkerUtil=OFF \
     -DDOBBY_BUILD_EXAMPLE=OFF -DDOBBY_BUILD_TEST=OFF
-"$CMAKE" --build "$TMP/build" --target dobby_static --parallel 4
+# O log do build do Dobby fica VISIVEL e CONTADO, e rotulado como de terceiro.
+#
+# ACHADO (revisao de 5edfb41): o build do Dobby UPSTREAM emite warning de
+# snprintf truncado. A politica de 0% de warning deste repo vale para as NOSSAS
+# fontes; o Dobby e pinado de terceiro (tools/deps.lock, com SHA), e corrigir
+# la nao e nosso. O que NAO pode e silenciar: um warning que so aparece quando
+# alguem roda o smoke a mao e um warning que ninguem ve.
+#
+# O build nao pode falhar por causa disso (nao e codigo nosso e nao temos como
+# consertar sem divergir do pin), entao o warning e REPORTADO, nao escondido.
+BUILD_LOG="$TMP/dobby-build.log"
+"$CMAKE" --build "$TMP/build" --target dobby_static --parallel 4 2>&1 | tee "$BUILD_LOG"
+n_warn="$(grep -c 'warning:' "$BUILD_LOG" || true)"
+if [[ "$n_warn" -gt 0 ]]; then
+    echo ""
+    echo "Dobby $REV (TERCEIRO, pinado em tools/deps.lock): $n_warn warning(s) do build upstream." >&2
+    echo "  Nao e codigo nosso e a politica de 0% do repo nao se aplica a ele; o que nao" >&2
+    echo "  pode e silenciar. Listados abaixo para nao sumirem do log:" >&2
+    grep 'warning:' "$BUILD_LOG" | sort -u | sed 's/^/    /' >&2
+    echo "" >&2
+fi
 "$ZIG" c++ -target thumb-linux-musleabihf -mthumb -std=c++17 -O2 \
     -I "$TMP/src/include" "$ROOT/test/arm32_dobby_qemu_smoke.cpp" \
     "$TMP/build/libdobby.a" -static -pthread -ldl -lm -o "$TMP/smoke"

@@ -435,6 +435,18 @@ else
     echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
+# Guarda de arquitetura dos hooks: em ARM32, todo mod que usa DobbyHook tem que
+# recusar COM LOG antes de alcancar o hook, porque o hook so foi validado em
+# aparelho AArch64 (revisao de 5edfb41: sa2ammo e sa2content chamavam
+# DobbyHook sem nenhuma guarda).
+if [ -f "$ROOT/test/arm32_hook_guard_check.py" ]; then
+    run_step "hooks ARM32 recusam 32-bit" "$TIMEOUT_TEST" \
+        python3 "$ROOT/test/arm32_hook_guard_check.py" "$ROOT"
+else
+    record "hooks ARM32 recusam 32-bit (check ausente)" FAIL 0 1
+    echo "test/arm32_hook_guard_check.py ausente: um hook pode rodar em 32-bit sem validacao"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"

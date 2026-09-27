@@ -7,4 +7,14 @@ frida-gadget-so|17.18.0|c87c53efc10a9b6f2f4259b7b962d403cac729d6ee6f6a83f679489f
 # its ARM headers. Patches raise C++ to 17, inline Logger::Shared to avoid
 # duplicate definitions, and correct ARM LSL carry/shift handling. ARM64 stays
 # on the already-validated, unchanged repository prebuilt.
+#
+# THIRD-PARTY WARNING (review of 5edfb41): building this pin emits compiler
+# warnings, among them a snprintf truncation. That is UPSTREAM code, not ours —
+# the repo's zero-warning policy governs our own sources, and diverging from the
+# pin to silence it would trade a reviewed, hashed dependency for an unreviewed
+# local edit. So the build is NOT failed for it and the warning is NOT
+# suppressed: test/arm32_dobby_qemu_smoke.sh tees the build log, counts the
+# warnings and prints them labelled as third-party, so they cannot vanish into
+# a scrollback nobody reads. If upstream fixes it, the pin moves and the count
+# drops to zero on its own.
 dobby-arm32|e9fe7fbecae47a2287e761080f8b1133cc22e8fa|b5dddb530ae3b1abe8b61dd3a690eaf0ffe74900b0313c3d1bee0597691cf2d3|https://github.com/jmpews/Dobby/archive/e9fe7fbecae47a2287e761080f8b1133cc22e8fa.tar.gz

@@ -83,14 +83,24 @@ O deploy identifica `primaryCpuAbi` do pacote instalado. Para gerar um
 |---|---|---|
 | Loader e instalação `.so`/`.bmod` | disponível | disponível; seleciona pelo ABI do jogo |
 | `u_dump` (Unity IL2CPP) | disponível | disponível; layout de `System.String` usa ponteiros de 32 bits |
-| `sa2ammo`, `sa2content` | build existente | compilados com Dobby ARM32; comportamento em aparelho não verificado |
+| `sa2ammo`, `sa2content` | build existente | compilados, mas registram “não suportado em 32-bit (hook não validado em aparelho)” e saem **sem instalar nenhum hook** — o hook Dobby delas só foi validado em AArch64, então em 32-bit eles não hookam em vez de hookar às cegas |
 | `u_patch`, `u_noads` | disponíveis | compilados, mas registram “não suportado em 32-bit” e saem sem aplicar hooks AArch64 |
+| guarda de arquitetura dos hooks | `test/arm32_hook_guard_check.py` (passo do gate) | exige que todo mod com `DobbyHook` recuse **antes** de alcançar o hook, e que o caminho 32-bit tenha `return` |
 | Hook genérico do loader / Battle Cats | implementado | deliberadamente desativado; ainda não portado/validado |
 | `u_frida` | gadget 17.18.0 disponível | recusa gadget incompatível; ainda não há gadget ARM32 pinado |
 
 O prebuilt Dobby ARM64 permanece intacto. A biblioteca ARM32 é separada,
 construída de Dobby `e9fe7fb` por `tools/build_dobby_arm32.sh`; o hook simples
 foi exercitado em `qemu-arm`. Isso não substitui teste em aparelho ARM32.
+
+**Warning de terceiro no build do Dobby ARM32.** O build do pin upstream emite
+compiler warnings, entre eles um `snprintf` truncado. Isso é código **de
+terceiro** (pinado e com SHA em `tools/deps.lock`), não nosso: a política de zero
+warning deste repo vale para as nossas fontes, e divergir do pin para calar o
+warning trocaria uma dependência revisada por uma edição local não revisada.
+O build não falha por causa disso, e o warning **não é silenciado** —
+`test/arm32_dobby_qemu_smoke.sh` guarda o log, conta os warnings e os imprime
+rotulados como de terceiro, para não sumirem num scrollback que ninguém lê.
 
 - **`<pacote-do-jogo>`** é o identificador do jogo, tipo
   `com.hyperdotstudios.swampattack2`. Ele aparece no link da Play Store
