@@ -524,6 +524,61 @@ int main() {
               f[0] != 0x39004009u && f[2] != 0x39004009u);
     }
 
+    // --- #14: o scan do loader, que e o que diz quais arquivos o motor le ---
+    //
+    // Este caso existe por causa de uma SABOTAGEM que passou: com o loader
+    // voltando a procurar so "*.patch", o verify_all inteiro continuou PASS.
+    // A decisao de scan vivia no .cpp, sem nenhum teste de host, e nada no gate
+    // executava o loader. Agora ela mora em u_patch_parse.h (puro) e e
+    // testada aqui.
+    printf("\n[Caso 78] up_is_patch_file/up_patch_id_from_name: o scan do loader\n");
+    {
+        // 1. o que o motor tem que ler
+        check("t1.bpatch é lido", up_is_patch_file("t1.bpatch"));
+        check("meu_mod.bpatch é lido", up_is_patch_file("meu_mod.bpatch"));
+        // 2. o que ele NÃO tem que ler
+        check("x.bpatch.off (desligado) nao é lido", !up_is_patch_file("t1.bpatch.off"));
+        check("x.conf nao é lido", !up_is_patch_file("t1.conf"));
+        check("x.so nao é lido", !up_is_patch_file("lib.so"));
+        check("sem extensao nao é lido", !up_is_patch_file("regras"));
+        // A extensao ANTIGA: o motor nao deve mais ler, porque o Manager
+        // instala o que reconhece por conteudo como <id>.bpatch. Se um dia o
+        // loader voltar a aceitar .patch, esta linha e a que avisa.
+        check("t1.patch (extensao antiga) NAO é lido", !up_is_patch_file("t1.patch"));
+        // 3. ".bpatch" e prefixo de ".bpatch.off", nao sufixo de outra coisa
+        check("bpatch sem ponto nao é lido", !up_is_patch_file("bpatch"));
+        check("xbpatch nao é lido (precisa do ponto)", !up_is_patch_file("xbpatch"));
+        // 4. o id, e o par com o <id>.conf
+        char id[128] = {};
+        check("id de t1.bpatch é t1", up_patch_id_from_name("t1.bpatch", id, sizeof(id))
+              && strcmp(id, "t1") == 0);
+        check("id de meu_mod.bpatch é meu_mod",
+              up_patch_id_from_name("meu_mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu_mod") == 0);
+        check("id com ponto no meio preserva o ponto",
+              up_patch_id_from_name("meu.mod.bpatch", id, sizeof(id))
+              && strcmp(id, "meu.mod") == 0);
+        // O bug que o "- 6" hardcoded produziria: id com um caractere a mais.
+        check("id NÃO tem caractere sobrando da extensão",
+              up_patch_id_from_name("t1.bpatch", id, sizeof(id)) && strlen(id) == 2);
+        // 5. o .conf do mod e montado a partir DESTE id
+        char cpath[256];
+        snprintf(cpath, sizeof(cpath), "/data/local/tmp/mods/com.x/%s.conf", id);
+        check("o .conf procurado é t1.conf (o par que o motor usa)",
+              strcmp(cpath, "/data/local/tmp/mods/com.x/t1.conf") == 0);
+        // 6. arestas: nome so com a extensao, id que nao cabe, nulo
+        check("nome exatamente .bpatch é recusado (id vazio)",
+              !up_patch_id_from_name(".bpatch", id, sizeof(id)));
+        check("id maior que o buffer é recusado", !up_patch_id_from_name("aaaa.bpatch", id, 4));
+        check("id em buffer de tamanho 1 é recusado", !up_patch_id_from_name("a.bpatch", id, 1));
+        check("null é recusado sem crash", !up_patch_id_from_name(nullptr, id, sizeof(id))
+              && !up_is_patch_file(nullptr));
+        // 7. o comprimento da extensao e o da constante, e nao um numero solto
+        check("o comprimento da extensao bate com UP_PATCH_EXT",
+              up_patch_ext_len() == strlen(UP_PATCH_EXT));
+        check("a extensao do motor e .bpatch", strcmp(UP_PATCH_EXT, ".bpatch") == 0);
+    }
+
     printf("== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

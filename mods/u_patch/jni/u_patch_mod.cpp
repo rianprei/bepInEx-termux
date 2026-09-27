@@ -25,17 +25,10 @@
 #include "u_patch_resolve.h"
 
 #define UP_TAG "u_patch"
-// Extensão do arquivo de regras. ".bpatch" e não ".patch" porque o nome
-// colidia com o .patch de diff do git e confundia o usuário na pasta de mods
-// (decisão do usuário, 2026-09-27). O formato nunca saiu em release, então
-// não há arquivo antigo para migrar.
-//
-// O COMPRIMENTO do sufixo sai desta constante (ver UP_PATCH_EXT_LEN), nunca de
-// um número escrito à mão: com o "- 6" que existia, trocar só a extensão
-// deixaria o id como "t1." e o <id>.conf do mod pararia de ser encontrado —
-// sem log, porque .conf é opcional.
-#define UP_PATCH_EXT ".bpatch"
-#define UP_PATCH_EXT_LEN (sizeof(UP_PATCH_EXT) - 1)
+// A extensão do arquivo de regras mora em u_patch_parse.h (UP_PATCH_EXT), junto
+// das funções puras que decidem o que é regra e qual é o id. Ela saiu daqui
+// porque o scan é lógica de string e precisa de teste de host: com ela no .cpp,
+// o gate passava mesmo com o loader procurando a extensão antiga.
 #define UP_MODS_DIR_FMT "/data/local/tmp/mods/%s"
 #define UP_LOG_FMT "/data/data/%s/files/bepinex/log.txt"
 #define UP_STATIC_MAX 32  // campos static fixados (reaplica a cada 2s)
@@ -82,11 +75,6 @@ static bool up_read_pkg() {
     snprintf(up_pkg, sizeof(up_pkg), "%s", cmd);
     snprintf(up_dir, sizeof(up_dir), UP_MODS_DIR_FMT, up_pkg);
     return true;
-}
-
-static bool up_ends_with(const char *name, const char *suf) {
-    size_t nl = strlen(name), sl = strlen(suf);
-    return nl >= sl && strcmp(name + nl - sl, suf) == 0;
 }
 
 // Lê arquivo inteiro (até 64KB). Retorna malloc'd, *len = tamanho.
@@ -662,17 +650,13 @@ static int up_scan_apply(const Il2Cpp &il) {
     if (n < 0) return 0;
     for (int i = 0; i < n; i++) {
         const char *name = ents[i]->d_name;
-        bool is_patch = up_ends_with(name, UP_PATCH_EXT) && !up_ends_with(name, ".off");
-        if (!is_patch) { free(ents[i]); continue; }
+        if (!up_is_patch_file(name)) { free(ents[i]); continue; }
         char id[128] = {};
-        size_t nlen = strlen(name);
-        // "foo.bpatch.off" também termina em ".off" e foi barrado acima; aqui
-        // so chega o nome sem ".off". A subtração é pela constante, não por um
-        // número solto.
-        if (nlen < UP_PATCH_EXT_LEN) { free(ents[i]); continue; }  // paranoia
-        size_t baselen = nlen - UP_PATCH_EXT_LEN;  // tira ".bpatch"
-        if (baselen >= sizeof(id)) baselen = sizeof(id) - 1;
-        memcpy(id, name, baselen);
+        // O id vem do helper puro, e nao de `strlen(name) - N`: o N era o
+        // comprimento da extensao escrito a mao, e trocar a extensao sem o N
+        // deixava o id com um caractere a mais e o <id>.conf do mod sumia em
+        // silencio.
+        if (!up_patch_id_from_name(name, id, sizeof(id))) { free(ents[i]); continue; }
         char ppath[448], cpath[448];
         snprintf(ppath, sizeof(ppath), "%s/%s", up_dir, name);
         snprintf(cpath, sizeof(cpath), "%s/%s.conf", up_dir, id);

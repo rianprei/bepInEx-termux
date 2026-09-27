@@ -165,10 +165,12 @@ public class ShellExecTest {
         File mods = new File(root, "mods");
         // com.a.jogo: 2 ativos + 1 desligado; nome com espaço; .conf (não conta)
         write(new File(new File(mods, "com.a.jogo"), "x.so"), "s");
-        write(new File(new File(mods, "com.a.jogo"), "y.bpatch"), "p");
-        // Extensao ANTIGA: o glob do inventario passou a ser *.bpatch, e um
-        // .patch nao pode mais ser contado como mod ligado. Sem esta linha o
-        // teste passaria igual com o glob velho.
+        // DOIS .bpatch e UM .patch de extensao antiga, de proposito: com a
+        // mesma quantidade dos dois, o glob velho (*.patch) e o novo
+        // (*.bpatch) dariam o MESMO total e o teste passaria com o glob
+        // errado. Assim os totais so podem diferir.
+        write(new File(new File(mods, "com.a.jogo"), "y1.bpatch"), "p");
+        write(new File(new File(mods, "com.a.jogo"), "y2.bpatch"), "p");
         write(new File(new File(mods, "com.a.jogo"), "z_antigo.patch"), "p");
         write(new File(new File(mods, "com.a.jogo"), "z.so.off"), "o");
         write(new File(new File(mods, "com.a.jogo"), "w.conf"), "c");
@@ -189,10 +191,14 @@ public class ShellExecTest {
         check("3 pastas viraram 3 entradas", inv.size() == 3);
 
         ModInventory.Counts a = inv.get("com.a.jogo");
-        check("com.a.jogo: 3 no total (2 .so/.bpatch + 1 .off; o .patch antigo fora)",
-                a != null && a.total == 3);
-        check("com.a.jogo: 2 ativos (o .off não conta)", a != null && a.active == 2);
-        check("o .conf não conta como mod", a != null && a.total == 3);
+        // 4 = x.so + y1.bpatch + y2.bpatch + z.so.off. O .patch de extensao
+        // antiga e o .conf NAO contam: com o glob antigo daria 3, com o novo
+        // da 4, entao este numero e o que distingue.
+        check("com.a.jogo: 4 no total (1 .so + 2 .bpatch + 1 .off; .patch antigo e .conf fora)",
+                a != null && a.total == 4);
+        check("com.a.jogo: 3 ativos (o .off não conta)", a != null && a.active == 3);
+        check("o .conf e o .patch de extensao antiga nao contam como mod",
+                a != null && a.total == 4);
 
         ModInventory.Counts b = inv.get("com.b.jogo");
         check("com.b.jogo: arquivo com espaço no nome conta (1/1)", b != null && b.total == 1 && b.active == 1);
