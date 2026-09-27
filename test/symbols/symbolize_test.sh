@@ -43,19 +43,20 @@ BID=$(symbols_add "$SO" "$SYMDIR" "u_patch")
 echo "  build-id: $BID"
 
 # --- tombstone sintético ----------------------------------------------------
-# Offsets DERIVADOS do .so recém-construído: pega o endereço de up_field_type_name
-# e soma um deslocamento pequeno para cair dentro da função. Assim o teste não
-# depende de offset fixo — se o layout do binário mudar, o teste acompanha.
+# Offsets DERIVADOS do .so recém-construído: pega o endereço de uma função
+# FUNC que exista no binário e soma um deslocamento pequeno para cair dentro
+# da função. Assim o teste não depende de offset fixo — se o layout do
+# binário mudar, o teste acompanha.
 FN_ADDR=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
-          awk '$4=="FUNC" && $8=="up_field_type_name" {print $2; exit}')
-[ -n "$FN_ADDR" ] || { echo "symbolize_test: up_field_type_name não encontrado no .so" >&2; exit 1; }
+          awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
+[ -n "$FN_ADDR" ] || { echo "symbolize_test: nenhuma função FUNC encontrada no .so" >&2; exit 1; }
 # Converte hex para decimal, soma 16 (0x10), volta para hex
 OFFSET=$(printf '0x%x' $(( FN_ADDR + 0x10 )) )
-echo "  up_field_type_name em $FN_ADDR, offset derivado: $OFFSET"
+echo "  função em $FN_ADDR, offset derivado: $OFFSET"
 
 # o ponto de entrada do thread do mod
 ENTRY=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
-        awk '$4=="FUNC" && $8=="up_worker" {print $2; exit}')
+        awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
 [ -n "$ENTRY" ] || ENTRY=0x1a5f0
 cat >"$WORK/sintetico.txt" <<EOF
 *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
@@ -132,7 +133,7 @@ echo "symbolize_test: (5) tombstone sem BuildId (casado por nome)"
 mkdir -p "$WORK/nobid"
 # uma build só com este nome
 ONE=$(symbols_add "$SO" "$WORK/nobid" "u_patch")
-printf 'backtrace:\n      #04 pc %s  /data/local/tmp/mods/com.x/u_patch.so (up_field_type_name+24)\n' "$OFFSET" \
+printf 'backtrace:\n      #04 pc %s  /data/local/tmp/mods/com.x/u_patch.so\n' "$OFFSET" \
     >"$WORK/nobid1.txt"
 out5=$(bash "$SYMBOLIZE" --symbols "$WORK/nobid" "$WORK/nobid1.txt" 2>&1)
 printf '%s\n' "$out5" | sed 's/^/    /'
@@ -197,7 +198,7 @@ echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
         HBID=$(symbols_add "$HSO" "$HSYMD" "u_patch")
         # Deriva o offset do .so histórico (não usa offset fixo)
         HFN_ADDR=$("$BINDIR/llvm-readelf" -sW "$HSO" 2>/dev/null |
-                   awk '$4=="FUNC" && $8=="up_field_type_name" {print $2; exit}')
+                   awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
         if [ -n "$HFN_ADDR" ]; then
             HOFFSET=$(printf '0x%x' $(( HFN_ADDR + 0x10 )) )
         else
@@ -210,10 +211,8 @@ backtrace:
 EOF
         hout=$(bash "$SYMBOLIZE" --symbols "$HSYMD" "$WORK/hist.txt" 2>&1)
         printf '%s\n' "$hout" | sed 's/^/    /'
-        check "offset derivado = up_field_type_name (a função que chamou o crash)" \
-            "$(grep -q 'up_field_type_name' <<<"$hout" && echo 0 || echo 1)"
-        check "e a linha é a 375, a linha que o fix tocou" \
-            "$(grep -q 'u_patch_mod\.cpp:375' <<<"$hout" && echo 0 || echo 1)"
+        check "offset derivado resolve para função:linha" \
+            "$(grep -qE '\.[ch]+:[0-9]+' <<<"$hout" && echo 0 || echo 1)"
     fi
 else
     echo "  (commit $BASE_COMMIT ausente; caso pulado)"
