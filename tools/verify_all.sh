@@ -196,11 +196,15 @@ done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_cl
 
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
-    # TODOS os arquivos que declaram [Caso N] — não só selftest_harness.cpp.
-    # Antes o grep olhava um arquivo só, e a colisão do F4 (61-64 no
-    # upatch_harness x 61-64/65-68 da base) passava reto (achado do review).
-    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- "test/*.cpp" "mods/*/jni/*harness*.cpp" |
-        grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
+    # Varre todo .cpp do worktree (test/, mods/, selftest e demais raízes);
+    # só .git é podado, pois contém objetos/metadados, não arquivos-fonte.
+    labels=$(find . -path "./.git" -prune -o -type f -name "*.cpp" \
+        -exec grep -h -o -E "\[Caso [0-9]+\]" {} + || true)
+    [ -n "$labels" ] || {
+        echo "nenhum rótulo [Caso N] encontrado nos diretórios de teste" >&2
+        exit 1
+    }
+    duplicates=$(printf "%s\n" "$labels" | sort | uniq -d || true)
     if [ -n "$duplicates" ]; then
         printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
         exit 1

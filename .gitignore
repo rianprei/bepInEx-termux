@@ -26,5 +26,7 @@ mods/u_frida/gadget/
 !test/fixtures/modtypes/*.apk
 test/fixtures/dll2patch/src/bin/
 test/fixtures/dll2patch/src/obj/
+test/fixtures/dll2patch/harmony-stubs/bin/
+test/fixtures/dll2patch/harmony-stubs/obj/
 test/fixtures/dll2patch/facts/bin/
 test/fixtures/dll2patch/facts/obj/

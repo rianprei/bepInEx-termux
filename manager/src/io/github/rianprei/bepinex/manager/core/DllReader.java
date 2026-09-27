@@ -315,14 +315,25 @@ public final class DllReader {
                 : rowCounts[8] + 1;
         validateListRange(firstParam, nextParam, rowCounts[8], "ParamList");
         MethodSignature signature = readMethodSignature(getBlob(signatureIndex));
-        if (nextParam - firstParam > signature.parameterTypes.size()) {
+        if (nextParam - firstParam > signature.parameterTypes.size() + 1) {
             throw error("tabela Param tem mais parâmetros que a assinatura do método " + name);
         }
         List<ParameterInfo> parameters = new ArrayList<>(signature.parameterTypes.size());
         Map<Integer, String> parameterNames = new HashMap<>();
+        boolean returnParameterSeen = false;
         for (int paramRid = firstParam; paramRid < nextParam; paramRid++) {
             int paramRow = tableRow(8, paramRid);
             int sequence = u16(paramRow + 2);
+            if (sequence == 0) {
+                // Param de sequência zero é metadado do RETORNO (ex.: [return:
+                // MarshalAs]) — pode existir sem ser argumento. Validado em
+                // separado e fora do binding de argumentos.
+                if (returnParameterSeen) {
+                    throw error("sequência Param de retorno duplicada no método " + name);
+                }
+                returnParameterSeen = true;
+                continue;
+            }
             if (sequence < 1 || sequence > signature.parameterTypes.size()
                     || parameterNames.containsKey(sequence)) {
                 throw error("sequência Param inválida no método " + name);
@@ -724,7 +735,9 @@ public final class DllReader {
             String parentName = parentTypeName(parent);
             int nameOffset = row + codedSize("MemberRefParent");
             String constructorName = getString(readIndex(nameOffset, "strings"));
-            return parentName.isEmpty() ? constructorName : parentName + "." + constructorName;
+            // Construtor MemberRef de assembly REFERENCIADO (HarmonyLib externo):
+            // o nome do atributo é o TIPO declarante — o ".ctor" do final não.
+            return parentName.isEmpty() ? constructorName : parentName;
         }
         if (constructor.table == 6) {
             if (methodOwners == null || constructor.rid >= methodOwners.length

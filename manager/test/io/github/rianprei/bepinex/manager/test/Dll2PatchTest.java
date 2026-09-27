@@ -4,6 +4,7 @@ import io.github.rianprei.bepinex.manager.core.DllReader;
 import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.HarmonyTranslator;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
+import io.github.rianprei.bepinex.manager.model.PatchRule;
 
 import java.io.BufferedReader;
 import java.lang.reflect.InvocationTargetException;
@@ -32,6 +33,8 @@ public final class Dll2PatchTest {
         byte[] dll = Files.readAllBytes(fixture);
         DllReader reader = DllReader.parse(dll);
         testFacts(reader);
+        testReturnParameterMetadata(reader);
+        testExternalHarmonyAttributes(reader);
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);
@@ -117,6 +120,16 @@ public final class Dll2PatchTest {
         Path deviceGatePatch = findPath("test/fixtures/dll2patch/opcodes_table.csv").getParent()
                 .resolve("translator_output.bpatch");
         byte[] patchBytes = result.patchText().getBytes(StandardCharsets.UTF_8);
+        // Achado #1: o arquivo é COMMITADO e regerado a cada rodada — se nada
+        // conferir, a cópia versionada envelhece em silêncio (o teste sobrescreve
+        // antes de qualquer um ler). A cópia commitada tem que ser EXATAMENTE a
+        // saída de hoje; divergiu, o gate falha e o diff sujo do worktree é a
+        // correção pronta pra commitar junto com o golden novo.
+        byte[] committed = Files.isRegularFile(deviceGatePatch)
+                ? Files.readAllBytes(deviceGatePatch) : new byte[0];
+        check("fixture versionada (translator_output.bpatch) bate com a saída gerada"
+                        + " — commit a nova quando o golden mudar",
+                Arrays.equals(committed, patchBytes));
         Files.write(deviceGatePatch, patchBytes);
         check("saída real do tradutor gravada para o gate C++ (translator_output.bpatch)",
                 Arrays.equals(Files.readAllBytes(deviceGatePatch), patchBytes));
@@ -136,6 +149,22 @@ public final class Dll2PatchTest {
         // ocorrência da extensão velha na varredura final.
         check("a-d: o texto C4 traduzido e exatamente o esperado",
                 expected.equals(result.patchText()));
+
+        // Achado #2: a réplica Java foi removida (049baeb) e com ela a
+        // checagem de que cada regra gerada APONTA para classe/método/campo
+        // que EXISTEM na DLL. Reposta sem réplica: quem quebra a linha em
+        // campos é o PatchGenerator (código de PRODUÇÃO do Manager, o mesmo
+        // que vai rodar no APK) e quem decide a existência é o DllReader
+        // vivo (fullName + paramCount) — nenhum clone do parser do u_patch.
+        for (String generated : result.patchLines()) {
+            List<PatchRule> parsed = PatchGenerator.parse(generated);
+            check("regra gerada é C4 válido para o Manager: " + generated,
+                    parsed.size() == 1);
+            if (parsed.size() == 1) {
+                check("classe/método/campo da regra existem na DLL: " + generated,
+                        targetExistsInDll(parsed.get(0), reader));
+            }
+        }
 
         // A validação do lado do u_patch mora no parser C++ REAL: o Caso 80 do
         // upatch_harness parseia o translator_output.bpatch gravado acima com
@@ -165,6 +194,35 @@ public final class Dll2PatchTest {
 
         DllReader.MethodInfo transpiler = findMethod(reader, "TranspilerCase", "Transpiler");
         check("fixture exercita cabeçalho IL fat", transpiler != null && transpiler.fatHeader());
+    }
+
+    private static void testReturnParameterMetadata(DllReader reader) throws Exception {
+        DllReader.MethodInfo method = findMethod(reader, "ReturnParameterMetadataCase", "ReturnAnnotated");
+        check("Param com sequência zero é metadado de retorno, não argumento",
+                method != null && "bool".equals(method.returnType()) && method.parameters().isEmpty());
+    }
+
+    private static boolean targetExistsInDll(PatchRule rule, DllReader reader)
+            throws DllReader.DllReaderException {
+        for (DllReader.TypeInfo type : reader.getTypes()) {
+            if (!type.fullName().equals(rule.targetClass)) continue;
+            if ("return".equals(rule.action) || "mul".equals(rule.action)) {
+                return type.methods().stream().anyMatch(method ->
+                        method.name().equals(rule.member) && method.paramCount() == rule.nargs);
+            }
+            return type.fields().stream().anyMatch(field -> field.name().equals(rule.member));
+        }
+        return false;
+    }
+
+    private static void testExternalHarmonyAttributes(DllReader reader) throws Exception {
+        // A fixture referencia HarmonyLib como assembly EXTERNO (harmony-stubs),
+        // como um mod real: os atributos chegam como MemberRefs de construtor
+        // cujo pai é um TypeRef de fora. O DllReader tem que resolver o nome do
+        // ATRIBUTO (HarmonyLib.HarmonyPatch), não do construtor.
+        check("construtores Harmony externos resolvem o nome do atributo",
+                reader.getCustomAttributes().stream().anyMatch(attribute ->
+                        "HarmonyLib.HarmonyPatch".equals(attribute.typeName())));
     }
 
     private static void testFacts(DllReader reader) throws Exception {
@@ -207,8 +265,8 @@ public final class Dll2PatchTest {
                     DllReader.MethodInfo method = reader.getMethodByRid(rid);
                     check("MethodDef PEReader #" + rid, method.name().equals(name)
                             && method.rva() == rva);
-                    check("método PEReader #" + rid + " tem " + params + " Param rows",
-                            params <= method.parameters().size());
+                    check("método PEReader #" + rid + " tem Param rows válidas",
+                            params <= method.parameters().size() + 1);
                     methodCount++;
                 }
                 default -> throw new AssertionError("fact PEReader desconhecido: " + line);
