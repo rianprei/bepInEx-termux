@@ -1,0 +1,4 @@
+# traduzido de Harmony para C4
+return Dll2PatchFixture.GameClass GetHealth 0 int 100
+return Dll2PatchFixture.GameClass GetMana 0 int 50
+mul Dll2PatchFixture.GameClass GetDamage 0 int 2

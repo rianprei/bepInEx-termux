@@ -186,7 +186,7 @@ pela extensão:
 | `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim (copia pra pasta) |
 | `.so` arm32/x86 | ELF de outra arquitetura | não |
 | `.bpatch` | texto nas regras C4 | **em integração** (u_patch, F4) |
-| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | experimental (gadget 17.19.0 fechou o jogo no teste em celular) |
+| script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | experimental (gadget 17.19.0 fechou o jogo; projeto usa 17.18.0, que carregou e rodou no POCO C75 + SA2) |
 | `.dll` IL2CPP (BepInEx 6/MelonLoader IL2CPP) | PE + CLI + refs `Il2CppInterop`/`UnhollowerBaseLib` | depois (F12) |
 | `.dll` Mono em jogo Android **Mono** | AssemblyRefs sem `Il2Cpp*` + engine mono | depois (F13) |
 | `.dll` Mono (ex.: TABS PC) em jogo **IL2CPP** | idem + engine il2cpp | **não automático** (recrie com Mod Maker/SDK) |

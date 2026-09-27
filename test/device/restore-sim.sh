@@ -75,7 +75,13 @@ case "$1" in
       shift; case "$1" in
         su) su ;;
         am) shift 2 >/dev/null; : ;;
-        monkey) sleep "${FAKE_SLEEP:-0}" ;;
+        monkey)
+            sleep "${FAKE_SLEEP:-0}"
+            if [ -n "${FAKE_GAME_LOG:-}" ]; then
+                printf '%s\n' "$FAKE_GAME_LOG" \
+                    >> "$DEV/data/data/$FAKE_PKG/files/bepinex/log.txt"
+            fi
+            ;;
         pidof) echo "$FAKE_PID" ;;
         *) : ;;
       esac ;;
@@ -96,7 +102,14 @@ printf '#!/bin/sh\nexit 0\n' > "$BINDIR/chmod"
 # interrupção do (5) dispara pelo gancho T1_SIM_EXIT na MESMA iteração
 # lógica. Sem isso o sim cresce em segundos REAIS a cada cenário com run
 # completo (69s com load) e o gate vira flaky por carga. sleep => instantâneo.
-printf '#!/bin/sh\n# relógio falso do sim: espera do kit vira tempo simulado\nexit 0\n' > "$BINDIR/sleep"
+cat > "$BINDIR/sleep" <<'EOF'
+#!/bin/sh
+# Relógio falso do sim; opcionalmente registra pausas de um cenário.
+if [ -n "${FAKE_SLEEP_LOG:-}" ]; then
+    printf '%s\n' "$1" >> "$FAKE_SLEEP_LOG"
+fi
+exit 0
+EOF
 # adb: shell su (stdin) / push / get-state / logcat / am / monkey / pidof.
 write_base_adb
 chmod 755 "$BINDIR/su" "$BINDIR/chown" "$BINDIR/chmod" "$BINDIR/sleep"
@@ -269,6 +282,32 @@ scen "(campo) caso field roda separado"
 new_device f
 OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 2>&1 || true)
 echo "$OUT" | grep -q "t1_field.bpatch" && ok "kit le o dir do caso field" || bad "kit le o dir do caso field"
+
+scen "(field-hold) pausa manual so depois das expectativas e restore"
+write_base_adb
+new_device fieldhold
+printf '11:00:01 [u_patch] t1_field.bpatch|field|Ns.Test|WeaponInfo|0|bool|true: field aplicado\n' \
+    > "$ROOT/field-hold-log.txt"
+FAKE_GAME_LOG=$(cat "$ROOT/field-hold-log.txt")
+export FAKE_PKG="$PKG" FAKE_GAME_LOG
+export FAKE_SLEEP_LOG="$ROOT/field-hold-sleeps-$$"
+: > "$FAKE_SLEEP_LOG"
+RC=0
+OUT=$(sh "$KIT" "$PKG" "$SA2_FIELD" 6 --hold-after-pass=90 2>&1) || RC=$?
+unset FAKE_SLEEP_LOG
+unset FAKE_PKG FAKE_GAME_LOG
+echo "$OUT" | grep -q "MANUAL: expectativas satisfeitas" \
+    && ok "aviso manual aparece apos a expectativa" \
+    || { bad "aviso manual aparece apos a expectativa"; echo "$OUT" | tail -15; }
+grep -qx 90 "$ROOT/field-hold-sleeps-$$" \
+    && ok "kit segura o jogo pelos 90s configurados" \
+    || { bad "kit segura o jogo pelos 90s configurados"; cat "$ROOT/field-hold-sleeps-$$"; }
+echo "$OUT" | grep -q "RESULTADO: PASS" \
+    && ok "pause manual termina e o teste passa" || bad "pause manual termina e o teste passa"
+echo "$OUT" | grep -q "device restaurado" \
+    && ok "restore continua apos a pausa" || bad "restore continua apos a pausa"
+[ "$RC" = 0 ] || bad "pausa manual sai com codigo 0 (veio $RC)"
+unset RC
 
 scen "(log) linhas escritas pelo jogo antes do crash sao removidas byte a byte"
 new_device log

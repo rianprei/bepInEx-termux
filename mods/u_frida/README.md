@@ -3,8 +3,9 @@
 Na pasta do jogo (`/data/local/tmp/mods/<pkg>/`) ficam `meu_mod.js`,
 `frida-gadget.bin` e `frida-gadget.config` (modo `script-directory`
 apontando pra pasta). Este `u_frida.so` SÓ verifica os três e dá `dlopen` no
-binário (depois de esperar o il2cpp se houver — `libil2cpp.so` à vista em
-10s, como o sa2ammo). Sem frida-server, sem patch de APK.
+binário depois de aguardar até 10s pelo boot IL2CPP completo. O gadget carrega
+mesmo se não houver runtime; scripts que usam `Il2Cpp.*` podem não funcionar
+nesse caso. Sem frida-server, sem patch de APK.
 
 **Quem instala hoje:** o Manager já instala o Frida pelo celular — o
 `LooseModInstaller` detecta o gadget e coloca `frida-gadget.bin` +
@@ -13,8 +14,8 @@ Isso nunca foi testado pelo app no celular (experimental). O teste no
 celular foi pelo `tools/deploy_frida.sh` (PC + adb + su).
 
 **Status no celular (2026-09-27):** o frida-gadget 17.19.0 carregou mas
-crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. Não use
-scripts `.js` até a correção.
+crashou dentro do próprio gadget (SIGSEGV, SA2). O jogo fechou. O projeto usa
+17.18.0, que carregou e rodou o script no POCO C75 + SA2 (experimental).
 
 - **Só modo script.** O config inteiro (até 4KB) tem que ser JSON válido com
   `interaction.type` = `script` ou `script-directory`

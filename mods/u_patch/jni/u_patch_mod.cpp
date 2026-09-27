@@ -745,9 +745,9 @@ static void up_reapply_statics(Il2Cpp &il) {
 static void *up_worker(void *) {
     // O constructor pode ter rodado ainda no zygote (sem env e com cmdline
     // inútil): RETRY REAL — re-tenta cmdline a cada 1s até sair de zygote*.
-    // Teto de 120s, mesmo orçamento do il2cpp_boot logo abaixo. O retry sem
-    // teto (achado #8 do review) deixava a thread viva para sempre num
-    // processo que nunca especializa, com 1 linha de log por minuto.
+    // Teto de 120s só para resolver o pacote; il2cpp_boot tem deadline
+    // separado. O retry sem teto (achado #8 do review) deixava a thread viva
+    // para sempre num processo que nunca especializa, com 1 linha de log por minuto.
     int waits = 0;
     while (!up_pkg[0] && !up_pkg_rejected && waits < 120) {
         if (up_read_pkg() || up_pkg_rejected) break;
@@ -766,7 +766,7 @@ static void *up_worker(void *) {
     }
     up_log("carregado, esperando libil2cpp.so");
     Il2Cpp il;
-    if (!il2cpp_boot(il)) { up_log("il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo"); return nullptr; }
+    if (!il2cpp_boot(il)) { up_log("boot IL2CPP falhou; consulte o log do mod para o motivo"); return nullptr; }
     // Página RX pros thunks mul (código separado dos dados).
     up_thunk_page = (uint32_t *)mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

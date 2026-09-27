@@ -1,0 +1,3 @@
+# Requer uni/il2cpp-wait-2 integrada: rota e boot IL2CPP são registrados pelo helper comum.
+\[il2cpp\].*(__loader_dlopen|dlopen fallback)
+\[il2cpp\] runtime pronto após [0-9]+s
