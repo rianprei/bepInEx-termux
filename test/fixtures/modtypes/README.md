@@ -10,8 +10,8 @@ código de roadmap — a varredura de textos reprova o contrário). Regenerar:
 | arquivo | Kind | instala | por que |
 |---|---|---|---|
 | mod_arm64.so | ELF_ARM64 | sim | ELF64 arm64 ET_DYN coerente |
-| mod_arm32.so | ELF_OTHER_ARCH | nao | arm de 32 bits nao roda no loader arm64 |
-| mod_x86_64.so | ELF_OTHER_ARCH | nao | x86-64 nao roda em Android arm64 |
+| mod_arm32.so | ELF_ARM32 | sim | ELF32 ARM ET_DYN coerente; Manager exige ABI do jogo |
+| mod_x86_64.so | ELF_OTHER_ARCH | nao | x86-64 nao roda em Android ARM |
 | frida-gadget-raw.so | FRIDA_GADGET | nao | gadget (SONAME+marca): vira frida-gadget.bin, nunca .so |
 | mod_pcinho.dll | DOTNET_MONO | nao | assembly .NET de PC (F13, nao implementado) |
 | mod_il2cpp.dll | DOTNET_IL2CPP | nao | assembly .NET IL2CPP (F12, nao implementado) |

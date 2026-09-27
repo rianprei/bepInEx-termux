@@ -33,8 +33,8 @@ SELinux) e os scripts `tools/` fazem a instalação.
 
 - Celular **rooteado** com **Magisk** (Zygisk ligado) ou **KernelSU +
   ZygiskNext**. Sem root não existe caminho (veja o FAQ).
-- **Android 8+** e processador **arm64** (praticamente todo celular de 2018
-  pra cá). arm32 não é suportado.
+- **Android 8+** e processador **ARM**. O módulo inclui loader ARM64 e ARM32;
+  cada mod nativo precisa corresponder à ABI instalada do jogo.
 - O jogo tem que ser de um engine suportado e você precisa de um **mod
   compatível** (ver "Que mods rodam").
 
@@ -71,6 +71,26 @@ tools/deploy_mod.sh <id-do-mod> <pacote-do-jogo>
 # exemplo real (Swamp Attack 2):
 tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 ```
+
+O deploy identifica `primaryCpuAbi` do pacote instalado. Para gerar um
+`.bmod` nativo, passe explicitamente a ABI do jogo:
+`tools/pack_bmod.sh <id> arm64-v8a` ou
+`tools/pack_bmod.sh <id> armeabi-v7a`.
+
+### Suporte por arquitetura (estado do código)
+
+| Componente | ARM64 (`arm64-v8a`) | ARM32 (`armeabi-v7a`) |
+|---|---|---|
+| Loader e instalação `.so`/`.bmod` | disponível | disponível; seleciona pelo ABI do jogo |
+| `u_dump` (Unity IL2CPP) | disponível | disponível; layout de `System.String` usa ponteiros de 32 bits |
+| `sa2ammo`, `sa2content` | build existente | compilados com Dobby ARM32; comportamento em aparelho não verificado |
+| `u_patch`, `u_noads` | disponíveis | compilados, mas registram “não suportado em 32-bit” e saem sem aplicar hooks AArch64 |
+| Hook genérico do loader / Battle Cats | implementado | deliberadamente desativado; ainda não portado/validado |
+| `u_frida` | gadget 17.18.0 disponível | recusa gadget incompatível; ainda não há gadget ARM32 pinado |
+
+O prebuilt Dobby ARM64 permanece intacto. A biblioteca ARM32 é separada,
+construída de Dobby `e9fe7fb` por `tools/build_dobby_arm32.sh`; o hook simples
+foi exercitado em `qemu-arm`. Isso não substitui teste em aparelho ARM32.
 
 - **`<pacote-do-jogo>`** é o identificador do jogo, tipo
   `com.hyperdotstudios.swampattack2`. Ele aparece no link da Play Store
@@ -666,8 +686,9 @@ mas também não é assinatura de release.
 ```bash
 # estrutura exigida pelo Zygisk:
 #   module.prop
-#   zygisk/arm64-v8a.so   ← nome fixo por ABI, não é o nome do seu .so
-zip -r seu-modulo.zip module.prop zygisk/arm64-v8a.so
+#   zygisk/arm64-v8a.so
+#   zygisk/armeabi-v7a.so
+zip -r seu-modulo.zip module.prop zygisk/arm64-v8a.so zygisk/armeabi-v7a.so
 ```
 
 Instalar via Magisk (Módulos → Instalar do armazenamento) e **reiniciar** —

@@ -11,6 +11,8 @@ dispararia** ao fechar o anúncio. Rewarded fica de fora por escopo.
 - Sem `BEPINEX_PKG` (o loader não setou) o mod fica inerte: sem pasta de mods
   não há o que hookar e o log C1 não existe. Mesmo comportamento do
   `u_patch`/`u_frida`.
+- Em ARM32, registra “não suportado em 32-bit” e sai: a guarda de prólogo foi
+  escrita para instruções AArch64 e ainda não há adaptação validada.
 
 ## Testes host (sem device)
 

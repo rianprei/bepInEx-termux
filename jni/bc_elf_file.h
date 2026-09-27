@@ -67,6 +67,11 @@ static inline void bc_elf_file_probe_callback(const char *, uint64_t, void *user
 }
 
 static inline bc_elf_file_probe bc_elf_file_has_bc_mod_register(const char *path) {
+#if UINTPTR_MAX == UINT32_MAX
+    (void)path;
+    bc_elf_file_probe unsupported = {BC_ELF_FILE_ERROR, ENOTSUP};
+    return unsupported;
+#else
     static const uint64_t max_section_bytes = 64 * 1024 * 1024;
     bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -146,11 +151,110 @@ static inline bc_elf_file_probe bc_elf_file_has_bc_mod_register(const char *path
     free(shdrs);
     close(fd);
     return result;
+#endif
+}
+
+static inline bc_elf_file_probe bc_elf_file_read_soname32(const char *path,
+                                                           char *soname,
+                                                           size_t soname_size) {
+    bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
+    if (soname != nullptr && soname_size > 0) soname[0] = '\0';
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        result.error_number = errno;
+        return result;
+    }
+    struct stat st;
+    Elf32_Ehdr ehdr;
+    if (fstat(fd, &st) != 0) {
+        result.error_number = errno;
+        close(fd);
+        return result;
+    }
+    if (st.st_size < (off_t)sizeof(ehdr) ||
+        !bc_elf_file_read_exact(fd, &ehdr, sizeof(ehdr), 0)) {
+        result.error_number = errno;
+        close(fd);
+        return result;
+    }
+    if (memcmp(ehdr.e_ident, ELFMAG, SELFMAG) != 0 ||
+        ehdr.e_ident[EI_CLASS] != ELFCLASS32 ||
+        ehdr.e_ident[EI_DATA] != ELFDATA2LSB ||
+        ehdr.e_shentsize != sizeof(Elf32_Shdr) || ehdr.e_shnum == 0 ||
+        (uint64_t)ehdr.e_shoff > (uint64_t)st.st_size ||
+        ehdr.e_shnum > ((uint64_t)st.st_size - ehdr.e_shoff) / ehdr.e_shentsize) {
+        result.result = BC_ELF_FILE_NO_SYMBOL;
+        close(fd);
+        return result;
+    }
+    size_t shdr_bytes = (size_t)ehdr.e_shnum * sizeof(Elf32_Shdr);
+    Elf32_Shdr *shdrs = (Elf32_Shdr *)malloc(shdr_bytes);
+    if (shdrs == nullptr ||
+        !bc_elf_file_read_exact(fd, shdrs, shdr_bytes, (off_t)ehdr.e_shoff)) {
+        result.error_number = errno;
+        free(shdrs);
+        close(fd);
+        return result;
+    }
+    result.result = BC_ELF_FILE_NO_SYMBOL;
+    const uint64_t max_section_bytes = 64 * 1024 * 1024;
+    for (size_t i = 0; i < ehdr.e_shnum; i++) {
+        const Elf32_Shdr *dynamic = &shdrs[i];
+        if (dynamic->sh_type != SHT_DYNAMIC ||
+            dynamic->sh_entsize != sizeof(Elf32_Dyn) ||
+            dynamic->sh_size == 0 || dynamic->sh_size > max_section_bytes ||
+            dynamic->sh_size % dynamic->sh_entsize != 0 ||
+            dynamic->sh_link >= ehdr.e_shnum) continue;
+        const Elf32_Shdr *strsec = &shdrs[dynamic->sh_link];
+        if (strsec->sh_type != SHT_STRTAB || strsec->sh_size == 0 ||
+            strsec->sh_size > max_section_bytes ||
+            !bc_elf_file_range_ok(st.st_size, dynamic->sh_offset, dynamic->sh_size) ||
+            !bc_elf_file_range_ok(st.st_size, strsec->sh_offset, strsec->sh_size)) continue;
+        size_t dynamic_bytes = (size_t)dynamic->sh_size;
+        size_t str_bytes = (size_t)strsec->sh_size;
+        Elf32_Dyn *entries = (Elf32_Dyn *)malloc(dynamic_bytes);
+        char *strings = (char *)malloc(str_bytes);
+        if (entries == nullptr || strings == nullptr ||
+            !bc_elf_file_read_exact(fd, entries, dynamic_bytes, (off_t)dynamic->sh_offset) ||
+            !bc_elf_file_read_exact(fd, strings, str_bytes, (off_t)strsec->sh_offset)) {
+            result.error_number = errno;
+            free(strings);
+            free(entries);
+            continue;
+        }
+        for (size_t j = 0; j < dynamic_bytes / sizeof(*entries); j++) {
+            uint32_t soname_offset = (uint32_t)entries[j].d_un.d_val;
+            if (entries[j].d_tag != DT_SONAME || soname_offset >= str_bytes) continue;
+            const char *name = strings + soname_offset;
+            size_t max_len = str_bytes - soname_offset;
+            size_t name_len = strnlen(name, max_len);
+            if (name_len >= max_len) continue;
+            if (soname != nullptr && soname_size > 0) {
+                size_t copy_len = name_len < soname_size - 1 ? name_len : soname_size - 1;
+                memcpy(soname, name, copy_len);
+                soname[copy_len] = '\0';
+            }
+            result.result = BC_ELF_FILE_HAS_SYMBOL;
+            free(strings);
+            free(entries);
+            free(shdrs);
+            close(fd);
+            return result;
+        }
+        free(strings);
+        free(entries);
+    }
+    free(shdrs);
+    close(fd);
+    return result;
 }
 
 static inline bc_elf_file_probe bc_elf_file_read_soname(const char *path,
                                                         char *soname,
                                                         size_t soname_size) {
+#if UINTPTR_MAX == UINT32_MAX
+    return bc_elf_file_read_soname32(path, soname, soname_size);
+#else
     static const uint64_t max_section_bytes = 64 * 1024 * 1024;
     bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
     if (soname != nullptr && soname_size > 0) soname[0] = '\0';
@@ -242,6 +346,7 @@ static inline bc_elf_file_probe bc_elf_file_read_soname(const char *path,
     free(shdrs);
     close(fd);
     return result;
+#endif
 }
 
 #endif

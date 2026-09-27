@@ -59,6 +59,7 @@
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
 #include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
+#include "../mods/common/il2cpp_min.h"
 #include "../mods/u_patch/jni/u_patch_parse.h"  // F4: parser C4/C3 (puro)
 #include "../mods/u_patch/jni/u_patch_arm64.h"  // F4: emissores arm64 (puros)
 
@@ -1632,6 +1633,38 @@ int main() {
             return written == (ssize_t)data.size() ? std::string(path) : std::string();
         };
         std::vector<unsigned char> soname_elf = make_soname_elf();
+        auto make_soname_elf32 = []() {
+            const char soname[] = "\0libfrida-gadget-arm32.so";
+            const size_t str_offset = 0x100;
+            const size_t dynamic_offset = 0x140;
+            const size_t sh_offset = 0x200;
+            const size_t file_size = sh_offset + 3 * sizeof(Elf32_Shdr);
+            std::vector<unsigned char> data(file_size, 0);
+            Elf32_Ehdr *eh = (Elf32_Ehdr *)data.data();
+            memcpy(eh->e_ident, ELFMAG, SELFMAG);
+            eh->e_ident[EI_CLASS] = ELFCLASS32;
+            eh->e_ident[EI_DATA] = ELFDATA2LSB;
+            eh->e_ident[EI_VERSION] = EV_CURRENT;
+            eh->e_shoff = sh_offset;
+            eh->e_ehsize = sizeof(Elf32_Ehdr);
+            eh->e_shentsize = sizeof(Elf32_Shdr);
+            eh->e_shnum = 3;
+            memcpy(data.data() + str_offset, soname, sizeof(soname));
+            Elf32_Dyn *dyn = (Elf32_Dyn *)(data.data() + dynamic_offset);
+            dyn[0].d_tag = DT_SONAME;
+            dyn[0].d_un.d_val = 1;
+            dyn[1].d_tag = DT_NULL;
+            Elf32_Shdr *sh = (Elf32_Shdr *)(data.data() + sh_offset);
+            sh[1].sh_type = SHT_STRTAB;
+            sh[1].sh_offset = str_offset;
+            sh[1].sh_size = sizeof(soname);
+            sh[2].sh_type = SHT_DYNAMIC;
+            sh[2].sh_offset = dynamic_offset;
+            sh[2].sh_size = 2 * sizeof(Elf32_Dyn);
+            sh[2].sh_entsize = sizeof(Elf32_Dyn);
+            sh[2].sh_link = 1;
+            return data;
+        };
         auto probe_soname = [&](const char *tag, auto mutate) {
             std::vector<unsigned char> data = soname_elf;
             mutate(data);
@@ -1642,6 +1675,16 @@ int main() {
             unlink(path.c_str());
             return std::make_pair(result, std::string(soname));
         };
+        std::string arm32_soname_path =
+            write_soname_temp(make_soname_elf32(), "arm32");
+        char arm32_soname[128];
+        bc_elf_file_probe arm32_soname_result =
+            bc_elf_file_read_soname32(arm32_soname_path.c_str(),
+                                      arm32_soname, sizeof(arm32_soname));
+        unlink(arm32_soname_path.c_str());
+        check("ELF32 minimo com SONAME frida e detectado",
+              arm32_soname_result.result == BC_ELF_FILE_HAS_SYMBOL &&
+              std::string(arm32_soname) == "libfrida-gadget-arm32.so");
         const char *real_mod = "../mods/kungfux/libs/arm64-v8a/libkungfux.so";
         char real_soname[128];
         bc_elf_file_probe real_result =
@@ -1712,6 +1755,18 @@ int main() {
     // ================================================================
     {
         printf("\n[Caso 57] dump_core: formato C5 (dump.tsv) e pkg C1 (u_dump)\n");
+        Il2CppStringLayout arm32_layout = il2cpp_string_layout_for_pointer_size(4);
+        Il2CppStringLayout arm64_layout = il2cpp_string_layout_for_pointer_size(8);
+        check("System.String ARM32 usa len +0x08 e chars +0x0c",
+              arm32_layout.length_offset == 8 && arm32_layout.chars_offset == 12);
+        check("System.String ARM64 usa len +0x10 e chars +0x14",
+              arm64_layout.length_offset == 16 && arm64_layout.chars_offset == 20);
+        unsigned char str[32] = {};
+        int32_t str_len = 3;
+        uint16_t str_chars[] = {'o', 'k', '!'};
+        memcpy(str + arm64_layout.length_offset, &str_len, sizeof(str_len));
+        memcpy(str + arm64_layout.chars_offset, str_chars, sizeof(str_chars));
+        check("il2cpp_str_eq segue layout do processo", il2cpp_str_eq(str, "ok!"));
         {
             char buf[256];
             int w = dump_write_header(buf, sizeof(buf), "com.foo.game", 1234567, "2022.3.41f1");
@@ -1994,6 +2049,19 @@ int main() {
         check("subpasta não é", !uf_is_js_mod("a/b.js"));
         check("nulo/vazio não é", !uf_is_js_mod(nullptr) && !uf_is_js_mod(""));
         check(".so não é", !uf_is_js_mod("u_frida.so"));
+        const unsigned char arm32_elf[] = {
+            0x7f, 'E', 'L', 'F', 1, 1, 1, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 0, 40, 0
+        };
+        const unsigned char arm64_elf[] = {
+            0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 0, 183, 0
+        };
+        check("gadget ELF ARM32 reconhecido", uf_elf_matches_abi(arm32_elf, sizeof(arm32_elf), 1, 40));
+        check("gadget ELF ARM64 reconhecido", uf_elf_matches_abi(arm64_elf, sizeof(arm64_elf), 2, 183));
+        check("gadget ARM64 recusado como ARM32",
+              !uf_elf_matches_abi(arm64_elf, sizeof(arm64_elf), 1, 40));
+        check("cabeçalho curto recusado", !uf_elf_matches_abi(arm32_elf, 19, 1, 40));
         char json[512];
         int n = uf_build_config(json, sizeof(json), "/data/local/tmp/mods/com.foo.bar");
         check("config JSON exato do modo script-directory", n > 0 &&

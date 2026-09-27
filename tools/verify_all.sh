@@ -108,6 +108,49 @@ while IFS= read -r mod_dir; do
     fi
 done < <(find "$ROOT/mods" -mindepth 1 -maxdepth 1 -type d -print | sort)
 
+run_step "outputs ARM64/ARM32 do loader e mods" "$TIMEOUT_TEST" python3 - "$ROOT" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+artifacts = [
+    ("libs", "libbc-poc.so"),
+    ("mods/u_patch/libs", "libu_patch.so"),
+    ("mods/u_noads/libs", "libu_noads.so"),
+    ("mods/u_dump/libs", "libu_dump.so"),
+    ("mods/u_frida/libs", "libu_frida.so"),
+    ("mods/sa2ammo/libs", "libsa2ammo.so"),
+    ("mods/sa2content/libs", "libsa2content.so"),
+]
+for directory, filename in artifacts:
+    for abi, elf_class, machine in (("arm64-v8a", 2, 183), ("armeabi-v7a", 1, 40)):
+        path = root / directory / abi / filename
+        if not path.is_file():
+            raise SystemExit(f"artefato ausente: {path.relative_to(root)}")
+        head = path.read_bytes()[:20]
+        got_machine = struct.unpack_from("<H", head, 18)[0] if len(head) >= 20 else -1
+        if head[:4] != b"\x7fELF" or head[4] != elf_class or head[5] != 1 or got_machine != machine:
+            raise SystemExit(f"arquitetura errada em {path.relative_to(root)}")
+        if abi == "armeabi-v7a" and filename in ("libu_patch.so", "libu_noads.so"):
+            if "não suportado em 32-bit".encode() not in path.read_bytes():
+                raise SystemExit(f"aviso de recurso indisponível ausente em {path.relative_to(root)}")
+print("loader, mods universais e mods SA2 têm ELF ARM64 e ARM32 corretos")
+print("u_patch/u_noads ARM32 contêm recusa explícita de hooks AArch64")
+PY
+
+if [ -x "$NDK_BUILD" ]; then
+    run_step "zip Magisk contém loader ARM64 e ARM32" "$TIMEOUT_BUILD" bash -c '
+        set -e
+        out="$1/module"
+        NDK="$(dirname "$3")" OUT_DIR="$out" "$2/tools/build_module.sh"
+        bash "$2/test/module_zip_abi_check.sh" "$out/bepinex-termux-$(awk "{print \$1}" "$2/VERSION").zip"
+    ' bash "$TMP" "$ROOT" "$NDK_BUILD"
+else
+    record "zip Magisk contém loader ARM64 e ARM32" SKIP 0 0
+    echo "missing executable: $NDK_BUILD" >&2
+fi
+
 while IFS= read -r makefile; do
     mod_dir=$(dirname "$(dirname "$makefile")")
     case "$mod_dir" in

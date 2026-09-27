@@ -165,6 +165,11 @@ void *worker(void *) {
 } // namespace
 
 __attribute__((constructor)) static void u_noads_init() {
+#if !defined(__aarch64__)
+    mod_log(TAG, "não suportado em 32-bit: a guarda de prólogo e o hook são AArch64; "
+                 "nenhum hook foi instalado");
+    return;
+#endif
     // Sem pacote resolvido não há pasta de mods nem log C1: não hooka nada
     // (mesma decisão do u_patch/u_frida). logcat sempre.
     const char *env = std::getenv("BEPINEX_PKG");

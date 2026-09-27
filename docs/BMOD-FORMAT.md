@@ -73,7 +73,7 @@ Regras (o `tools/pack_bmod.sh` valida na hora de empacotar):
 - `game`: pacote completo (`com.hyperdotstudios.swampattack2`) ou `"*"`
   (qualquer jogo do mesmo engine).
 - `engine`: `unity-il2cpp` | `unity-mono` | `cocos2dx` | `native`.
-- `type`: `native` (o zip tem `mod.so`, arm64-v8a) ou `patch`
+- `type`: `native` (o zip tem `mod.so` da ABI do jogo instalado) ou `patch`
   (o zip tem `mod.bpatch`).
 - `options` (opcional): lista de chaves que o Manager vira sliders/switches.
   `type`: `bool` | `int` | `float` | `choice` (com `"choices": [..]`).
@@ -183,8 +183,9 @@ pela extensão:
 | Tipo detectado | Como detecta | Roda? |
 |---|---|---|
 | `.bmod` | zip com `manifest.json` | sim |
-| `.so` Android arm64 | ELF, `e_machine=183` (AArch64) | sim (copia pra pasta) |
-| `.so` arm32/x86 | ELF de outra arquitetura | não |
+| `.so` Android ARM64 | ELF64, `e_machine=183` (AArch64) | sim, se o jogo usa `arm64-v8a` |
+| `.so` Android ARM32 | ELF32, `e_machine=40` (ARM) | sim, se o jogo usa `armeabi-v7a` |
+| `.so` x86/x86-64 | ELF de outra arquitetura | não |
 | `.bpatch` | texto nas regras C4 | **em integração** (u_patch, F4) |
 | script Frida `.js` | texto JS (`Interceptor`, `Il2Cpp.perform`) | experimental (gadget 17.19.0 fechou o jogo; projeto usa 17.18.0, que carregou e rodou no POCO C75 + SA2) |
 | `.dll` IL2CPP (BepInEx 6/MelonLoader IL2CPP) | PE + CLI + refs `Il2CppInterop`/`UnhollowerBaseLib` | depois (F12) |

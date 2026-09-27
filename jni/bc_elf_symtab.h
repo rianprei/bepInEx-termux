@@ -259,6 +259,13 @@ static inline int bc_symtab_phdr_cb(struct dl_phdr_info *info, size_t, void *dat
 // de "lib existe mas 0 símbolo Java_* exportado" (RegisterNatives).
 static inline int bc_elf_symtab_scan_lib(const char *image_name, bc_elf_symtab_cb cb,
                                           void *user, bool *lib_found) {
+#if UINTPTR_MAX == UINT32_MAX
+    (void)image_name;
+    (void)cb;
+    (void)user;
+    if (lib_found != nullptr) *lib_found = false;
+    return 0;
+#else
     bc_symtab_lib_ctx ctx = {};
     ctx.want_name = image_name;
     ctx.cb = cb;
@@ -266,6 +273,7 @@ static inline int bc_elf_symtab_scan_lib(const char *image_name, bc_elf_symtab_c
     dl_iterate_phdr(bc_symtab_phdr_cb, &ctx);
     if (lib_found != nullptr) *lib_found = ctx.lib_matched;
     return ctx.total_found;
+#endif
 }
 
 // Igual a bc_elf_symtab_scan_lib, mas com filtro de nome customizado (ex.:
@@ -275,6 +283,14 @@ static inline int bc_elf_symtab_scan_lib_filtered(const char *image_name,
                                                    bc_elf_symtab_name_filter filter,
                                                    bc_elf_symtab_cb cb, void *user,
                                                    bool *lib_found) {
+#if UINTPTR_MAX == UINT32_MAX
+    (void)image_name;
+    (void)filter;
+    (void)cb;
+    (void)user;
+    if (lib_found != nullptr) *lib_found = false;
+    return 0;
+#else
     bc_symtab_lib_ctx ctx = {};
     ctx.want_name = image_name;
     ctx.filter = filter;
@@ -283,6 +299,7 @@ static inline int bc_elf_symtab_scan_lib_filtered(const char *image_name,
     dl_iterate_phdr(bc_symtab_phdr_cb, &ctx);
     if (lib_found != nullptr) *lib_found = ctx.lib_matched;
     return ctx.total_found;
+#endif
 }
 #endif // __ANDROID__
 

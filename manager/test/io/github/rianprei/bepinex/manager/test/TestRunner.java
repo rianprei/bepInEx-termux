@@ -9,6 +9,7 @@ public class TestRunner {
             PatchGeneratorTest.run();
             DumpParserTest.run();
             EngineDetectorTest.run();
+            NativeAbiDetectorTest.run();
             ModContentDetectorTest.run();
             SelectedFileRouterTest.run();
             SelectedFileStagerTest.run();

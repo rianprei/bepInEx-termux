@@ -11,6 +11,7 @@ public class ModContentDetectorTest {
     public static void run() {
         testBmod();
         testElfArm64();
+        testElfArm32();
         testElfOtherArch();
         testFridaGadget();
         testPatch();
@@ -71,6 +72,25 @@ public class ModContentDetectorTest {
         return new Sample(name, h, null, false, false, 0x2000L);
     }
 
+    private static Sample elf32Arm(String name) {
+        byte[] h = new byte[2048];
+        h[0] = 0x7f; h[1] = 'E'; h[2] = 'L'; h[3] = 'F';
+        h[4] = 1; h[5] = 1; h[6] = 1;
+        put16(h, 16, 3);
+        put16(h, 18, 40);
+        put32(h, 20, 1);
+        put32(h, 28, 52);
+        put16(h, 40, 52);
+        put16(h, 42, 32);
+        put16(h, 44, 1);
+        put32(h, 52, 1);
+        put32(h, 52 + 16, h.length);
+        put32(h, 52 + 20, h.length);
+        put32(h, 52 + 24, 5);
+        put32(h, 52 + 28, 4096);
+        return new Sample(name, h, null, false, false, h.length);
+    }
+
     private static void put16(byte[] b, int off, int v) {
         b[off] = (byte) v;
         b[off + 1] = (byte) (v >> 8);
@@ -116,13 +136,19 @@ public class ModContentDetectorTest {
         check("id sem extensao", "meu_mod".equals(d.targetId));
     }
 
+    private static void testElfArm32() {
+        Detection d = ModContentDetector.detect(elf32Arm("mod32.so"), true);
+        check("ELF ARM 32 valido instala", d.kind == Kind.ELF_ARM32 && d.installable);
+        check("ext .so ARM32", ".so".equals(d.targetExt));
+        check("ARM32 class/machine incompatível e malformado",
+                ModContentDetector.detect(elf("arm.so", 40), true).kind == Kind.ELF_MALFORMED);
+    }
+
     private static void testElfOtherArch() {
         Detection x86 = ModContentDetector.detect(elf("mod_x86_64.so", 62), true);
         check("x86-64 nao instala", x86.kind == Kind.ELF_OTHER_ARCH && !x86.installable);
         check("diz qual arquitetura", x86.reason.contains("x86-64"));
 
-        Detection arm32 = ModContentDetector.detect(elf("mod32.so", 40), true);
-        check("ARM 32 nao instala", arm32.kind == Kind.ELF_OTHER_ARCH && !arm32.installable);
     }
 
     // C7 + item (c): o gadget NUNCA entra como .so de mod.

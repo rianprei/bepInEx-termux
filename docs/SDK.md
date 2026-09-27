@@ -72,8 +72,9 @@ Sozinho (mesma linha que o `deploy_mod.sh` usa):
     APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk -B -j4
 ```
 
-Saída: `mods/hello/libs/arm64-v8a/libhello.so`. Zero warnings é regra do
-repo (só o `-static-libstdc++` do NDK 23 é benigno).
+Saídas: `mods/hello/libs/arm64-v8a/libhello.so` e
+`mods/hello/libs/armeabi-v7a/libhello.so`. Zero warnings é regra do repo
+(só o `-static-libstdc++` do NDK 23 é benigno).
 
 ## 3. Deploy + teste no device
 
@@ -174,11 +175,13 @@ Formato do `.conf` e regras do manifest: [BMOD-FORMAT.md](BMOD-FORMAT.md).
 ## 7. Empacotar e distribuir
 
 ```bash
-tools/pack_bmod.sh hello
+tools/pack_bmod.sh hello armeabi-v7a
 ```
 
-Valida o `manifest.json` (format/id/engine/type/game) e gera
-`mods/hello/hello.bmod` (zip: `manifest.json` + `mod.so`). Quem receber
+Valida o `manifest.json` (format/id/engine/type/game), confere a arquitetura
+do `.so` escolhido e gera `mods/hello/hello.bmod` (zip: `manifest.json` +
+`mod.so`). Para mod nativo, passe a ABI instalada do jogo (`arm64-v8a` ou
+`armeabi-v7a`). Quem receber
 instala com um toque quando o Manager existir; hoje, o desempacotar manual
 está no BMOD-FORMAT.md.
 

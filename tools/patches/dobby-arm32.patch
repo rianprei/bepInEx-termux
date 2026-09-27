@@ -1,0 +1,43 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2f3359e..f66d1d1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -12 +12 @@
+-set(CMAKE_CXX_STANDARD 11)
++set(CMAKE_CXX_STANDARD 17)
+diff --git a/external/logging/logging/logging.h b/external/logging/logging/logging.h
+index 26a349e..2711f88 100644
+--- a/external/logging/logging/logging.h
++++ b/external/logging/logging/logging.h
+@@ -140 +140 @@
+-Logger *Logger::Shared() {
++inline Logger *Logger::Shared() {
+diff --git a/source/InstructionRelocation/arm/InstructionRelocationARM.cc b/source/InstructionRelocation/arm/InstructionRelocationARM.cc
+index a4b72dc..8bdf53f 100644
+--- a/source/InstructionRelocation/arm/InstructionRelocationARM.cc
++++ b/source/InstructionRelocation/arm/InstructionRelocationARM.cc
+@@ -99,6 +99,12 @@
+   case arm_shift_lsl:
+-    r_val = val;
+-    r_val = r_val << shift_count;
+-    carry = (r_val >> 32) & 0x1;
+-    val = r_val;
++    if (shift_count < 32) {
++      carry = (val >> (32 - shift_count)) & 0x1;
++      val <<= shift_count;
++    } else if (shift_count == 32) {
++      carry = val & 0x1;
++      val = 0;
++    } else {
++      carry = 0;
++      val = 0;
++    }
+     break;
+diff --git a/source/Backend/UserMode/PlatformUtil/Linux/ProcessRuntimeUtility.cc b/source/Backend/UserMode/PlatformUtil/Linux/ProcessRuntimeUtility.cc
+index 3a739b1..513fba1 100644
+--- a/source/Backend/UserMode/PlatformUtil/Linux/ProcessRuntimeUtility.cc
++++ b/source/Backend/UserMode/PlatformUtil/Linux/ProcessRuntimeUtility.cc
+@@ -13 +13,3 @@
++#ifndef LINE_MAX
+ #define LINE_MAX 2048
++#endif
