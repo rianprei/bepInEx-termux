@@ -59,6 +59,9 @@ rm -f "$MARKER"
 i=0
 while IFS= read -r payload; do
     i=$((i + 1))
+    # o marcador vem do proprio payload (que tem %MARKER%); a variavel local e
+    # so documentacao do esperado.
+    # shellcheck disable=SC2034
     marker="$WORK/pwned_$i"
     rm -f "$WORK"/pwned_*
     t="$WORK/tomb_$i.txt"
@@ -91,14 +94,14 @@ EOF
         bad "payload #$i nao deu nenhuma resposta aproveitavel"
     fi
 done <<'PAYLOADS'
-y.so";touch %MARKER%;"z.so
-y.so";touch %MARKER%#"
-y.so$(touch %MARKER%)x.so
-y.so`touch %MARKER%`.so
-y.so";touch %MARKER% ;"z.so
-y.so"|touch %MARKER% #".so
-y.so"&touch %MARKER% #".so
-y.so"; : ; touch %MARKER% ;"z.so
+y.so";>%MARKER%;"z.so
+y.so">%MARKER%;"z.so
+y.so$(>%MARKER%#)x.so
+y.so`>%MARKER%#`x.so
+y.so";>>%MARKER%;"z.so
+y.so";>%MARKER%" #".so
+y.so"&>%MARKER% #".so
+y.so"|tee%MARKER%" #".so
 PAYLOADS
 
 # O marcador acima e literal: substitui pelo caminho real, para o payload rodar
