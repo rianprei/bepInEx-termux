@@ -1,0 +1,4 @@
+# parece regra, mas o C4 nao aceita nenhuma
+return Foo bar -1 bool true
+mul Foo bar 0 string abc
+field Foo bar bool true Metodo 1 extra
