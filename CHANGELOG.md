@@ -9,7 +9,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ### Para o usuário
 - [HOST] O Manager agora lista e identifica mais engines de jogos, explica em português o que cada tipo de jogo permite fazer e evita tratar qualquer app com bibliotecas nativas como jogo. O app compila e a detecção tem testes JVM; instalação e uso no celular ainda não foram verificados. (`59fe913`, `5ed8019`)
 - [HOST] O Manager reúne instalação de mods `.bmod` e arquivos compatíveis, controles para ativar/desativar, opções, logs e criação de regras sem código; o fluxo de leitura do jogo gera e limpa o scanner automaticamente, inclusive ao falhar. APK e testes JVM cobrem esses caminhos, mas o fluxo ainda não foi executado no celular. (`59fe913`, `9bc95f8`, `368406d`, `3884e54`, `ca4354b`)
-- [HOST] Foi adicionado o motor de regras IL2CPP para alterar retornos, multiplicar valores e fixar campos; o formato é compartilhado entre o Manager e o carregador para evitar divergências. Os testes de host incluem harnesses e execução de thunks em QEMU; o efeito em jogo continua pendente de teste no aparelho. (`6589f2f`, `bf9eee3`)
+- Foi adicionado o motor de regras IL2CPP para alterar retornos, multiplicar valores e fixar campos; o formato é compartilhado entre o Manager e o carregador para evitar divergências. Os testes de host incluem harnesses e execução de thunks em QEMU; `return`/`mul`/`static` ainda não foram testados no aparelho; `field` falhou no 1º teste. (`6589f2f`, `bf9eee3`)
 - [HOST] `u_noads` tenta fechar anúncios forçados usando o callback de fechamento do SDK, cobrindo seis SDKs conhecidos. Os testes verificam alvos e fechadores, mas o uso no SA2 não foi confirmado em aparelho. (`f08164b`)
 - [HOST] O carregador aceita scripts `.js` do Frida apenas em modo script; o instalador e a checagem do binário do gadget têm testes de host. A execução no celular continua experimental e não foi validada. (`023e4c9`, `744bb6d`)
 
@@ -29,6 +29,9 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 - [HOST] O Manager pode ser assinado com uma chave fixa fornecida pelo usuário, sem expor a senha do keystore na lista de processos; o teste usa chaves temporárias e não inclui keystore no repositório. (`192e967`)
 - [HOST] Foram adicionados documentação do SDK e do formato `.bmod`, fixture C4 compartilhada, scanner empacotado a partir do fonte e roteiro/gate de referências em documentação. (`0d989c3`, `bf9eee3`, `9bc95f8`, `73e45b5`)
 - [HOST] O roadmap recebeu sincronizações com evidência por item e o parecer do spike de runtime .NET; esses registros não significam que a execução ou medição em aparelho foi feita. (`ea957ae`, `7c66679`)
+
+### Problemas conhecidos
+- A regra de campo (`field`) pode fechar o jogo. Não a use até a correção entrar; ela falhou no primeiro teste em aparelho. (`6589f2f`)
 
 ## v0.3.6 — 2026-09-22
 
