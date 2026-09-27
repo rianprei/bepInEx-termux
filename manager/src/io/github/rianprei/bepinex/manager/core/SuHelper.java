@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -97,6 +96,8 @@ public final class SuHelper {
     private static final Pattern NAME_RE = Pattern.compile("^[A-Za-z0-9._-]+$");
     private static final Pattern MODE_RE = Pattern.compile("^[0-7]{3,4}$");
     private static final Pattern PATH_RE = Pattern.compile("^/[A-Za-z0-9_./-]+$");
+    private static final Pattern ACTIVITY_CLASS_RE =
+            Pattern.compile("^\\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*$");
 
     public static final String MODS_ROOT = "/data/local/tmp/mods/";
 
@@ -105,6 +106,29 @@ public final class SuHelper {
         if (pkg == null || !PKG_RE.matcher(pkg).matches()) {
             throw new IllegalArgumentException("pacote invalido: " + pkg);
         }
+    }
+
+    public static String requireActivityComponent(String pkg, String component) {
+        requirePkg(pkg);
+        if (component == null || component.indexOf('\n') >= 0 || component.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("atividade de início inválida");
+        }
+        int separator = component.indexOf('/');
+        if (separator <= 0 || separator != component.lastIndexOf('/')
+                || !pkg.equals(component.substring(0, separator))) {
+            throw new IllegalArgumentException("atividade de início não pertence ao pacote");
+        }
+        String className = component.substring(separator + 1);
+        // O pacote antes da '/' já foi conferido acima; a CLASSE pode estar em
+        // qualquer namespace — o Android permite launcher fora do namespace do
+        // applicationId (ex.: com.foo/br.com.foo.Main), e exigir pkg+"." na
+        // frente recusava jogo com launch válido. Para o shell basta o
+        // charset: ACTIVITY_CLASS_RE proíbe espaço, aspas, ';', '$(' e quebra
+        // de linha, então o valor entra entre aspas sem surpresa.
+        if (!ACTIVITY_CLASS_RE.matcher(className).matches() || className.equals(".")) {
+            throw new IllegalArgumentException("nome da atividade de início inválido");
+        }
+        return component;
     }
 
     // Nome de arquivo dentro de mods/<pkg>/: sem barra, sem "..", sem espaco.
@@ -311,19 +335,18 @@ public final class SuHelper {
             // proprio app e so o caminho (validado) e copiado. Escrever por
             // stdin seria mais curto, mas se o su do device nao repassar o
             // stdin o `cat > destino` receberia EOF e deixaria o arquivo
-            // VAZIO sem dar erro — o .conf/.bpatch do mod sumiria em silencio.
-            File tmp = File.createTempFile("bep_su_write_", ".tmp");
-            try (FileOutputStream fos = new FileOutputStream(tmp)) {
-                fos.write(content.getBytes(StandardCharsets.UTF_8));
-            }
-            requirePath(tmp.getAbsolutePath(), "tmp");
-            Result r = exec(writeTextFileCommand(tmp.getAbsolutePath(), filePath));
-            tmp.delete();
+            // VAZIO sem dar erro — o .conf/.bpatch do mod sumiria em silêncio.
+            String tempDirectory = System.getProperty("java.io.tmpdir");
+            File cacheDirectory = tempDirectory == null ? null : new File(tempDirectory);
+            boolean written = TemporaryTextFile.write(cacheDirectory, content, tmpPath -> {
+                        requirePath(tmpPath, "tmp");
+                        return exec(writeTextFileCommand(tmpPath, filePath)).success;
+                    });
             // cp como root cria o arquivo root:root. Se o destino for dentro
             // de /data/data/<pkg>/files (o state dir do jogo), isso tranca o
             // app fora do próprio log — devolve o dono do diretório pai.
-            if (r.success && filePath.contains("/files/")) ensureOwner(filePath);
-            return r.success;
+            if (written && filePath.contains("/files/")) ensureOwner(filePath);
+            return written;
         } catch (IOException | IllegalArgumentException e) {
             return false;
         }
@@ -436,18 +459,21 @@ public final class SuHelper {
         return "mv '" + currentPath + "' '" + newPath + "' && chcon " + SELINUX_MOD_CONTEXT + " '" + newPath + "'";
     }
 
-    public static boolean restartGame(String pkg) {
+    public static boolean restartGame(String pkg, String activityComponent) {
         try {
             requirePkg(pkg);
+            requireActivityComponent(pkg, activityComponent);
         } catch (IllegalArgumentException e) {
             return false;
         }
-        // Encerra forcadamente e inicia o aplicativo principal
-        String cmd = "am force-stop '" + pkg + "' && " +
-                "(monkey -p '" + pkg + "' -c android.intent.category.LAUNCHER 1 2>/dev/null || " +
-                "am start -n $(cmd package resolve-activity --brief '" + pkg + "' | tail -n 1) 2>/dev/null)";
-        Result r = exec(cmd);
+        Result r = exec(restartGameCommand(pkg, activityComponent));
         return r.exitCode == 0;
+    }
+
+    public static String restartGameCommand(String pkg, String activityComponent) {
+        requirePkg(pkg);
+        requireActivityComponent(pkg, activityComponent);
+        return "am force-stop '" + pkg + "' && am start -n '" + activityComponent + "' 2>/dev/null";
     }
 
     public static String readLog(String pkg) {
@@ -515,8 +541,8 @@ public final class SuHelper {
 
     public static String crashGuardCommand(String pkg, String counterPath,
                                            String markerPath, String modsMarkerPath) {
-        return "echo deaths=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f1);"
-                + " echo ts=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f2);"
+        return "echo \"deaths=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f1)\";"
+                + " echo \"ts=$(cat '" + counterPath + "' 2>/dev/null | cut -d' ' -f2)\";"
                 + " if [ -f '" + markerPath + "' ] || [ -f '" + modsMarkerPath + "' ]; "
                 + "then echo marker=yes; else echo marker=no; fi";
     }
@@ -551,7 +577,8 @@ public final class SuHelper {
         if (!stateDirExists) return null;
         return "rm -f '" + CrashGuardState.markerPath(pkg) + "' '"
                 + CrashGuardState.modsMarkerPath(pkg) + "' && "
-                + "echo '0 '$(date +%s) > '" + CrashGuardState.counterPath(pkg) + "'";
+                + "printf '0 %s\\n' \"$(date +%s)\" > '"
+                + CrashGuardState.counterPath(pkg) + "'";
     }
 
     public static boolean reactivateMods(String pkg) {

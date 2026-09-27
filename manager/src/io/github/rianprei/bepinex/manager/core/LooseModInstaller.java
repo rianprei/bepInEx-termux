@@ -29,6 +29,16 @@ public final class LooseModInstaller {
             this.kind = kind;
             this.installedAs = installedAs;
         }
+
+        /** Fábrica para dirigir o fluxo em teste (mesmo tipo que a Activity recebe). */
+        public static Result ok(String message) {
+            return new Result(true, message, null, null);
+        }
+
+        /** Fábrica para dirigir o fluxo em teste (mesmo tipo que a Activity recebe). */
+        public static Result fail(String message) {
+            return new Result(false, message, null, null);
+        }
     }
 
     // Limite de leitura para deteccao de texto (regra .bpatch e script .js sao

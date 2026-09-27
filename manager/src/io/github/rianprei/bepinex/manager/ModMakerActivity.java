@@ -25,6 +25,7 @@ import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
 import io.github.rianprei.bepinex.manager.core.ScanFlow;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
+import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.model.DumpEntry;
 import io.github.rianprei.bepinex.manager.model.ModManifest;
 import io.github.rianprei.bepinex.manager.model.PatchRule;
@@ -39,7 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ModMakerActivity extends Activity {
+public class ModMakerActivity extends Activity implements UiLiveness.ActivityLike {
     private static final int PAGE_SIZE = 25;
 
     private String mPkg;
@@ -156,6 +157,12 @@ public class ModMakerActivity extends Activity {
 
     // 1. Escanear Jogo com u_dump.so
     private void scanGame() {
+        String activityComponent = LaunchActivityResolver.resolve(getPackageManager(), mPkg);
+        if (activityComponent == null) {
+            mTvScannerStatus.setText(LaunchActivityResolver.NOT_FOUND_MESSAGE);
+            Toast.makeText(this, LaunchActivityResolver.NOT_FOUND_MESSAGE, Toast.LENGTH_LONG).show();
+            return;
+        }
         if (!hasAsset("u_dump.so")) {
             new AlertDialog.Builder(this)
                     .setTitle("Componente Ausente")
@@ -176,7 +183,7 @@ public class ModMakerActivity extends Activity {
                         return SuHelper.installFile(local, "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
                     }
                     public boolean deleteDump() { return SuHelper.deleteDump(mPkg); }
-                    public boolean restartGame() { return SuHelper.restartGame(mPkg); }
+                    public boolean restartGame() { return SuHelper.restartGame(mPkg, activityComponent); }
                     public boolean dumpReady() {
                         return SuHelper.readDump(mPkg) != null;
                     }
@@ -186,12 +193,17 @@ public class ModMakerActivity extends Activity {
                     public void sleep(long millis) throws InterruptedException { Thread.sleep(millis); }
                 }, tmpSo);
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("Scanner concluído: dump.tsv gerado.");
                     Toast.makeText(this, "Scanner concluído.", Toast.LENGTH_LONG).show();
                 });
-                mMainHandler.post(() -> checkAndSyncDump(false));
+                mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;   // evita chamada root em tela morta
+                    checkAndSyncDump(false);
+                });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("Erro ao escanear: " + e.getMessage());
                 });
             }
@@ -212,6 +224,7 @@ public class ModMakerActivity extends Activity {
                 SuHelper.exec("chmod 666 '" + mLocalDumpFile.getAbsolutePath() + "' 2>/dev/null");
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("dump.tsv pronto! (" + r.stdout.trim() + ")");
                     mTvScannerStatus.setTextColor(Color.parseColor("#22C55E"));
                     if (showToast) Toast.makeText(this, "dump.tsv sincronizado!", Toast.LENGTH_SHORT).show();
@@ -220,6 +233,7 @@ public class ModMakerActivity extends Activity {
                 });
             } else {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvScannerStatus.setText("dump.tsv não encontrado em /data/data/" + mPkg + "/files/bepinex/dump.tsv. Toque em 'Escanear Jogo'.");
                     mTvScannerStatus.setTextColor(Color.parseColor("#EAB308"));
                     if (showToast) Toast.makeText(this, "dump.tsv ainda não foi gerado.", Toast.LENGTH_SHORT).show();
@@ -247,6 +261,7 @@ public class ModMakerActivity extends Activity {
                 DumpParser.SearchResult result = DumpParser.search(reader, query, null, offset, PAGE_SIZE);
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mHasMorePages = result.hasMore;
                     mTvPageInfo.setText("Página " + (mCurrentPage + 1));
                     mBtnPrevPage.setEnabled(mCurrentPage > 0);
@@ -265,6 +280,7 @@ public class ModMakerActivity extends Activity {
                 });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     mTvDumpEmpty.setText("Erro ao ler dump: " + e.getMessage());
                     mTvDumpEmpty.setVisibility(View.VISIBLE);
                 });
@@ -595,6 +611,9 @@ public class ModMakerActivity extends Activity {
 
             final String finalWarning = missingWarning;
             mMainHandler.post(() -> {
+                // Callback longo (su): a tela pode ter morrido (rotação) —
+                // dialog em Activity destruída é BadTokenException.
+                if (!UiLiveness.alive(this)) return;
                 new AlertDialog.Builder(this)
                         .setTitle("Mod Salvo!")
                         .setMessage("O mod '" + modName + "' foi salvo e ativado para " + mPkg + "!" + finalWarning)
@@ -640,6 +659,7 @@ public class ModMakerActivity extends Activity {
                 File bmod = BmodInstaller.createBmod(manifest, patchContent, true, downloadDir);
 
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     new AlertDialog.Builder(this)
                             .setTitle("Mod Exportado!")
                             .setMessage("Arquivo criado com sucesso:\n\n" + bmod.getAbsolutePath())
@@ -648,6 +668,7 @@ public class ModMakerActivity extends Activity {
                 });
             } catch (Exception e) {
                 mMainHandler.post(() -> {
+                    if (!UiLiveness.alive(this)) return;
                     Toast.makeText(this, "Erro ao exportar: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
             }

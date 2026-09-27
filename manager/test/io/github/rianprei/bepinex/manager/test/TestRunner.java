@@ -12,6 +12,7 @@ public class TestRunner {
             ModContentDetectorTest.run();
             SelectedFileRouterTest.run();
             SelectedFileStagerTest.run();
+            SelectedFileWorkTest.run();
             CrashGuardStateTest.run();
             BuildVersionTest.run();
             SuHelperTest.run();
@@ -20,6 +21,10 @@ public class TestRunner {
             C4FixtureTest.run();
             ModTypeMatrixTest.run();
             RootCallBudgetTest.run();
+        InFlightFlagTest.run();
+        UiLivenessTest.run();
+        PendingStagedFileTest.run();
+        SelectedFileFlowTest.run();
             ShellExecTest.run();
             Dll2PatchTest.run();
             System.out.println("=== TODOS OS TESTES PASSARAM COM SUCESSO (0 FALHAS) ===");

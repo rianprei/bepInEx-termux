@@ -1,8 +1,10 @@
 package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.SuHelper;
+import io.github.rianprei.bepinex.manager.core.TemporaryTextFile;
 
 import java.io.File;
+import java.nio.file.Files;
 
 public class SuHelperTest {
     public static void run() {
@@ -10,6 +12,8 @@ public class SuHelperTest {
         testNomeHostilRecusado();
         testChmodHostilRecusado();
         testCaminhoHostilRecusado();
+        testActivityComponentValidation();
+        testTemporaryTextFileCleanupOnInterruption();
         testValidosAceitos();
         testOwnerFixCommand();
         testReactivatePlan();
@@ -98,6 +102,80 @@ public class SuHelperTest {
                 SuHelper.listFiles("/data/local/tmp/mods/$(id)").isEmpty());
         check("writeTextFile hostil nao executa",
                 !SuHelper.writeTextFile("/data/local/tmp/mods/com.foo/a.conf; id", "x=1"));
+    }
+
+    private static void testActivityComponentValidation() {
+        String valid = SuHelper.requireActivityComponent("com.example.game", "com.example.game/.MainActivity");
+        check("componente relativo válido", valid.equals("com.example.game/.MainActivity"));
+        check("componente aninhado válido",
+                SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/com.example.game.Main$Home").endsWith("Main$Home"));
+        checkRejeita("componente com espaço",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main Activity"));
+        checkRejeita("componente com ponto e vírgula",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main;id"));
+        checkRejeita("componente com substituição de comando",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.$(id)"));
+        checkRejeita("componente com duas linhas",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main\ncom.attacker/.Run"));
+        checkRejeita("componente com dois separadores",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.example.game/.Main/Other"));
+        checkRejeita("componente de outro pacote",
+                () -> SuHelper.requireActivityComponent("com.example.game",
+                        "com.attacker/.Main"));
+        String command = SuHelper.restartGameCommand("com.example.game", valid);
+        check("comando passa componente inteiro entre aspas simples",
+                command.contains("am start -n 'com.example.game/.MainActivity'"));
+        check("comando não resolve atividade pelo shell",
+                !command.contains("resolve-activity") && !command.contains("$("));
+        // namespace da classe pode diferir do applicationId (o Android
+        // permite launcher fora do namespace do pacote): com.foo/br.com.foo.Main
+        // é launch válido e era recusado à toa.
+        check("classe em namespace alheio ao pacote é aceita",
+                "com.foo/br.com.foo.Main".equals(
+                        SuHelper.requireActivityComponent("com.foo", "com.foo/br.com.foo.Main")));
+        checkRejeita("classe em namespace alheio com metacaractere continua recusada",
+                () -> SuHelper.requireActivityComponent("com.foo", "com.foo/br.com'.foo.Main;id"));
+        checkRejeita("classe relativa estranha continua recusada",
+                () -> SuHelper.requireActivityComponent("com.example.game", "com.example.game/."));
+    }
+
+    private static void testTemporaryTextFileCleanupOnInterruption() {
+        File cache;
+        try {
+            cache = Files.createTempDirectory("bep-write-test-").toFile();
+        } catch (Exception e) {
+            throw new AssertionError("não conseguiu criar cache de teste: " + e);
+        }
+        try {
+            boolean interrupted = false;
+            try {
+                TemporaryTextFile.write(cache, "name=value", tempPath -> {
+                    check("temporário existe durante cópia falsa", new File(tempPath).isFile());
+                    throw new IllegalStateException("exec interrompido");
+                });
+            } catch (IllegalStateException expected) {
+                interrupted = true;
+            } catch (java.io.IOException e) {
+                throw new AssertionError("falha inesperada ao escrever temporário: " + e);
+            }
+            check("exec falso simulou interrupção", interrupted);
+            String[] leftovers = cache.list((directory, name) -> name.startsWith("bep_su_write_")
+                    && name.endsWith(".tmp"));
+            check("interrupção não deixa bep_su_write_*.tmp no cache",
+                    leftovers != null && leftovers.length == 0);
+        } finally {
+            File[] leftovers = cache.listFiles();
+            if (leftovers != null) {
+                for (File leftover : leftovers) leftover.delete();
+            }
+            cache.delete();
+        }
     }
 
     /**
