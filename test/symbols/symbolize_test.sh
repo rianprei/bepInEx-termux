@@ -44,20 +44,25 @@ echo "  build-id: $BID"
 
 # --- tombstone sintético ----------------------------------------------------
 # Offsets DERIVADOS do .so recém-construído: pega o endereço de uma função
-# FUNC que exista no binário e soma um deslocamento pequeno para cair dentro
-# da função. Assim o teste não depende de offset fixo — se o layout do
-# binário mudar, o teste acompanha.
-FN_ADDR=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
-          awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
-[ -n "$FN_ADDR" ] || { echo "symbolize_test: nenhuma função FUNC encontrada no .so" >&2; exit 1; }
-# Converte hex para decimal, soma 16 (0x10), volta para hex
-OFFSET=$(printf '0x%x' $(( FN_ADDR + 0x10 )) )
-echo "  função em $FN_ADDR, offset derivado: $OFFSET"
+# que tenha debug info (addr2line resolve para arquivo:linha) e soma um
+# deslocamento pequeno para cair dentro da função. Assim o teste não depende
+# de offset fixo — se o layout do binário mudar, o teste acompanha.
+set +e  # symbols.sh fonteado ativa set -e; aqui não queremos saída silenciosa
+OFFSET=""
+while IFS=' ' read -r addr name; do
+  # Testa se este endereço resolve para arquivo:linha
+  if "$BINDIR/llvm-addr2line" -f -C -i -e "$SO" "0x$addr" 2>/dev/null | tail -1 | grep -qE '\.[ch]+:[0-9]+'; then
+    OFFSET=$(printf '0x%x' $(( 0x$addr + 0x10 )) )
+    echo "  função $name em 0x$addr, offset derivado: $OFFSET"
+    break
+  fi
+done < <("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
+       awk '$4=="FUNC" && $8 !~ /@/ && $8 !~ /^(Dobby|dobby_|InlineHookRouting)/ {print $2, $8}')
+[ -n "$OFFSET" ] || { echo "symbolize_test: nenhuma função com debug info encontrada no .so" >&2; exit 1; }
 
-# o ponto de entrada do thread do mod
-ENTRY=$("$BINDIR/llvm-readelf" -sW "$SO" 2>/dev/null |
-        awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
-[ -n "$ENTRY" ] || ENTRY=0x1a5f0
+# o ponto de entrada do thread do mod: usa o mesmo offset derivado
+ENTRY=$OFFSET
+set -e
 cat >"$WORK/sintetico.txt" <<EOF
 *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
 Build fingerprint: 'synthetic/symbolize-test'
@@ -196,14 +201,16 @@ echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
     if [ -f "$HSO" ]; then
         HSYMD="$WORK/symbols_hist"
         HBID=$(symbols_add "$HSO" "$HSYMD" "u_patch")
-        # Deriva o offset do .so histórico (não usa offset fixo)
-        HFN_ADDR=$("$BINDIR/llvm-readelf" -sW "$HSO" 2>/dev/null |
-                   awk '$4=="FUNC" && $8 !~ /^_/ && $8 !~ /@/ {print $2; exit}')
-        if [ -n "$HFN_ADDR" ]; then
-            HOFFSET=$(printf '0x%x' $(( HFN_ADDR + 0x10 )) )
-        else
-            HOFFSET=0x1bb34  # fallback: commit histórico pode não ter a função
-        fi
+        # Deriva o offset do .so histórico: busca função com debug info
+        HOFFSET=""
+        while IFS=' ' read -r addr name; do
+            if "$BINDIR/llvm-addr2line" -f -C -i -e "$HSO" "0x$addr" 2>/dev/null | tail -1 | grep -qE '\.[ch]+:[0-9]+'; then
+                HOFFSET=$(printf '0x%x' $(( 0x$addr + 0x10 )) )
+                break
+            fi
+        done < <("$BINDIR/llvm-readelf" -sW "$HSO" 2>/dev/null |
+               awk '$4=="FUNC" && $8 !~ /@/ && $8 !~ /^(Dobby|dobby_|InlineHookRouting)/ {print $2, $8}')
+        [ -n "$HOFFSET" ] || HOFFSET=0x1bb34  # fallback
         # tombstone sintético no build-id histórico, com o offset derivado
         cat >"$WORK/hist.txt" <<EOF
 backtrace:
