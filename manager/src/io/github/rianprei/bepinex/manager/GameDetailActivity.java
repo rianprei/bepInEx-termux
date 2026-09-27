@@ -24,6 +24,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
 import io.github.rianprei.bepinex.manager.core.ModInventory;

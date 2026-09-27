@@ -28,6 +28,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
 import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
@@ -36,7 +37,6 @@ import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
-import io.github.rianprei.bepinex.manager.core.SelectedFileWork;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
 import io.github.rianprei.bepinex.manager.core.SuHelper;
 import io.github.rianprei.bepinex.manager.model.GameInfo;
