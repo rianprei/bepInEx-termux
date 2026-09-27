@@ -52,6 +52,7 @@ public class GameDetailActivity extends Activity {
     private TextView mTvName;
     private TextView mTvPkg;
     private TextView mTvEngine;
+    private TextView mTvEngineSupport;
     private ListView mListMods;
     private TextView mTvEmptyMods;
     private LinearLayout mCrashGuardBox;
@@ -80,6 +81,7 @@ public class GameDetailActivity extends Activity {
         mTvName = findViewById(R.id.detail_tv_name);
         mTvPkg = findViewById(R.id.detail_tv_pkg);
         mTvEngine = findViewById(R.id.detail_tv_engine);
+        mTvEngineSupport = findViewById(R.id.detail_tv_engine_support);
         mListMods = findViewById(R.id.detail_list_mods);
         mTvEmptyMods = findViewById(R.id.detail_tv_empty_mods);
         mCrashGuardBox = findViewById(R.id.detail_crashguard_box);
@@ -89,6 +91,7 @@ public class GameDetailActivity extends Activity {
         mTvName.setText(mAppName != null ? mAppName : mPkg);
         mTvPkg.setText(mPkg);
         mTvEngine.setText(EngineDetector.getDisplayName(mEngine));
+        mTvEngineSupport.setText(EngineDetector.getModSupport(mEngine));
 
         // Cor do badge de engine
         GradientDrawable gd = new GradientDrawable();

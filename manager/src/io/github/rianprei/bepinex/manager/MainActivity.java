@@ -244,7 +244,7 @@ public class MainActivity extends Activity {
         for (GameInfo g : mAllGames) {
             if (filterGamesOnly) {
                 boolean isCompatible = g.isGame ||
-                        !EngineDetector.ENGINE_JAVA.equals(g.engine) ||
+                        EngineDetector.isGameEngine(g.engine) ||
                         g.installedModsCount > 0;
                 if (!isCompatible) continue;
             }
