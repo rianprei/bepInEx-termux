@@ -21,7 +21,7 @@ if [ ! -x libs/arm64-v8a/thunk_exec ]; then
     echo "binário thunk_exec não existe ou não é executável — gate não pode validar buga/bugb2"
     rc=1
 else
-    buga_out=$(timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec buga 2>&1); buga_ec=$?
+    timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec buga >/dev/null 2>&1; buga_ec=$?
     if [ $buga_ec -eq 0 ]; then
         echo "buga passou — teste NÃO pega o bug (a)"; rc=1
     elif [ $buga_ec -eq 124 ]; then
@@ -36,7 +36,7 @@ if [ ! -x libs/arm64-v8a/thunk_exec ]; then
     echo "binário thunk_exec não existe ou não é executável — gate não pode validar buga/bugb2"
     rc=1
 else
-    bugb2_out=$(timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec bugb2 2>&1); bugb2_ec=$?
+    timeout 60 "$QEMU" libs/arm64-v8a/thunk_exec bugb2 >/dev/null 2>&1; bugb2_ec=$?
     if [ $bugb2_ec -eq 0 ]; then
         echo "bugb2 passou — teste NÃO pega o bug (b)"; rc=1
     elif [ $bugb2_ec -eq 124 ]; then
