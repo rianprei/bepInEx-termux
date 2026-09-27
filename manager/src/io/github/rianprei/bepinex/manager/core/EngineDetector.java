@@ -56,18 +56,37 @@ public final class EngineDetector {
 
     public static String getModSupport(String engine) {
         if (ENGINE_UNITY_IL2CPP.equals(engine)) {
-            return "u_patch funciona apenas em Unity IL2CPP. Mods .so precisam ser compativeis com o aparelho; scripts Frida JS dependem do u_frida.";
+            return "Você pode escanear o jogo para criar mods de valores sem programar e instalar mods prontos feitos para este jogo. O uso de scripts JavaScript pelo carregador no celular é experimental; mods de outro jogo não têm compatibilidade garantida.";
         }
         if (ENGINE_UNITY_MONO.equals(engine)) {
-            return "u_patch deste projeto nao funciona em Unity Mono. Mods .so compativeis e scripts Frida JS dependem do aparelho e do u_frida.";
+            return "Você pode instalar mods prontos feitos para este jogo e usar scripts JavaScript pelo carregador (experimental no celular). Ainda não é possível criar mods sem programar para Unity Mono.";
         }
         if (ENGINE_JAVA.equals(engine) || ENGINE_UNKNOWN.equals(engine) || engine == null) {
-            return "Nao foi identificado um engine suportado. O Manager nao cria suporte automaticamente; .so compativeis e Frida JS dependem do aparelho e do u_frida.";
+            return "Você pode instalar mods prontos feitos para este jogo e usar scripts JavaScript pelo carregador (experimental no celular). Ainda não é possível criar mods sem programar para este app.";
         }
         if (ENGINE_NATIVE.equals(engine)) {
-            return "Ha bibliotecas nativas, mas o engine nao foi identificado. u_patch nao se aplica; .so compativeis e Frida JS dependem do aparelho e do u_frida.";
+            return "Você pode instalar mods prontos feitos para este jogo e usar scripts JavaScript pelo carregador (experimental no celular). Ainda não é possível criar mods sem programar para este app.";
         }
-        return "Engine identificado pelo conteudo, mas nao ha mod especifico para ele neste projeto. Mods .so exigem compatibilidade; scripts Frida JS dependem do aparelho e do u_frida.";
+        return "Você pode instalar mods prontos feitos para este jogo e usar scripts JavaScript pelo carregador (experimental no celular). Ainda não é possível criar mods sem programar para esta engine.";
+    }
+
+    public static boolean isGameEngine(String engine) {
+        if (engine == null) return false;
+        switch (engine) {
+            case ENGINE_UNITY_IL2CPP:
+            case ENGINE_UNITY_MONO:
+            case ENGINE_COCOS2DX:
+            case ENGINE_UNREAL:
+            case ENGINE_GODOT:
+            case ENGINE_DEFOLD:
+            case ENGINE_SOLAR2D:
+            case ENGINE_LOVE:
+            case ENGINE_LIBGDX:
+            case ENGINE_RENPY:
+                return true;
+            default:
+                return false;
+        }
     }
 
     // Indica apenas os artefatos nativos. Sem os assets, backends Unity nao podem

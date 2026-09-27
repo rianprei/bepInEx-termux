@@ -15,6 +15,7 @@ public class EngineDetectorTest {
         testConfirmedEngineMarkers();
         testPrecedenceAndExactNames();
         testUnknownAndJavaFallback();
+        testGameEngineFilterAndAccessibleSupportText();
         testDetectFromZip();
         System.out.println("  [OK] EngineDetectorTest (C6)");
     }
@@ -113,6 +114,69 @@ public class EngineDetectorTest {
             }
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static void testGameEngineFilterAndAccessibleSupportText() {
+        String[] gameEngines = {
+                EngineDetector.ENGINE_UNITY_IL2CPP,
+                EngineDetector.ENGINE_UNITY_MONO,
+                EngineDetector.ENGINE_UNREAL,
+                EngineDetector.ENGINE_GODOT,
+                EngineDetector.ENGINE_COCOS2DX,
+                EngineDetector.ENGINE_DEFOLD,
+                EngineDetector.ENGINE_SOLAR2D,
+                EngineDetector.ENGINE_LOVE,
+                EngineDetector.ENGINE_LIBGDX,
+                EngineDetector.ENGINE_RENPY
+        };
+        for (String engine : gameEngines) {
+            if (!EngineDetector.isGameEngine(engine)) {
+                throw new AssertionError("Engine de jogo excluído do filtro: " + engine);
+            }
+            assertSupportText(engine);
+        }
+
+        String[] nonGameEngines = {
+                EngineDetector.ENGINE_FLUTTER,
+                EngineDetector.ENGINE_REACT_NATIVE,
+                EngineDetector.ENGINE_XAMARIN,
+                EngineDetector.ENGINE_NATIVE,
+                EngineDetector.ENGINE_JAVA,
+                EngineDetector.ENGINE_UNKNOWN
+        };
+        for (String engine : nonGameEngines) {
+            if (EngineDetector.isGameEngine(engine)) {
+                throw new AssertionError("App que não é engine de jogo entrou no filtro: " + engine);
+            }
+            assertSupportText(engine);
+        }
+        if (EngineDetector.isGameEngine(null)) {
+            throw new AssertionError("Engine nula não deve ser tratada como jogo");
+        }
+    }
+
+    private static void assertSupportText(String engine) {
+        String support = EngineDetector.getModSupport(engine);
+        if (support == null || support.trim().isEmpty()) {
+            throw new AssertionError("Texto de suporte ausente para " + engine);
+        }
+        if (!support.contains("não")) {
+            throw new AssertionError("Texto de suporte deve usar português acentuado para "
+                    + engine + ": " + support);
+        }
+        if (!support.contains("experimental") || !support.contains("JavaScript")) {
+            throw new AssertionError("Texto deve explicar o suporte experimental a JavaScript: " + support);
+        }
+        for (String jargon : new String[]{"u_patch", "u_frida", "Frida JS", ".so"}) {
+            if (support.contains(jargon)) {
+                throw new AssertionError("Texto expõe termo técnico ao usuário: " + jargon);
+            }
+        }
+        if (EngineDetector.ENGINE_UNITY_IL2CPP.equals(engine)
+                && (!support.contains("escanear") || !support.contains("valores")
+                || !support.contains("sem programar"))) {
+            throw new AssertionError("Unity IL2CPP deve explicar a criação de mod de valor sem código");
         }
     }
 
