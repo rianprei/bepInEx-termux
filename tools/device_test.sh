@@ -58,7 +58,7 @@ for a in "$@"; do
     esac
 done
 
-MODS="/data/local/tmp/mods/$PKG"
+MODS="/data/local/tmp/mods/$PKG"   # arvore VELHA: o restore do kit ainda nao foi trocado (ver o resto do item 1)
 STAGE="/data/local/tmp/t1-stage-$PKG"
 BAK="/data/local/tmp/t1-bak-$PKG"
 BAK_OUT="/data/local/tmp/t1-bak-out-$PKG"
