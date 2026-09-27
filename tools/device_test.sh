@@ -90,15 +90,36 @@ do_adb() {
 # sem elas o diff final é cego pra diretório que o teste criou/apagou.
 # Sem Pastas próprias, sem wildcard solto.
 snapshot_to() {
-    dev "for d in $MODS $OUT; do
-        if [ -d \$d ]; then
-            stat -c '%n %a %U:%G' \$d
-            find \$d -type d -empty 2>/dev/null | sort
-            find \$d -type f 2>/dev/null | sort | while read -r f; do stat -c '%n %s %a' \"\$f\"; sha256sum \"\$f\"; done
-        else
-            echo \"\$d AUSENTE\"
-        fi
-    done" > "$1" 2>/dev/null
+    _snapshot_tmp="$HOST_TMP/snapshot.part"
+    rm -f "$_snapshot_tmp"
+    if ! dev "_t1_tmp=/data/local/tmp/t1-snapshot-\$\$
+        mkdir \"\$_t1_tmp\" || exit 1
+        _t1_fail() { rm -rf \"\$_t1_tmp\"; exit 1; }
+        for d in $MODS $OUT; do
+            if [ -d \"\$d\" ]; then
+                stat -c '%n %a %U:%G' \"\$d\" || _t1_fail
+                find \"\$d\" -type d -empty > \"\$_t1_tmp/dirs\" || _t1_fail
+                sort -o \"\$_t1_tmp/dirs\" \"\$_t1_tmp/dirs\" || _t1_fail
+                while IFS= read -r _dir; do
+                    stat -c '%n %a %U:%G' \"\$_dir\" || _t1_fail
+                done < \"\$_t1_tmp/dirs\"
+                find \"\$d\" -type f > \"\$_t1_tmp/files\" || _t1_fail
+                sort -o \"\$_t1_tmp/files\" \"\$_t1_tmp/files\" || _t1_fail
+                while IFS= read -r _file; do
+                    stat -c '%n %s %a' \"\$_file\" || _t1_fail
+                    _sum=\$(sha256sum \"\$_file\") || _t1_fail
+                    printf '%s\\n' \"\$_sum\" | grep -Eq '^[0-9a-f]{64}  ' || _t1_fail
+                    printf '%s\\n' \"\$_sum\" || _t1_fail
+                done < \"\$_t1_tmp/files\"
+            else
+                echo \"\$d AUSENTE\"
+            fi
+        done
+        rm -rf \"\$_t1_tmp\" || exit 1" > "$_snapshot_tmp" 2>/dev/null; then
+        rm -f "$_snapshot_tmp"
+        return 1
+    fi
+    mv "$_snapshot_tmp" "$1"
 }
 
 # Hash do CONTEÚDO de uma pasta, independente do caminho (nomes relativos),
@@ -108,7 +129,41 @@ snapshot_to() {
 # saída vazia = adb/su falhou, e quem chama tem que recusar (is_hash), não
 # adivinhar "não existia" — inferir ausência de silêncio já apagou dado real.
 tree_hash() {
-    dev "if [ -d '$1' ]; then cd '$1' && { stat -c '%n %a %U:%G' .; find . -type d -empty 2>/dev/null | sort | while read -r d; do stat -c 'EMPTY %n %a' \"\$d\"; done; find . -type f 2>/dev/null | sort | while read -r f; do stat -c '%n %s %a' \"\$f\"; sha256sum \"\$f\"; done; } | sha256sum | cut -d' ' -f1; else echo AUSENTE; fi" 2>/dev/null | tr -d '\r' | grep -E '^[0-9a-f]{64}$|^AUSENTE$' || true
+    _tree_result=$(dev "if [ ! -d '$1' ]; then echo AUSENTE; exit 0; fi
+        _t1_tmp=/data/local/tmp/t1-tree-hash-\$\$
+        mkdir \"\$_t1_tmp\" || { echo ERROR; exit 0; }
+        _t1_fail() { rm -rf \"\$_t1_tmp\"; echo ERROR; exit 0; }
+        if ! (
+            cd '$1' || exit 1
+            stat -c '%n %a %U:%G' . > \"\$_t1_tmp/records\" || exit 1
+            find . -type d -empty > \"\$_t1_tmp/dirs\" || exit 1
+            sort -o \"\$_t1_tmp/dirs\" \"\$_t1_tmp/dirs\" || exit 1
+            while IFS= read -r _dir; do
+                stat -c 'EMPTY %n %a' \"\$_dir\" >> \"\$_t1_tmp/records\" || exit 1
+            done < \"\$_t1_tmp/dirs\"
+            find . -type f > \"\$_t1_tmp/files\" || exit 1
+            sort -o \"\$_t1_tmp/files\" \"\$_t1_tmp/files\" || exit 1
+            while IFS= read -r _file; do
+                stat -c '%n %s %a' \"\$_file\" >> \"\$_t1_tmp/records\" || exit 1
+                _sum=\$(sha256sum \"\$_file\") || exit 1
+                printf '%s\\n' \"\$_sum\" | grep -Eq '^[0-9a-f]{64}  ' || exit 1
+                printf '%s\\n' \"\$_sum\" >> \"\$_t1_tmp/records\" || exit 1
+            done < \"\$_t1_tmp/files\"
+        ); then _t1_fail; fi
+        _sum=\$(sha256sum \"\$_t1_tmp/records\") || _t1_fail
+        printf '%s\\n' \"\$_sum\" | grep -Eq '^[0-9a-f]{64}  ' || _t1_fail
+        rm -rf \"\$_t1_tmp\" || { echo ERROR; exit 0; }
+        printf '%s\\n' \"\$_sum\" | cut -d' ' -f1" 2>/dev/null) || _tree_result=ERROR
+    _tree_result=$(printf '%s' "$_tree_result" | tr -d '\r')
+    case "$_tree_result" in
+        *"
+"*) printf 'ERROR'; return 0;;
+    esac
+    if printf '%s\n' "$_tree_result" | grep -Eq '^[0-9a-f]{64}$|^AUSENTE$'; then
+        printf '%s' "$_tree_result"
+    else
+        printf 'ERROR'
+    fi
 }
 
 # Hash de verdade (64 hex): AUSENTE e vazio NÃO passam.
@@ -147,6 +202,10 @@ restore_one() {
 
 restore_tree() {
     RC_TREE=0
+    if ! do_adb shell am force-stop "$PKG" >/dev/null 2>&1; then
+        echo "  force-stop falhou; a restauração não pode ser confirmada enquanto o jogo puder gravar arquivos"
+        RC_TREE=1
+    fi
     restore_one "mods/$PKG" "$MODS" "$BAK" "$HASH_MODS_INITIAL" || RC_TREE=1
     restore_one "files/bepinex" "$OUT" "$BAK_OUT" "$HASH_OUT_INITIAL" || RC_TREE=1
     # staging e .part vão sempre (são nossos); o marcador e o BAK_OUT só com
@@ -160,7 +219,6 @@ restore_tree() {
     else
         echo "  aviso: marcador e backup mantidos para o próximo run recuperar"
     fi
-    do_adb shell am force-stop "$PKG" >/dev/null 2>&1 || true
     lock_drop
     return $RC_TREE
 }
@@ -180,7 +238,11 @@ restore() {
         TREE_OK=0
         echo "RESTAURACAO INCOMPLETA: alguma árvore nao tem backup verificado"
     fi
-    snapshot_to "$HOST_TMP/after.txt"
+    if ! snapshot_to "$HOST_TMP/after.txt"; then
+        echo "RESTAURACAO FALHOU (snapshot pós-restauração incompleto: arquivo sem SHA-256)"
+        rm -rf "$HOST_TMP"
+        exit 2
+    fi
     if [ ! -s "$BEFORE_FILE" ]; then
         echo "RESTAURACAO FALHOU (snapshot inicial vazio — nada conferível)"
         rm -rf "$HOST_TMP"
@@ -212,7 +274,8 @@ restore() {
         return 0
     fi
     echo "RESTAURACAO FALHOU (estado difere do inicial; ver diff)"
-    diff "$BEFORE_FILE" "$HOST_TMP/after.txt" 2>/dev/null | head -20 || true
+    echo "Registros divergentes (caminhos, metadados e SHA-256):"
+    diff -u "$BEFORE_FILE" "$HOST_TMP/after.txt" 2>/dev/null || true
     rm -rf "$HOST_TMP"
     exit 2
 }
@@ -332,7 +395,11 @@ if [ "$DRY" = 0 ]; then
 fi
 
 echo "--- snapshot inicial (mods + files/bepinex) ---"
-snapshot_to "$BEFORE_FILE"
+if ! snapshot_to "$BEFORE_FILE"; then
+    echo "FAIL: snapshot inicial incompleto (arquivo sem SHA-256 ou leitura falhou) — nada foi tocado"
+    rm -rf "$HOST_TMP"
+    exit 1
+fi
 if [ "$DRY" = 0 ] && [ ! -s "$BEFORE_FILE" ]; then
     echo "FAIL: snapshot inicial vazio (adb sem resposta? pasta ausente?)"
     rm -rf "$HOST_TMP"
