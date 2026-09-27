@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <cstdio>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -184,6 +185,69 @@ int main() {
               proto == BC_FD_PROTO &&
               std::string(verb) == BC_FD_VERB_TXT &&
               std::string(path) == "/data/adb/bepinex/bc_mods.conf");
+    }
+
+    // (f) O PONTO DE CHAMADA do companion usa O_NOFOLLOW.
+    //
+    // Os casos acima testam bc_fd_open_ro(), a funcao do header. Se o
+    // companion abrir o caminho que o CLIENTE pediu com open() direto e sem o
+    // flag, o teste passa e a protecao some: o helper existe, testado, e nao e
+    // o que o codigo de producao usa. Foi o que a sabotagem expôs.
+    //
+    // A verificacao e por TEXTO, mas sem tentar parsear C++: o que importa e
+    // que o caminho do cliente (o parametro `path` dos dois handlers) seja
+    // aberto por bc_fd_open_ro — e que NENHUM `open(path,` cru exista. As
+    // outras leituras do companion sao arquivos proprios dele, em caminho
+    // constante, e nao sao entrada de cliente: nao tem por que levar o flag.
+    {
+        // __FILE__, e NAO um caminho fixo: o binario roda de $TMP, e um
+        // caminho absoluto apontaria para a worktree de DESENVOLVIMENTO. O
+        // gate checaria o companion.cpp de outra arvore e passaria com o
+        // arquivo de teste desatualizado — exatamente a classe de bug que a
+        // revisao pegou tres vezes nesta branch.
+        std::string self = __FILE__;
+        size_t barra = self.rfind('/');
+        std::string repo = (barra == std::string::npos) ? "." : self.substr(0, barra);
+        FILE *c = fopen((repo + "/../../jni/companion.cpp").c_str(), "r");
+        if (c == nullptr) {
+            check("abri jni/companion.cpp para conferir o ponto de chamada", false);
+        } else {
+            char buf[262144] = {};
+            size_t n = fread(buf, 1, sizeof(buf) - 1, c);
+            fclose(c);
+            std::string code(buf, n);
+            auto conta = [&code](const std::string &agulha) {
+                size_t p = 0, tot = 0;
+                while ((p = code.find(agulha, p)) != std::string::npos) { tot++; p += agulha.size(); }
+                return tot;
+            };
+            // Um por handler (handle_mod_fd e handle_mod_txt).
+            check("companion abre o caminho do cliente por bc_fd_open_ro (2x, um por handler)",
+                  conta("bc_fd_open_ro(path)") == 2);
+            // NENHUM open(path, ...) sem O_NOFOLLOW. Isso cobre a LEITURA por
+            // fd (que vai por bc_fd_open_ro) e a ESCRITA do push_mod — e a
+            // escrita e a mais perigosa: sem o flag, um link pre-plantado no
+            // nome faz o root TRUNCAR o alvo, que pode estar fora da arvore.
+            {
+                size_t p = 0;
+                bool todas_com_flag = true;
+                int n_aberturas = 0;
+                while ((p = code.find("open(path,", p)) != std::string::npos) {
+                    size_t fim = code.find(')', p);
+                    if (fim == std::string::npos) break;
+                    std::string linha = code.substr(p, fim - p);
+                    n_aberturas++;
+                    if (linha.find("O_NOFOLLOW") == std::string::npos) todas_com_flag = false;
+                    p = fim;
+                }
+                check("toda abertura de caminho de cliente leva O_NOFOLLOW (a escrita do push_mod inclusive)",
+                      n_aberturas > 0 && todas_com_flag);
+            }
+            // E a guarda de "o caminho tem que estar na arvore" existe: sem ela o
+            // cliente ganha "abrir o que eu pedir".
+            check("companion exige o caminho dentro de BC_MODS_ROOT",
+                  code.find("bc_path_in_mods_root") != std::string::npos);
+        }
     }
 
     unlink(g_link.c_str());

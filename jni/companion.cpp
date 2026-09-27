@@ -670,13 +670,21 @@ static void handle_push_mod(int fd, const char *name, long size) {
 
     char path[512];
     int pw = snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, name);
+    // O diretorio tambem e criado pelo root a partir de um nome de cliente:
+    // mkdir() em link pre-plantado precisa ser recusado tambem.
     if (pw <= 0 || (size_t)pw >= sizeof(path)) {
         const char *e = "error: path too long\n";
         write_all(fd, e, strlen(e));
         return;
     }
 
-    int out = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    // O_NOFOLLOW: esta e a ESCRITA do root na arvore root-only, e sem o flag
+    // um link pre-plantado nesse nome faria o root TRUNCAR o alvo (que pode
+    // estar fora da arvore). O nome ja vem validado por
+    // bc_loader_is_mod_filename — sem "/" nem "..", entao o caminho fica na
+    // arvore — mas validar o NOME nao impede que ja exista um LINK com esse
+    // nome. O O_NOFOLLOW e o que impede.
+    int out = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
     if (out < 0) {
         LOGE("push_mod: open(%s) failed: %s", path, strerror(errno));
         const char *e = "error: open failed\n";
