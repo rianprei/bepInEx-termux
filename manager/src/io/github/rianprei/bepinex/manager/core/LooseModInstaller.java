@@ -48,17 +48,17 @@ public final class LooseModInstaller {
 
     public static Result installFromFile(File src, String pkg, String engine) {
         if (src == null || !src.exists()) {
-            return new Result(false, "Arquivo nao encontrado.", null, null);
+            return new Result(false, "Arquivo não encontrado.", null, null);
         }
         if (pkg == null || pkg.isEmpty()) {
-            return new Result(false, "Jogo nao selecionado.", null, null);
+            return new Result(false, "Jogo não selecionado.", null, null);
         }
 
         ModContentDetector.Sample sample;
         try {
             sample = probe(src);
         } catch (IOException e) {
-            return new Result(false, "Nao deu para ler o arquivo: " + e.getMessage(), null, null);
+            return new Result(false, "Não deu para ler o arquivo: " + e.getMessage(), null, null);
         }
 
         boolean engineIl2cpp = (engine == null) || engine.contains("il2cpp");
@@ -83,7 +83,7 @@ public final class LooseModInstaller {
             return new Result(false, det.reason, det.kind, null);
         }
         if (!SuHelper.isRootAvailable()) {
-            return new Result(false, "Permissao root nao disponivel. Impossivel instalar o mod.",
+            return new Result(false, "Permissão root não disponível. Impossível instalar o mod.",
                     det.kind, null);
         }
 
@@ -91,13 +91,13 @@ public final class LooseModInstaller {
         String destPath = "/data/local/tmp/mods/" + pkg + "/" + destName;
         if (!SuHelper.ensureModDir(pkg)) {
             return new Result(false,
-                    "Nao deu para preparar /data/local/tmp/mods/" + pkg + " (sem root?).",
+                    "Não deu para preparar a pasta de mods do jogo (sem root?).",
                     det.kind, null);
         }
         if (!SuHelper.installFile(src.getAbsolutePath(), destPath, "644")) {
             return new Result(false,
-                    "A copia para " + destPath + " falhou. Sem o contexto SELinux "
-                            + "bepinex_mod_file o jogo nao consegue ler o arquivo em modo Enforcing.",
+                    "A cópia para a pasta de mods falhou. Sem a liberação de segurança "
+                            + "do Android (SELinux), o jogo não consegue ler o arquivo.",
                     det.kind, null);
         }
 
@@ -108,12 +108,12 @@ public final class LooseModInstaller {
     // na pasta de mods. NUNCA como .so (veja o comentario do chamador).
     private static Result installGadget(File src, String pkg) {
         if (!SuHelper.isRootAvailable()) {
-            return new Result(false, "Permissao root nao disponivel. Impossivel instalar o mod.",
+            return new Result(false, "Permissão root não disponível. Impossível instalar o mod.",
                     ModContentDetector.Kind.FRIDA_GADGET, null);
         }
         String dir = "/data/local/tmp/mods/" + pkg + "/";
         if (!SuHelper.ensureModDir(pkg)) {
-            return new Result(false, "Nao deu para preparar " + dir + " (sem root?).",
+            return new Result(false, "Não deu para preparar a pasta de mods do jogo (sem root?).",
                     ModContentDetector.Kind.FRIDA_GADGET, null);
         }
 
@@ -124,25 +124,25 @@ public final class LooseModInstaller {
 
         // 2. Binário como .bin (sem .so) e config no modo script.
         if (!SuHelper.installFile(src.getAbsolutePath(), dir + GADGET_BIN, "644")) {
-            return new Result(false, "A copia do frida-gadget falhou. Sem o contexto SELinux "
-                    + "bepinex_mod_file o jogo nao le o binario em modo Enforcing.",
+            return new Result(false, "A cópia do programa do Frida falhou. Sem a liberação de "
+                            + "segurança do Android (SELinux), o jogo não lê o arquivo.",
                     ModContentDetector.Kind.FRIDA_GADGET, null);
         }
         String config = "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"" + dir
                 + "\",\"on_change\":\"ignore\"}}";
         if (!SuHelper.writeTextFile(dir + GADGET_CONFIG, config)) {
             SuHelper.deleteFile(dir + GADGET_BIN);
-            return new Result(false, "Nao deu para escrever o " + GADGET_CONFIG
-                    + ". Sem ele o gadget roda no modo padrao (listen) e segura o jogo; "
-                    + "por isso o binario tambem foi removido.",
+            return new Result(false, "Não deu para escrever a configuração do Frida "
+                    + "(frida-gadget.config). Sem ela o programa do Frida trava o jogo esperando "
+                    + "um computador conectar; por isso o arquivo também foi removido.",
                     ModContentDetector.Kind.FRIDA_GADGET, null);
         }
 
-        return new Result(true, "frida-gadget instalado como " + GADGET_BIN + " + " + GADGET_CONFIG
-                + " na pasta do jogo.\n"
-                + "Agora e so largar o script .js nessa mesma pasta e abrir o jogo: o script roda "
-                + "so, sem PC e sem porta aberta. Se a pasta nao tiver nenhum .js, o u_frida nem "
-                + "carrega o gadget.", ModContentDetector.Kind.FRIDA_GADGET, GADGET_BIN);
+        return new Result(true, "Frida instalado na pasta do jogo (frida-gadget.bin + "
+                + "frida-gadget.config).\n"
+                + "Agora é só largar o script .js nessa mesma pasta e abrir o jogo: o script roda "
+                + "sozinho, sem computador e sem porta aberta. Se a pasta não tiver nenhum .js, o "
+                + "Frida nem carrega.", ModContentDetector.Kind.FRIDA_GADGET, GADGET_BIN);
     }
 
     // O que o usuario precisa saber DEPOIS de instalar (honesto: o que roda,
@@ -150,15 +150,16 @@ public final class LooseModInstaller {
     private static String posInstallHint(ModContentDetector.Detection det) {
         switch (det.kind) {
             case ELF_ARM64:
-                return "Abra o jogo para o mod carregar. Se o jogo fechar 2x seguidas na hora de "
-                        + "abrir, o crashguard desliga os mods: volte aqui e toque em 'Reativar'.";
+                return "Abra o jogo para o mod carregar. Se o jogo fechar 2 vezes seguidas na hora "
+                        + "de abrir, a proteção desliga os mods: volte aqui e toque em 'Reativar'.";
             case PATCH:
-                return "Regra .patch instalada. Ela so vale se o u_patch estiver na pasta "
-                        + "(o Mod Maker instala); sem ele o arquivo fica guardado, sem efeito.";
+                return "Regras .patch instaladas. Elas só valem se o motor de patches estiver "
+                        + "instalado (o criador de mods instala); sem ele o arquivo fica guardado, "
+                        + "sem efeito.";
             case FRIDA_JS:
-                return "Script .js instalado. Para ele rodar de verdade o frida-gadget precisa estar "
-                        + "na MESMA pasta como frida-gadget.bin (sem .so) e frida-gadget.config em "
-                        + "modo script-directory. Sem o gadget o .js fica guardado e inerte.";
+                return "Script .js instalado. Para ele rodar de verdade, o Frida precisa estar na "
+                        + "MESMA pasta (como frida-gadget.bin, junto do frida-gadget.config). Sem "
+                        + "isso, o script fica guardado e sem efeito.";
             default:
                 return "Abra o jogo para carregar.";
         }

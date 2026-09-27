@@ -3,8 +3,9 @@
 Arquivos PEQUENOS e DETERMINISTICOS, gerados por `generate.py` (python3 puro,
 sem rede, sem random, sem timestamp). O teste `ModTypeMatrixTest` roda cada
 arquivo pelo `LooseModInstaller.probe()` + `ModContentDetector.detect()` e
-exige Kind + trecho da explicacao PT-BR. Regenerar: `python3 generate.py`
-(tem que produzir byte a byte o mesmo corpus).
+exige Kind + trecho da explicação PT-BR (simples, acentuada, sem jargão nem
+código de roadmap — a varredura de textos reprova o contrário). Regenerar:
+`python3 generate.py` (tem que produzir byte a byte o mesmo corpus).
 
 | arquivo | Kind | instala | por que |
 |---|---|---|---|
@@ -22,7 +23,7 @@ exige Kind + trecho da explicacao PT-BR. Regenerar: `python3 generate.py`
 | script_gg.lua | LUA_GG | nao | GameGuardian (F10, nao implementado) |
 | pacote_ok.bmod | BMOD | sim | zip com manifest.json do formato C2 |
 | zip_slip.bmod | BMOD (detecta) | instalacao recusada | entrada `../evil.so`: zip-slip, BmodInstaller barra |
-| bepinex_pc.zip | ZIP_PLAIN | nao | zip de PC sem manifest C2: descompacte |
+| bepinex_pc.zip | BEPINEX_PC | nao | mod da versão de PC (layout BepInEx): o .dll de dentro não roda no celular; em breve, conversão de mods simples |
 | jogo.apk | ZIP_GAME_CONTAINER | nao | pacote do jogo: nunca se modifica |
 | expansao.obb | ZIP_GAME_CONTAINER | nao | expansao do jogo: nunca se modifica |
 | pacote.xapk | ZIP_GAME_CONTAINER | nao | XAPK (manifest.json la dentro NAO e o C2) |

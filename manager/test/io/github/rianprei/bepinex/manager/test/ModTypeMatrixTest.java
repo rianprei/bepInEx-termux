@@ -49,21 +49,21 @@ public class ModTypeMatrixTest {
 
         // --- o CONTEUDO manda sobre a extensao ------------------------------
         matrix(elfArm64(dir), Kind.ELF_ARM64, true, null,
-                new String[]{"arm64"});
+                new String[]{});
         matrix(elfArm32(dir), Kind.ELF_OTHER_ARCH, false,
-                new String[]{"nao arm64", "ARM (32 bits"},
+                new String[]{"outro tipo de aparelho", "ARM de 32 bits"},
                 new String[]{});
         matrix(elfX86_64(dir), Kind.ELF_OTHER_ARCH, false,
-                new String[]{"nao arm64", "x86-64"},
+                new String[]{"outro tipo de aparelho", "x86-64"},
                 new String[]{});
         matrix(fridaGadget(dir), Kind.FRIDA_GADGET, false,
-                new String[]{"listen", "frida-gadget.bin"},
+                new String[]{"Frida", "programa"},
                 new String[]{});
         matrix(dotnetMonoDll(dir), Kind.DOTNET_MONO, false,
-                new String[]{"Mono"},
+                new String[]{"versão de PC", "conversão de mods simples"},
                 new String[]{});
         matrix(dotnetIl2cppDll(dir), Kind.DOTNET_IL2CPP, false,
-                new String[]{"IL2CPP"},
+                new String[]{"IL2CPP", "conversão de mods simples"},
                 new String[]{});
         matrix(peNativeDll(dir), Kind.PE_NATIVE, false,
                 new String[]{"Windows"},
@@ -73,26 +73,29 @@ public class ModTypeMatrixTest {
                 new String[]{});
         matrix(patchOk(dir), Kind.PATCH, true, null, new String[]{});
         matrix(patchBroken(dir), Kind.TEXT_OTHER, false,
-                new String[]{"nao tem regra C4"},
+                new String[]{"não é um mod"},
                 new String[]{});
         matrix(fridaJs(dir), Kind.FRIDA_JS, true, null, new String[]{});
         matrix(luaGg(dir), Kind.LUA_GG, false,
-                new String[]{"GameGuardian"},
+                new String[]{"GameGuardian", "não"},
                 new String[]{});
         matrix(bmodOk(dir), Kind.BMOD, true, null, new String[]{});
-        matrix(bepinexPcZip(dir), Kind.ZIP_PLAIN, false,
-                new String[]{"Descompacte"},
+
+        // --- caso novo: zip de mod de PC com layout BepInEx ------------------
+        matrix(bepinexPcZip(dir), Kind.BEPINEX_PC, false,
+                new String[]{"versão de PC", "BepInEx", "não funciona no celular",
+                        "converter mods simples"},
                 new String[]{});
 
         // --- containers e dados do JOGO: nunca sao mod ----------------------
         matrix(apk(dir), Kind.ZIP_GAME_CONTAINER, false,
-                new String[]{"PROPRIO JOGO", "nunca modifica"},
+                new String[]{"próprio jogo", "nunca modifica"},
                 new String[]{});
         matrix(obb(dir), Kind.ZIP_GAME_CONTAINER, false,
-                new String[]{"PROPRIO JOGO"},
+                new String[]{"próprio jogo"},
                 new String[]{});
         matrix(xapk(dir), Kind.ZIP_GAME_CONTAINER, false,
-                new String[]{"PROPRIO JOGO"},
+                new String[]{"próprio jogo"},
                 new String[]{});
         matrix(pak(dir), Kind.GAME_DATA, false,
                 new String[]{"Unreal"},
@@ -101,7 +104,7 @@ public class ModTypeMatrixTest {
                 new String[]{"UnityFS"},
                 new String[]{});
         matrix(saveJson(dir), Kind.SAVE_GAME, false,
-                new String[]{"SAVE", "nao um mod"},
+                new String[]{"save do jogo", "não um mod"},
                 new String[]{});
         matrix(txt(dir), Kind.TEXT_OTHER, false,
                 new String[]{"arquivo de texto"},
@@ -109,10 +112,10 @@ public class ModTypeMatrixTest {
 
         // --- vazio e 0 byte: extensao nenhuma inventa tipo -------------------
         matrix(emptyFile(dir), Kind.BINARY_UNKNOWN, false,
-                new String[]{"VAZIO"},
+                new String[]{"está vazio"},
                 new String[]{});
         matrix(zeroSo(dir), Kind.BINARY_UNKNOWN, false,
-                new String[]{"VAZIO"},
+                new String[]{"está vazio"},
                 new String[]{});
 
         // --- os dois mentirosos: prova de que conteudo > extensao ------------
@@ -120,12 +123,70 @@ public class ModTypeMatrixTest {
         matrix(soZip(dir), Kind.ZIP_PLAIN, false,
                 new String[]{"Descompacte"},
                 new String[]{});
+        // (o bepinex_pc.zip ja foi verificado acima, no caso BEPINEX_PC)
 
         // --- zip-slip: o .bmod com ../ tem que ser barrado -------------------
         zipSlipBmodRecusado(dir);
         determinismo(dir);
 
+        // --- varredura: TODA explicacao tem que ser verdadeira e legivel -----
+        varreduraDeTextos();
+
         System.out.println("  [OK] ModTypeMatrixTest (" + total + " arquivos, corpus deterministico)");
+    }
+
+    /**
+     * Texto visivel nao pode mentir nem usar jargao (revisao do orquestrador):
+     * (i) nada de codigo do roadmap (F10/F11/F12/F13); (ii) nada de palavra
+     * sem acento da lista do contrato; (iii) nada de "instala," quando
+     * installable=false (a contradicao classica); (iv) sem sobra de ingles
+     * corrido. Vale para o corpus inteiro + casos sinteticos de cada Kind,
+     * nos dois estados de engine.
+     */
+    private static void varreduraDeTextos() throws IOException {
+        java.util.List<Detection> todas = new java.util.ArrayList<>();
+        File dir = findFixtureDir();
+        if (dir != null) {
+            for (File f : dir.listFiles()) {
+                if (f.getName().endsWith(".py") || f.isDirectory()) continue;
+                todas.add(ModContentDetector.detect(LooseModInstaller.probe(f), true));
+                todas.add(ModContentDetector.detect(LooseModInstaller.probe(f), false));
+            }
+        }
+        // Casos sinteticos para cobrir Kinds que o corpus nao produz.
+        byte[] mz = {'M', 'Z', 0, 0};
+        byte[] mach = {(byte) 0xCF, (byte) 0xFA, (byte) 0xED, (byte) 0xFE, 0, 0, 0, 0};
+        todas.add(ModContentDetector.detect(
+                new ModContentDetector.Sample("tabela.xml",
+                        "[ENABLE]\nAuto Assembler script\n".getBytes("UTF-8"),
+                        "[ENABLE]\nAuto Assembler script\n", false, false), true));
+        todas.add(ModContentDetector.detect(
+                new ModContentDetector.Sample("lib.dylib", mach, null, false, false), true));
+        todas.add(ModContentDetector.detect(
+                new ModContentDetector.Sample("x.dll", mz, "mscorlib _CorDllMain", false, false),
+                false));
+
+        for (Detection d : todas) {
+            String reason = (d.reason != null) ? d.reason : "";
+            for (String banido : new String[]{"F10", "F11", "F12", "F13"}) {
+                check("explicacao com codigo de roadmap '" + banido + "': " + reason,
+                        !reason.contains(banido));
+            }
+            for (String banido : new String[]{"nao ", " e o ", "binario", "proprio"}) {
+                check("explicacao com palavra sem acento ('" + banido + "'): " + reason,
+                        !reason.contains(banido));
+            }
+            if (!d.installable) {
+                check("explicacao contraditoria ('instala,') com installable=false: " + reason,
+                        !reason.contains("instala,"));
+                check("explicacao contraditoria ('pode instalar') com installable=false: " + reason,
+                        !reason.contains("pode instalar"));
+            }
+            for (String sotaque : new String[]{"the ", " and ", " is ", " not supported"}) {
+                check("explicacao com sotaque '" + sotaque + "': " + reason,
+                        !reason.contains(sotaque));
+            }
+        }
     }
 
     // ------------------------------------------------------------------ caso

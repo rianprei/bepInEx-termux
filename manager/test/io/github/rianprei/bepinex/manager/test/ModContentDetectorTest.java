@@ -129,9 +129,8 @@ public class ModContentDetectorTest {
     private static void testFridaGadget() {
         Detection peloNome = ModContentDetector.detect(elf("frida-gadget-17.19.0-android-arm64.so", 183), true);
         check("gadget por nome nao instala", peloNome.kind == Kind.FRIDA_GADGET && !peloNome.installable);
-        check("explica o modo listen", peloNome.reason.contains("listen"));
-        check("manda usar .bin + .config", peloNome.reason.contains("frida-gadget.bin")
-                && peloNome.reason.contains("frida-gadget.config"));
+        check("explica a consequencia (jogo travado)", peloNome.reason.contains("travado"));
+        check("diz que o Manager cuida da instalacao certa", peloNome.reason.contains("Manager"));
         check("gadget nao ganha .so", peloNome.targetExt == null && peloNome.targetId == null);
 
         Detection pelaMarca = ModContentDetector.detect(
@@ -184,16 +183,17 @@ public class ModContentDetectorTest {
 
         Detection monoIl2cpp = ModContentDetector.detect(pe("tabs.dll", mono), true);
         check(".dll Mono em jogo IL2CPP nao roda", monoIl2cpp.kind == Kind.DOTNET_MONO && !monoIl2cpp.installable);
-        check("diz NAO RODA", monoIl2cpp.reason.contains("NAO RODA"));
-        check("aponta o Mod Maker", monoIl2cpp.reason.contains("Mod Maker"));
+        check("diz que e da versao de PC", monoIl2cpp.reason.contains("versão de PC"));
+        check("aponta a conversao de mods simples", monoIl2cpp.reason.contains("conversão de mods simples"));
+        check("nao usa codigo de roadmap", !monoIl2cpp.reason.contains("F13") && !monoIl2cpp.reason.contains("F12"));
 
         Detection monoMono = ModContentDetector.detect(pe("tabs.dll", mono), false);
-        check(".dll Mono em jogo Mono = F13", monoMono.kind == Kind.DOTNET_MONO && !monoMono.installable);
-        check("cita F13", monoMono.reason.contains("F13"));
+        check(".dll Mono nao roda em jogo nenhum", monoMono.kind == Kind.DOTNET_MONO && !monoMono.installable);
+        check("diz que o celular nao tem o suporte", monoMono.reason.contains("ainda não tem esse suporte"));
 
         Detection dIl2cpp = ModContentDetector.detect(pe("mod.dll", il2cpp), false);
-        check(".dll IL2CPP = F12", dIl2cpp.kind == Kind.DOTNET_IL2CPP && !dIl2cpp.installable);
-        check("cita F12", dIl2cpp.reason.contains("F12"));
+        check(".dll IL2CPP recusado", dIl2cpp.kind == Kind.DOTNET_IL2CPP && !dIl2cpp.installable);
+        check("diz que nao ha como instalar agora", dIl2cpp.reason.contains("não há como instalar"));
     }
 
     private static void testOtherBinaries() {
@@ -223,7 +223,7 @@ public class ModContentDetectorTest {
         // Nome de componente interno nunca pode ser sobrescrito.
         Detection reservado = ModContentDetector.detect(elf("u_patch.so", 183), true);
         check("u_patch.so é nome reservado", reservado.kind == Kind.ELF_ARM64 && !reservado.installable);
-        check("explica o conflito", reservado.reason.contains("interno"));
+        check("explica o conflito", reservado.reason.contains("peça interna"));
     }
 
     // ELF pela metade ou adulterado nao pode virar <id>.so: o dlopen disso
@@ -234,8 +234,8 @@ public class ModContentDetectorTest {
         Sample cortado = new Sample("meu.so", trunc.head, null, false, false, 0x1080L);
         ModContentDetector.Detection d1 = ModContentDetector.detect(cortado, true);
         check("ELF truncado recusado", d1.kind == Kind.ELF_MALFORMED && !d1.installable);
-        check("diz que o PT_LOAD nao cabe", d1.reason.contains("PT_LOAD") || d1.reason.contains("fora do arquivo"));
-        check("diz que o Manager nao instala pela metade", d1.reason.contains("metade"));
+        check("diz que parte do codigo fica fora", d1.reason.contains("fora do arquivo"));
+        check("diz que instalar pela metade fecha o jogo", d1.reason.contains("fecha o jogo"));
 
         // (2) e_phoff apontando depois do fim do arquivo.
         Sample fora = elf("meu.so", 183);
@@ -243,14 +243,14 @@ public class ModContentDetectorTest {
         ModContentDetector.Detection d2 = ModContentDetector.detect(
                 new Sample("meu.so", fora.head, null, false, false, 0x2000L), true);
         check("e_phoff fora do arquivo recusado", d2.kind == Kind.ELF_MALFORMED && !d2.installable);
-        check("o motivo cita a tabela de programas", d2.reason.contains("programas"));
+        check("o motivo cita a tabela interna", d2.reason.contains("tabela interna"));
 
         // (3) ET_EXEC: executavel, nao biblioteca.
         Sample exec = elf("meu.so", 183);
         put16(exec.head, 16, 2);
         ModContentDetector.Detection d3 = ModContentDetector.detect(exec, true);
         check("ET_EXEC recusado", d3.kind == Kind.ELF_MALFORMED && !d3.installable);
-        check("o motivo explica ET_DYN", d3.reason.contains("ET_DYN"));
+        check("o motivo explica que nao e biblioteca", d3.reason.contains("não uma biblioteca"));
 
         // (4) e_phentsize / e_ehsize errados (cabeçalho adulterado).
         Sample phent = elf("meu.so", 183);
