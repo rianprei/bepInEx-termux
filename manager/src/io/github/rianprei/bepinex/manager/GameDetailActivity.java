@@ -25,6 +25,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import io.github.rianprei.bepinex.manager.core.CrashGuardState;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
@@ -205,7 +206,7 @@ public class GameDetailActivity extends Activity {
     }
 
     // C7: o usuario escolhe QUALQUER arquivo e o Manager descobre pelo
-    // conteudo o que e (.bmod, .so arm64, .patch, .js, .dll de PC...). O
+    // conteudo o que e (.bmod, .so arm64, .bpatch, .js, .dll de PC...). O
     // nome original so importa para virar o id do arquivo instalado.
     private void installSelectedFile(Uri uri) {
         String displayName = resolveDisplayName(uri);
@@ -271,7 +272,7 @@ public class GameDetailActivity extends Activity {
                     : CrashGuardState.parse(null, false);
             final boolean cgMostrar = cg.marker;
 
-            // 1. Encontra todos os arquivos de mod (.so, .patch, .off)
+            // 1. Encontra todos os arquivos de mod (.so, .bpatch, .off)
             boolean gadgetSoFound = false;
             for (String f : files) {
                 if (f.equals("u_dump.so") || f.equals("u_patch.so")) {
@@ -287,25 +288,15 @@ public class GameDetailActivity extends Activity {
                     continue;
                 }
 
-                String baseId = null;
-                boolean enabled = true;
-                String type = "patch";
-
-                if (f.endsWith(".so")) {
-                    baseId = f.substring(0, f.length() - 3);
-                    type = "native";
-                } else if (f.endsWith(".so.off")) {
-                    baseId = f.substring(0, f.length() - 7);
-                    type = "native";
-                    enabled = false;
-                } else if (f.endsWith(".patch")) {
-                    baseId = f.substring(0, f.length() - 6);
-                    type = "patch";
-                } else if (f.endsWith(".patch.off")) {
-                    baseId = f.substring(0, f.length() - 10);
-                    type = "patch";
-                    enabled = false;
-                }
+                // O corte do nome mora em ModInventory.parseModFileName (puro,
+                // testado no host) e não aqui. A versão que estava aqui cortava
+                // o id com números soltos: "- 6" para ".bpatch" (7 letras) e
+                // "- 10" para ".bpatch.off" (11). "t1.bpatch" virava id "t1.", e
+                // o nome que o Manager montava de volta não existia no aparelho.
+                ModInventory.ModFile modFile = ModInventory.parseModFileName(f);
+                String baseId = modFile == null ? null : modFile.id();
+                boolean enabled = modFile == null || modFile.enabled();
+                String type = modFile == null ? "patch" : modFile.type();
 
                 if (baseId != null) {
                     ModInfo info = map.get(baseId);

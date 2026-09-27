@@ -81,7 +81,7 @@ tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
   fica dentro do jogo.
 
 Pra criar um mod seu do zero (C++), veja [docs/SDK.md](docs/SDK.md). O
-formato dos arquivos (`.bmod`, `.patch`, `.conf`) está em
+formato dos arquivos (`.bmod`, `.bpatch`, `.conf`) está em
 [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md).
 
 Para gerar uma release local completa (zip Magisk, APK do Manager, exemplos
@@ -112,11 +112,11 @@ Hoje isso já funciona por partes, sem Manager:
   jogo); remova o `/data/local/tmp/mods/<pacote>/u_dump.so` quando terminar
   de usar.
   No Manager isso vira o botão "Escanear jogo".
-- **Aplicar regras:** um `.patch` com regras declarativas simples (verbos
+- **Aplicar regras:** um `.bpatch` com regras declarativas simples (verbos
   `return`/`mul`/`static`/`field`), servido pelo `u_patch` — **em
   integração** (fase F4): o contrato das regras já está fixado no roadmap e
   a lição que criou o verbo `field` veio de teste real no device, mas nada
-  de `.patch` é instalável até o F4 mergear. De propósito não há instrução
+  de `.bpatch` é instalável até o F4 mergear. De propósito não há instrução
   operacional aqui — quando mergear, esta seção e o
   [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md) ganham o passo a passo.
 
@@ -129,7 +129,7 @@ não pela extensão, e dizer em português se roda. A tabela honesta:
 |---|---|---|
 | `.bmod` (nosso pacote) | **sim** | zip com manifest + mod |
 | `.so` Android arm64 (mod nativo) | **sim** | copia pra pasta do jogo |
-| `.patch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
+| `.bpatch` (regras declarativas) | **em integração** | precisa do `u_patch` (F4, ainda não mergeado) |
 | `.so` de outra arquitetura (arm32, x86) | não | "feito pra outra arquitetura" |
 | `.js` script Frida | em desenvolvimento (F11) | via frida-gadget |
 | `.dll` de BepInEx/MelonLoader **IL2CPP** | depois (F12) | exige runtime .NET no processo |
@@ -231,7 +231,7 @@ como pessoa comum, as seções acima já bastam.
 - **SDK de mod nativo:** [docs/SDK.md](docs/SDK.md) — template, `new_mod.sh`,
   `deploy_mod.sh`, `pack_bmod.sh` e a API do `mod_common.h`.
 - **Formato dos arquivos de mod:** [docs/BMOD-FORMAT.md](docs/BMOD-FORMAT.md)
-  (`.bmod`, `.conf`, `.patch`, `dump.tsv`).
+  (`.bmod`, `.conf`, `.bpatch`, `dump.tsv`).
 - **Testes:** `test/selftest_harness.cpp` (host, sem device) +
   `test/mod_common_test.cpp` (SDK).
 

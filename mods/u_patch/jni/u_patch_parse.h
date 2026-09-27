@@ -1,4 +1,4 @@
-// u_patch_parse.h — parser puro das regras C4 (.patch) e opções C3 (.conf).
+// u_patch_parse.h — parser puro das regras C4 (.bpatch) e opções C3 (.conf).
 // Header-only, sem dependência de plataforma: o teste host inclui direto.
 // Contrato C4 (ROADMAP-UNIVERSAL.md): uma regra por linha, campos por espaço,
 // '#' é comentário; <Classe> = Namespace.Nome ou só Nome (último '.' separa).
@@ -183,7 +183,7 @@ static inline int up_value_type_check(bool klass_is_valuetype, const char *type_
     return 0;
 }
 
-// --- #13: percorrer linhas do .patch sem loop infinito -------------------
+// --- #13: percorrer linhas do .bpatch sem loop infinito ------------------
 //
 // O scanner usa isto no lugar do while manual. O bug historico (linha vazia
 // sem avanco -> while eterno no worker, sem log) fica IMPOSSIVEL aqui: o
@@ -235,4 +235,54 @@ static inline bool up_conf_get(const char *buf, const char *key, char *out, size
         while (*p && *p != '\n') p++;
     }
     return false;
+}
+
+// --- #14: o scan do loader (qual arquivo é regra, e qual é o id) -------------
+//
+// Isto mora AQUI, e não no .cpp, por um motivo concreto: é a decisão que diz
+// quais arquivos o motor lê no aparelho, e ela é lógica de string pura. No
+// .cpp ela não tinha teste, e o teste que era para cobrir o rename (.patch ->
+// .bpatch) passava com o loader ainda procurando a extensão antiga — porque
+// nada no gate exercita o scan.
+//
+// Rename de extensão: o sufixo e o COMPRIMENTO andam juntos. A versão antiga do
+// .cpp fazia `strlen(name) - 6` para tirar ".patch"; com ".bpatch" (7) isso
+// daria id "t1." e o <id>.conf do mod (t1.conf) deixaria de ser encontrado — sem
+// log nenhum, porque o .conf é opcional e as regras continuam sendo aplicadas.
+// Por isso o comprimento vem de up_patch_ext_len() e não de um número escrito
+// à mão.
+
+#define UP_PATCH_EXT ".bpatch"
+
+// Comprimento do sufixo, sem o ponto inicial. Uma fonte só, sempre.
+static inline size_t up_patch_ext_len(void) { return sizeof(UP_PATCH_EXT) - 1; }
+
+static inline bool up_ends_with(const char *name, const char *suf) {
+    if (name == nullptr || suf == nullptr) return false;
+    size_t nl = strlen(name), sl = strlen(suf);
+    return nl >= sl && strcmp(name + nl - sl, suf) == 0;
+}
+
+// Verdadeiro quando `name` é um arquivo de regras que o motor deve ler:
+// termina em .bpatch e NÃO está desligado (<id>.bpatch.off).
+static inline bool up_is_patch_file(const char *name) {
+    return up_ends_with(name, UP_PATCH_EXT) && !up_ends_with(name, ".off");
+}
+
+// id do mod a partir do nome do arquivo, sem a extensão. É o nome que casa
+// com o <id>.conf opcional. Falso se o nome não couber em `outsz` (o
+// chamador avisa e o arquivo é pulado).
+static inline bool up_patch_id_from_name(const char *name, char *out, size_t outsz) {
+    if (name == nullptr || out == nullptr || outsz == 0) return false;
+    size_t n = strlen(name);
+    size_t ext = up_patch_ext_len();
+    // "foo.bpatch.off" também termina em ".off" e é barrado por
+    // up_is_patch_file; aqui só chega o nome limpo. O "< ext" é paranoia: sem
+    // ele, um nome exatamente ".bpatch" geraria um id vazio.
+    if (n < ext || n - ext == 0) return false;
+    size_t baselen = n - ext;
+    if (baselen >= outsz) return false;
+    memcpy(out, name, baselen);
+    out[baselen] = '\0';
+    return true;
 }

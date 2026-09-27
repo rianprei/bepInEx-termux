@@ -1,0 +1,4 @@
+# regras C4 do corpus (o mesmo formato que o Mod Maker escreve)
+return ComplexCreature HasAmmo 0 bool true
+mul WeaponDamage DamageFactor 0 float 3.5
+field WeaponInfo unlimitedAmmo bool true Update 1

@@ -344,7 +344,7 @@ else
 fi
 
 # Fuzzing com sanitizers dos 4 parsers que recebem DADO DO USUÁRIO dentro do
-# processo do jogo: linhas .patch/.conf do u_patch, o preflight de ELF (com a
+# processo do jogo: linhas .bpatch/.conf do u_patch, o preflight de ELF (com a
 # guarda de SONAME do frida-gadget), o validador do config do frida e o resto
 # da superfície de string do selftest. Um crash de parser aqui derruba o jogo,
 # e 2 mortes em 20sShut ele inteiro pelo crashguard.

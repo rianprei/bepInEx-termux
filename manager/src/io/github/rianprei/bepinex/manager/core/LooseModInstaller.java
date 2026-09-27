@@ -31,7 +31,7 @@ public final class LooseModInstaller {
         }
     }
 
-    // Limite de leitura para deteccao de texto (regra .patch e script .js sao
+    // Limite de leitura para deteccao de texto (regra .bpatch e script .js sao
     // pequenos) e do arquivo inteiro na busca da assinatura do gadget (o
     // frida-gadget tem ~25MB; acima disso ja gastamos memoria a toa).
     private static final int TEXT_LIMIT = 512 * 1024;
@@ -153,7 +153,7 @@ public final class LooseModInstaller {
                 return "Abra o jogo para o mod carregar. Se o jogo fechar 2 vezes seguidas na hora "
                         + "de abrir, a proteção desliga os mods: volte aqui e toque em 'Reativar'.";
             case PATCH:
-                return "Regras .patch instaladas. Elas só valem se o motor de patches estiver "
+                return "Regras .bpatch instaladas. Elas só valem se o motor de patches estiver "
                         + "instalado (o criador de mods instala); sem ele o arquivo fica guardado, "
                         + "sem efeito.";
             case FRIDA_JS:

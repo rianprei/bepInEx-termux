@@ -9,7 +9,7 @@
 # EXECUTADO, não sourced — $0 é o próprio caminho dele.
 echo "bepInEx-termux removido (o Zygisk para de carregar no proximo boot)."
 echo "Seus arquivos continuam no device:"
-echo "  /data/local/tmp/mods/           mods .so/.conf/.patch por pacote (contrato C1)"
+echo "  /data/local/tmp/mods/           mods .so/.conf/.bpatch por pacote (contrato C1)"
 echo "  /data/local/tmp/bc_mods/        mods do caminho Battle Cats"
 echo "  /data/local/tmp/bc_generic_allowlist.conf  lista do experimento Cocos"
 echo "  /data/data/<pacote>/files/bepinex/         log.txt e dump.tsv de cada jogo"

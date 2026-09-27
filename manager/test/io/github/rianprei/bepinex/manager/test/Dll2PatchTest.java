@@ -1,6 +1,7 @@
 package io.github.rianprei.bepinex.manager.test;
 
 import io.github.rianprei.bepinex.manager.core.DllReader;
+import io.github.rianprei.bepinex.manager.core.ModContentDetector;
 import io.github.rianprei.bepinex.manager.core.HarmonyTranslator;
 import io.github.rianprei.bepinex.manager.core.PatchGenerator;
 
@@ -35,9 +36,75 @@ public final class Dll2PatchTest {
         testTranslation(dll, reader);
         testOpcodes();
         testTableIndexGuard(reader);
+        testDetectorIntegration(dll);
         testFuzz(dll);
         if (failures != 0) throw new AssertionError("Dll2PatchTest falhou com " + failures + " erros");
         System.out.println("  [OK] Dll2PatchTest: todos os testes passaram");
+    }
+
+    /**
+     * O tradutor produz TEXTO C4, e o texto nao tem extensao. O que decide o
+     * nome do arquivo instalado e o ModContentDetector, que decide pelo
+     * CONTEUDO. Este teste fecha a ligacao: a saida do tradutor tem que ser
+     * reconhecida como regra e virar &lt;id&gt;.bpatch.
+     *
+     * Sem ele, o tradutor continua correto e o Manager entrega um arquivo com a
+     * extensao errada — e nada no gate acusaria, porque cada lado passa
+     * sozinho.
+     */
+    private static void testDetectorIntegration(byte[] dll) throws Exception {
+        HarmonyTranslator.TranslationResult result = HarmonyTranslator.translate(dll);
+        String text = result.patchText();
+        check("o tradutor produz texto nao vazio", !text.isEmpty());
+
+        // 1. o texto traduzido vira um Sample do detector. O NOME e neutro (o
+        //    id vem do nome), e o CONTEUDO que tem que decidir.
+        ModContentDetector.Sample sample = rulesSample("meu_hack", text);
+        ModContentDetector.Detection d = ModContentDetector.detect(sample, true);
+        check("a saida do tradutor e reconhecida como regra (Kind.PATCH)",
+                d != null && d.kind == ModContentDetector.Kind.PATCH);
+        check("a extensao instalada e a nova (RULES_EXT)",
+                d != null && ModContentDetector.RULES_EXT.equals(d.targetExt));
+        check("o id sai do nome do arquivo", d != null && "meu_hack".equals(d.targetId));
+        check("e instala", d != null && d.installable);
+
+        // 2. o MESMO texto com um nome ".patch" (extensao antiga) tem que dar o
+        //    MESMO resultado: e o que garante que o item 3 do rename continua
+        //    valendo depois que o tradutor entrou.
+        ModContentDetector.Detection legacy = ModContentDetector.detect(
+                rulesSample("meu_hack.patch", text), true);
+        check("com a extensao antiga da o mesmo destino",
+                legacy != null && ModContentDetector.RULES_EXT.equals(legacy.targetExt)
+                        && "meu_hack".equals(legacy.targetId));
+
+        // 3. e sem extensao nenhuma tambem.
+        ModContentDetector.Detection noExt = ModContentDetector.detect(
+                rulesSample("meu_hack_sem_ext", text), true);
+        check("sem extensao da o mesmo destino",
+                noExt != null && ModContentDetector.RULES_EXT.equals(noExt.targetExt));
+
+        // 4. as recusas estritas continuam recusando. O tradutor e对手 de um
+        //    detector permissivo: texto que nao e C4 tem que continuar sendo
+        //    "isto nao e um mod", e nao virar um .bpatch vazio.
+        ModContentDetector.Detection junk = ModContentDetector.detect(
+                rulesSample("lixo.bpatch", "isto aqui nao e regra nenhuma\n"), true);
+        check("texto que nao e C4 continua recusado (nao virou .bpatch)",
+                junk != null && junk.kind == ModContentDetector.Kind.TEXT_OTHER
+                        && !junk.installable);
+
+        // 5. o nome sugerido para quem for gravar o arquivo tem que usar a
+        //    extensao da constante, e nao um literal novo.
+        check("o nome sugerido usa RULES_EXT",
+                ("meu_hack" + ModContentDetector.RULES_EXT)
+                        .equals(ModContentDetector.rulesFileName("meu_hack")));
+    }
+
+    /** A Sample que o detector espera: (fileName, head, text, zip?, frida?). */
+    private static ModContentDetector.Sample rulesSample(String name, String text) {
+        byte[] head = text.getBytes(StandardCharsets.UTF_8);
+        byte[] first = new byte[Math.min(head.length, 64)];
+        System.arraycopy(head, 0, first, 0, first.length);
+        return new ModContentDetector.Sample(name, first, text, false, false, head.length);
     }
 
     private static void testTranslation(byte[] dll, DllReader reader) throws Exception {
@@ -45,8 +112,19 @@ public final class Dll2PatchTest {
         String expected = "# traduzido de Harmony para C4\n"
                 + "return Dll2PatchFixture.GameClass GetHealth 0 int 100\n"
                 + "return Dll2PatchFixture.GameClass GetMana 0 int 50\n"
+                // SEM a linha "static ... MaxScore": o tradutor do uni/dll2patch2
+                // (4207b99) passou a RECUSAR a atribuição static — ela é o
+                // caminho inseguro (escreve num campo que pode ser de
+                // instancia, não estático), e a expectativa antiga ainda pedia
+                // a linha. A semântica do dll2patch2 vence aqui; o lado da
+                // uni/bpatch carregava a expectativa do tradutor mais velho
+                // (70ad114), que ainda emitia static.
                 + "mul Dll2PatchFixture.GameClass GetDamage 0 int 2\n";
-        check("a-d: .patch exatamente esperado", expected.equals(result.patchText()));
+        // "texto C4 traduzido" e não ".patch": o nome da extensão mudou para
+        // .bpatch no rename, e um rótulo de check que diz ".patch" seria uma
+        // ocorrência da extensão velha na varredura final.
+        check("a-d: o texto C4 traduzido e exatamente o esperado",
+                expected.equals(result.patchText()));
 
         Path c4Fixture = findPath("test/fixtures/c4_lines.tsv");
         for (String raw : Files.readAllLines(c4Fixture, StandardCharsets.UTF_8)) {
