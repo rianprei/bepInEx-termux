@@ -1849,14 +1849,18 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
     publish_log("Info", "[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
 }
 
-// Mods por pacote no caminho genérico: dlopen de todo .so em
-// /data/local/tmp/mods/<pkg>/. Diferente de BC_MODS_DIR, aqui não tem
-// bc_mod_register/grafo — o mod é autônomo (constructor sobe a própria
-// thread, espera a lib do jogo e instala o que precisa). Roda antes da
-// detecção de engine porque jogo Unity/IL2CPP não expõe Java_* (a detecção
-// cairia em dormant e o mod nunca carregaria).
+// Mods por pacote no caminho generico: a LISTA vem do companion e o .so vem
+// por FD (ver load_generic_pkg_mods). Diferente de BC_MODS_DIR, aqui nao tem
+// bc_mod_register/grafo — o mod e autonomo (constructor sobe a propria thread,
+// espera a lib do jogo e instala o que precisa). Roda antes da deteccao de
+// engine porque jogo Unity/IL2CPP nao expoe Java_* (a deteccao cairia em
+// dormant e o mod nunca carregaria).
+//
+// Esta funcao so monta o CAMINHO, para o log dizer onde o mod esta instalado:
+// o jogo nao o abre (a arvore e root-only) nem o enumera (a lista vem pelo
+// socket).
 static bool pkg_mods_dir(const char *pkg, char *dir, size_t size) {
-    int n = snprintf(dir, size, "/data/local/tmp/mods/%s", pkg);
+    int n = snprintf(dir, size, "%s/%s", BC_GENERIC_MODS_DIR, pkg);
     return n > 0 && (size_t)n < size;
 }
 

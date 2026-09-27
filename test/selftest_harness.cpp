@@ -1995,9 +1995,9 @@ int main() {
         check("nulo/vazio não é", !uf_is_js_mod(nullptr) && !uf_is_js_mod(""));
         check(".so não é", !uf_is_js_mod("u_frida.so"));
         char json[512];
-        int n = uf_build_config(json, sizeof(json), "/data/local/tmp/mods/com.foo.bar");
+        int n = uf_build_config(json, sizeof(json), "/data/adb/bepinex/mods/com.foo.bar");
         check("config JSON exato do modo script-directory", n > 0 &&
-              strcmp(json, "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"/data/local/tmp/mods/com.foo.bar\",\"on_change\":\"ignore\"}}") == 0);
+              strcmp(json, "{\"interaction\":{\"type\":\"script-directory\",\"path\":\"/data/adb/bepinex/mods/com.foo.bar\",\"on_change\":\"ignore\"}}") == 0);
         check("nomes seguem a regra <stem>.config do gadget",
               strcmp(UF_GADGET_FILE, "frida-gadget.bin") == 0 &&
               strcmp(UF_CONFIG_FILE, "frida-gadget.config") == 0);
@@ -2010,7 +2010,7 @@ int main() {
               uf_config_is_script_mode(json, (size_t)n, why, sizeof(why)) &&
               strcmp(why, "script-directory") == 0);
         check("type script passa",
-              UF_CFG("{\"interaction\":{\"type\":\"script\",\"path\":\"/data/local/tmp/mods/p/a.js\"}}") &&
+              UF_CFG("{\"interaction\":{\"type\":\"script\",\"path\":\"/data/adb/bepinex/mods/p/a.js\"}}") &&
               strcmp(why, "script") == 0);
         check("espaço/quebra de linha JSON válidos passam",
               UF_CFG(" \n{ \"teardown\" : \"minimal\",\n \"interaction\" : { \"type\" : \"script-directory\", \"path\" : \"/x\", \"n\": [1, -2.5e3, true, null, {}] } }\n"));
@@ -2077,7 +2077,7 @@ int main() {
               !UF_CFG("{\"interaction\":{\"type\":\"script\"},\"x\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}"));
         #undef UF_CFG
 
-        // uf_pkg_ok: pacote vira caminho (/data/local/tmp/mods/<pkg>).
+        // uf_pkg_ok: pacote vira caminho (/data/adb/bepinex/mods/<pkg>).
         check("pkg normal ok", uf_pkg_ok("com.dts.freefireth") && uf_pkg_ok("com.foo_bar.Baz2"));
         check("pkg com / recusa", !uf_pkg_ok("com.foo/../../etc") && !uf_pkg_ok("a/b"));
         check("pkg .. recusa", !uf_pkg_ok("..") && !uf_pkg_ok("com..foo"));

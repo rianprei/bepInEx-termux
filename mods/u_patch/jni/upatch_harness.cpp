@@ -2,6 +2,7 @@
 // Roda os Casos 69-77 (parser C4/C3, emissores arm64,
 // guarda de método curto, verbo field) sem depender do harness do loader.
 // Compila: g++ -std=c++17 -Wall -Wextra -Werror upatch_harness.cpp -o upatch_harness
+#include "../../../jni/bc_loader.h"  // BC_GENERIC_MODS_DIR
 #include <cstdio>
 #include <cstring>
 
@@ -651,9 +652,9 @@ int main() {
               up_patch_id_from_name("t1.bpatch", id, sizeof(id)) && strlen(id) == 2);
         // 5. o .conf do mod e montado a partir DESTE id
         char cpath[256];
-        snprintf(cpath, sizeof(cpath), "/data/local/tmp/mods/com.x/%s.conf", id);
+        snprintf(cpath, sizeof(cpath), "%s/com.x/%s.conf", BC_GENERIC_MODS_DIR, id);
         check("o .conf procurado é t1.conf (o par que o motor usa)",
-              strcmp(cpath, "/data/local/tmp/mods/com.x/t1.conf") == 0);
+              strcmp(cpath, "/data/adb/bepinex/mods/com.x/t1.conf") == 0);
         // 6. arestas: nome so com a extensao, id que nao cabe, nulo
         check("nome exatamente .bpatch é recusado (id vazio)",
               !up_patch_id_from_name(".bpatch", id, sizeof(id)));
