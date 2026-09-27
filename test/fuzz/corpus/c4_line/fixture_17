@@ -1,0 +1,1 @@
+mul SoundChannel GetPlayingClipIndex 0 int 3 extra
