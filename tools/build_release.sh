@@ -68,7 +68,8 @@ else
     SIGNING_STATUS="UNSIGNED-DEBUG"
 fi
 
-OUT_DIR="$WORK/module" "$ROOT/tools/build_module.sh" >"$WORK/build_module.log"
+OUT_DIR="$WORK/module" SYMBOLS_DIR="$RELEASE_DIR/symbols" \
+    "$ROOT/tools/build_module.sh" >"$WORK/build_module.log"
 cp "$WORK/module/bepinex-termux-$VERSION.zip" "$RELEASE_DIR/bepinex-termux-$VERSION.zip"
 
 MANAGER_OUTPUT_APK="$WORK/manager/bepinex-manager-$VERSION.apk" \
@@ -97,6 +98,16 @@ fi
 
 # These are the native examples explicitly described as working/distributed:
 # sa2ammo + sa2content in README, and mechabun as the SDK reference mod.
+#
+# Cada mod segue a mesma divisão do loader: o .so NÃO-stripado vai para
+# symbols/<build-id>/ (indexado, para o tools/symbolize.sh transformar um
+# tombstone do device em função:linha), e o que vai para release/mods/ é o
+# STRIPPED. O binário que o usuário copia para o celular é o mesmo de sempre.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "$ROOT/tools/symbols.sh"
+STRIP_BIN="$(symbols_strip_bin)"
+[ -n "$STRIP_BIN" ] || { echo "ERRO: llvm-strip ausente: instale o NDK" >&2; exit 1; }
 for mod in sa2ammo sa2content mechabun; do
     (
         cd "$ROOT/mods/$mod"
@@ -104,7 +115,8 @@ for mod in sa2ammo sa2content mechabun; do
     ) >"$WORK/ndk-$mod.log" 2>&1
     so="$ROOT/mods/$mod/libs/arm64-v8a/lib$mod.so"
     [ -f "$so" ] || { echo "ERRO: artefato ausente: $so" >&2; exit 1; }
-    cp "$so" "$RELEASE_DIR/mods/$mod.so"
+    symbols_add "$so" "$RELEASE_DIR/symbols" "lib$mod" >/dev/null
+    "$STRIP_BIN" --strip-unneeded -o "$RELEASE_DIR/mods/$mod.so" "$so"
 done
 
 while IFS= read -r bmod; do
@@ -126,6 +138,27 @@ DIRTY_STATUS=CLEAN
     printf 'deps.lock.sha256=%s\n' "$(sha256sum tools/deps.lock | awk '{print $1}')"
     awk -F'|' 'BEGIN {OFS="="} !/^#/ && NF >= 4 {print "dep." $1 ".version", $2; print "dep." $1 ".sha256", $3}' tools/deps.lock
 } >"$RELEASE_DIR/BUILD-INFO.txt"
+
+# O INDEX dos símbolos vai ordenado e sem duplicata: é o que o symbolize.sh
+# consulta, e duas linhas iguais fariam a busca por nome devolver lixo.
+sort -u "$RELEASE_DIR/symbols/INDEX" -o "$RELEASE_DIR/symbols/INDEX"
+# Um nome com DOIS build-ids é o build-id voltando a depender do diretório (ou
+# duas versões do mesmo binário na mesma release). Fala alto, porque aí a busca
+# por nome de um tombstone sem BuildId fica ambígua.
+ambiguous=$(awk -F'\t' '{c[$2]++} END {for (n in c) if (c[n] > 1) print n}' "$RELEASE_DIR/symbols/INDEX")
+if [ -n "$ambiguous" ]; then
+    echo "ERRO: mesmos nomes com build-ids diferentes em symbols/INDEX:" >&2
+    while IFS= read -r nome; do printf '  %s\n' "$nome" >&2; done <<<"$ambiguous"
+    echo "  (o build-id não está mais reproduzível — veja jni/repro.mk)" >&2
+    exit 1
+fi
+{
+    printf 'symbols_index=1\n'
+    awk -F'\t' '{printf "symbol.%s.build_id=%s\n", $2, $1}' "$RELEASE_DIR/symbols/INDEX"
+} >"$RELEASE_DIR/BUILD-INFO.txt.symbols"
+cat "$RELEASE_DIR/BUILD-INFO.txt" "$RELEASE_DIR/BUILD-INFO.txt.symbols" >"$RELEASE_DIR/BUILD-INFO.tmp"
+mv "$RELEASE_DIR/BUILD-INFO.tmp" "$RELEASE_DIR/BUILD-INFO.txt"
+rm -f "$RELEASE_DIR/BUILD-INFO.txt.symbols"
 
 (cd "$RELEASE_DIR" && find . -type f ! -name SHA256SUMS ! -path './.work/*' -printf '%P\n' | sort | xargs sha256sum) >"$RELEASE_DIR/SHA256SUMS"
 rm -rf "$WORK"

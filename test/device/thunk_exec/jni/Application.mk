@@ -3,3 +3,7 @@ APP_PLATFORM := android-23
 # Shim C++ precisa de headers padrão (cstdint) — libc++ estática.
 APP_STL := c++_static
 APP_CPPFLAGS := -std=c++17 -fno-exceptions -fno-rtti
+
+# Build reproduzivel + simbolos preservados. Ver jni/repro.mk.
+BEPINEX_REPRO_ROOT := $(abspath ../..)
+include $(BEPINEX_REPRO_ROOT)/jni/repro.mk

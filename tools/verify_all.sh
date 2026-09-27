@@ -364,6 +364,31 @@ else
     echo "test/fuzz/run_fuzz_gate.sh ausente: os parsers de dado do usuario ficam sem cobertura no gate"
 fi
 
+# Build-id reproduzível: o MESMO commit tem que dar o MESMO build-id em
+# diretórios diferentes, senão o build-id de um tombstone não identifica nada
+# e um crash de usuário não vira função:linha. Foi o que travou o crash do SA2
+# (tombstone_07): o build-id 041d9b51... não batia com nenhum build local.
+# A etapa compila em DOIS diretórios temporários de profundidades diferentes e
+# exige build-id e .so byte a byte iguais. Diferente = FAIL, nunca SKIP.
+if [ -f "$ROOT/test/symbols/build_id_repro_test.sh" ]; then
+    run_step "build-id reproduzivel (2 diretorios)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/build_id_repro_test.sh"
+else
+    record "build-id reproduzivel (test ausente)" FAIL 0 1
+    echo "test/symbols/build_id_repro_test.sh ausente: o build-id volta a depender do diretorio"
+fi
+
+# tools/symbolize.sh: o crash do usuário tem que virar função:linha em 1
+# comando. O teste cruza um tombstone sintético, o tombstone REAL do device e
+# o cruzamento histórico do offset 0x1bb34 com o build que o gerou.
+if [ -f "$ROOT/test/symbols/symbolize_test.sh" ] && [ -x "$ROOT/tools/symbolize.sh" ]; then
+    run_step "symbolize.sh (tombstone -> funcao:linha)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/symbolize_test.sh"
+else
+    record "symbolize.sh (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_test.sh ausente: crash de usuario nao vira funcao:linha"
+fi
+
 # Execução real do thunk (qemu-aarch64): run_host.sh do thunk_exec.
 # qemu ausente = SKIP com aviso, nunca PASS.
 if [ -f "$ROOT/test/device/thunk_exec/run_host.sh" ]; then
