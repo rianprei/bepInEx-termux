@@ -321,7 +321,7 @@ F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até e
 
 ## Riscos
 
-- `il2cpp_domain_get` antes do `il2cpp_init` crasha o jogo (sa2ammo). Todo mod usa `il2cpp_boot()`.
+- `il2cpp_domain_get` antes do `il2cpp_init` crasha o jogo (sa2ammo). Todo mod usa `il2cpp_boot()`: biblioteca e runtime compartilham um deadline de 240s, com polling a cada 200ms e logs periódicos/motivo explícito ao desistir. `u_frida` usa 10s e carrega o gadget mesmo sem runtime; scripts que dependem de `Il2Cpp.*` podem não funcionar nesse caso. A rota usada para abrir a biblioteca (`__loader_dlopen` ou fallback `dlopen`) também fica no log.
 - Patch de instrução (F4 `return`): método minúsculo (< 8 bytes) ou inline → não patchar, logar.
 - SELinux: jogo lendo `/data/local/tmp/mods` já funciona (SA2); **escrever** `/data/data/<pkg>/files` é do próprio app, ok.
 - Play Protect pode reclamar do APK do Manager sideloaded → documentar no FAQ.

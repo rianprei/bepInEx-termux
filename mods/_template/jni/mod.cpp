@@ -2,8 +2,8 @@
 // Gere um mod novo com: tools/new_mod.sh <id>
 //
 // Estrutura mínima: o constructor solta uma thread; a thread espera o
-// runtime il2cpp subir (il2cpp_boot já espera a lib, o domínio e registra
-// a thread) e loga via mod_log (C1: logcat + /data/data/<pkg>/files/bepinex/
+// runtime il2cpp subir (il2cpp_boot espera biblioteca + runtime em até 240s
+// totais e registra a thread) e loga via mod_log (C1: logcat + /data/data/<pkg>/files/bepinex/
 // log.txt). Opções do Manager: mod_conf_get/mod_conf_int/... leem o
 // <id>.conf (C3) que o Manager instala junto com o .so.
 //
@@ -20,7 +20,7 @@ static void *worker(void *) {
     mod_log(TAG, "carregado, esperando libil2cpp.so");
     Il2Cpp il;
     if (!il2cpp_boot(il)) {
-        mod_log(TAG, "il2cpp não subiu em ~240s (120s lib + 120s domínio) — desistindo");
+        mod_log(TAG, "boot IL2CPP falhou; motivo detalhado no log IL2CPP");
         return nullptr;
     }
     // Daqui pra frente: il.find_class("<ns>", "Classe") etc. (il2cpp_min.h).

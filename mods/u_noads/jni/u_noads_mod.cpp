@@ -139,7 +139,7 @@ void try_show(const char *label, const UNoAdsShow &s, std::size_t index) {
 
 void *worker(void *) {
     if (!il2cpp_boot(g_il)) {
-        mod_log(TAG, "il2cpp_boot falhou; nenhum SDK hookado");
+        mod_log(TAG, "boot IL2CPP falhou; nenhum SDK hookado (motivo detalhado no log IL2CPP)");
         return nullptr;
     }
     mod_log(TAG, "boot ok; pacote=%s; rewarded fora do escopo", mod_pkg() ? mod_pkg() : "unknown");
