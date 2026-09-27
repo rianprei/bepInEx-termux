@@ -54,6 +54,29 @@ static inline const char *bc_app_state_dir(char *out, size_t cap) {
 }
 
 // ============================================================================
+// O socket do companion e COMPARTILHADO
+// ============================================================================
+// g_stream_fd carrega DUAS coisas: o streaming de eventos pro Termux
+// (stream_send_prefixed) e os pedidos do loader (lista e FD do .so). Sao as
+// duas escritas/leituras no MESMO socket.
+//
+// Sem serializar, duas threads se misturam: a linha de evento que o streaming
+// manda aparece no meio da resposta do pedido, o recvmsg le dado alheio, e o
+// SO_RCVTIMEO que o pedido armou vaza para o streaming (que passa a fechar
+// conexao depois de 5s) e para o proximo pedido. Nenhum dos dois e visivel no
+// log: o mod simplesmente nao carrega.
+//
+// Um mutex em volta de (request + resposta) E da escrita do streaming resolve:
+// enquanto um pedido esta em curso, o streaming nao escreve; enquanto o
+// streaming escreve, nenhum pedido comeca. Nao ha starve relevante: o
+// streaming usa MSG_DONTWAIT e nao bloqueia, e o pedido tem timeout.
+//
+// Alternativa seria um connectCompanion() por pedido (conexao exclusiva), que
+// elimina a classe inteira sem mutex — mas paga um handshake por pedido e um
+// socket novo por carga de mod. O mutex e o mais simples que e correto.
+static pthread_mutex_t g_companion_io = PTHREAD_MUTEX_INITIALIZER;
+
+// ============================================================================
 // Entrega por FD: o companion (root) abre, o JOGO recebe o descritor
 // ============================================================================
 // O processo do jogo nao tem acesso a /data/adb/bepinex (root:root 0700) e
@@ -87,6 +110,9 @@ static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
     // O socket e compartilhado com o streaming de eventos (stream_send_prefixed),
     // entao o pedido precisa de timeout explicito. SO_RCVTIMEO e por socket, e o
     // socket e do companion — entao armamos e DESARMAMOS em volta do pedido.
+    // Serializado com o streaming (g_companion_io): request+response sao uma
+    // transacao so, e o SO_RCVTIMEO e por socket.
+    pthread_mutex_lock(&g_companion_io);
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -131,6 +157,7 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
         snprintf(why, whycap, "sem canal com o companion");
         return -1;
     }
+    pthread_mutex_lock(&g_companion_io);
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -191,6 +218,7 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
     struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    pthread_mutex_unlock(&g_companion_io);
     return total;
 }
 
@@ -726,9 +754,13 @@ static void stream_send_prefixed(const char *level, const char *source,
     log_file_write(line, len);  // grava SEMPRE, mesmo sem cliente stream conectado
     int fd = g_stream_fd.load(std::memory_order_relaxed);
     if (fd < 0) return;
+    // O mesmo mutex dos pedidos: enquanto um pedido do loader esta lendo a
+    // resposta, uma linha de evento aqui seria lida como se fosse a resposta.
+    pthread_mutex_lock(&g_companion_io);
     // MSG_DONTWAIT: não bloqueia o jogo. MSG_NOSIGNAL: evita SIGPIPE
     // (matar o jogo) se o companion morreu/fechou o socket por baixo.
     ssize_t r = send(fd, line, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL);
+    pthread_mutex_unlock(&g_companion_io);
     if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
         // canal morto (EPIPE/ECONNRESET etc.) — desliga streaming, não spamma.
         g_stream_fd.store(-1, std::memory_order_relaxed);
