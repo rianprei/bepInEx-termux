@@ -212,6 +212,10 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
 ' bash "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
+# UX-REFERENCE citations must each carry one exact source anchor. The anchor
+# must occur once in its target file, inside the cited range, and on code rather
+# than package/import/comment/license lines. This proves the quote can be found,
+# not that it semantically supports the prose; that remains a review judgment.
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"
 import re
@@ -222,6 +226,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 count_file = Path(sys.argv[2])
 ref_re = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z_][A-Za-z0-9_]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
+anchor_re = re.compile(r"\(anchor:\s*`([^`]+)`\)")
 files = subprocess.check_output(
     ["git", "ls-files", "docs/*.md", "mods/*/README.md"], cwd=root, text=True
 ).splitlines()
@@ -237,8 +242,15 @@ for doc_name in files:
         refs = list(ref_re.finditer(line))
         if not refs:
             continue
+        is_ux_reference = doc_name == "docs/UX-REFERENCE.md"
+        anchors = anchor_re.findall(line) if is_ux_reference else []
+        if is_ux_reference and len(anchors) != len(refs):
+            errors.append(
+                f"{doc_name}:{line_no}: cada citação exige uma âncora explícita "
+                "no formato (anchor: `texto`)"
+            )
         targets = []
-        for match in refs:
+        for ref_index, match in enumerate(refs):
             name = match.group("path")
             start = int(match.group("start"))
             end = int(match.group("end") or start)
@@ -256,6 +268,53 @@ for doc_name in files:
                 continue
             targets.append((target, target_lines, start, end))
             checked += 1
+            if is_ux_reference and ref_index < len(anchors):
+                anchor = anchors[ref_index]
+                occurrence_count = sum(source_line.count(anchor) for source_line in target_lines)
+                occurrences = [
+                    (idx, source_line) for idx, source_line in enumerate(target_lines)
+                    if anchor in source_line
+                ]
+                if occurrence_count != 1:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} ocorre "
+                        f"{occurrence_count} vezes em {target}; esperado exatamente uma"
+                    )
+                    continue
+                anchor_line, source_line = occurrences[0]
+                if not start - 1 <= anchor_line <= end - 1:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} fora da faixa "
+                        f"citada {name}:{start}-{end}"
+                    )
+                stripped = source_line.lstrip()
+                if re.match(r"(?:package|import)\b", stripped):
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} está em "
+                        f"package/import ({target}:{anchor_line + 1})"
+                    )
+                    continue
+                in_comment = False
+                comment_line = False
+                for source_index, candidate_line in enumerate(target_lines[:anchor_line + 1]):
+                    candidate = candidate_line.lstrip()
+                    if source_index == anchor_line and (
+                        in_comment
+                        or candidate.startswith(("//", "/*", "*", "*/", "<!--", "-->"))
+                    ):
+                        comment_line = True
+                    if in_comment:
+                        if "*/" in candidate_line or "-->" in candidate_line:
+                            in_comment = False
+                    elif candidate.startswith("/*") and "*/" not in candidate_line:
+                        in_comment = True
+                    elif candidate.startswith("<!--") and "-->" not in candidate_line:
+                        in_comment = True
+                if comment_line:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} está em "
+                        f"comentário/licença ({target}:{anchor_line + 1})"
+                    )
         literals = [
             span for span in re.findall(r"`([^`\n]+)`", line)
             if not ref_re.fullmatch(span) and not ref_re.search(span)
@@ -263,11 +322,9 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if doc_name == "docs/UX-REFERENCE.md":
-                evidence = [lines[start - 1:end] for _, lines, start, end in targets]
-            else:
-                evidence = [lines for _, lines, _, _ in targets]
-            if targets and not any(literal in "\n".join(lines) for lines in evidence):
+            if not is_ux_reference and targets and not any(
+                literal in "\n".join(lines) for _, lines, _, _ in targets
+            ):
                 errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
 if errors:
     print("\n".join(errors), file=sys.stderr)
