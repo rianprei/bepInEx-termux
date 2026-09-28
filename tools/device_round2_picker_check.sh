@@ -12,7 +12,7 @@ ADB=${ADB:-adb}
 "$ADB" get-state 2>/dev/null | grep -qx device \
     || { echo "FAIL: device não conectado"; exit 2; }
 SOURCE=/sdcard/Download/round2-picker-probe.bpatch
-DEST="/data/local/tmp/mods/$PKG/round2-picker-probe.bpatch"
+DEST="/data/adb/bepinex/mods/$PKG/round2-picker-probe.bpatch"
 OUTPUT=$(printf 'if [ -f %s ] && [ ! -L %s ] && [ -f %s ] && [ ! -L %s ] && cmp -s %s %s; then echo ROUND2_PICKER_PASS; else echo ROUND2_PICKER_FAIL; fi\n' \
     "$SOURCE" "$SOURCE" "$DEST" "$DEST" "$SOURCE" "$DEST" | "$ADB" shell su 2>&1 | tr -d '\r')
 case "$OUTPUT" in

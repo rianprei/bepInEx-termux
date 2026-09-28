@@ -23,7 +23,7 @@ case "$1" in
                 if [ "${FAKE_AVC:-}" = unrelated ]; then
                     echo 'avc: denied { read } for name="other" permissive=0'
                 elif [ "${FAKE_AVC:-}" = project ]; then
-                    echo 'avc: denied { read } for path="/data/local/tmp/mods/com.example.game/u_patch.so" permissive=0'
+                    echo 'avc: denied { read } for path="/data/adb/bepinex/mods/com.example.game/u_patch.so" permissive=0'
                 fi
                 :
                 ;;
@@ -50,7 +50,7 @@ case "$1" in
                         ;;
                     grep*)
                         if [ "${FAKE_MAPS:-1}" = 1 ]; then
-                            echo "1000-2000 r-xp /data/local/tmp/mods/com.example.game/sa2ammo.so"
+                            echo "1000-2000 r-xp /data/adb/bepinex/mods/com.example.game/sa2ammo.so"
                         fi
                         ;;
                     cat*) echo "fake mod log";;
