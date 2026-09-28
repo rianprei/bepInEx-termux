@@ -8,7 +8,8 @@
 // daemon root. Entao o despacho — a parte que decide qual handler chamar — fica
 // AQUI, em um nucleo puro, e os DOIS lados usam o MESMO codigo:
 //
-//   - companion.cpp passa os handlers REAIS de root;
+//   - companion.cpp passa os handlers REAIS de root (cada um gateado por
+//     SO_PEERCRED -> packages.list -> pacote do chamador, ver bc_peer_ok_for_pkg);
 //   - o teste de host passa handlers de teste, num socketpair.
 //
 // Se o despacho deixar de funcionar, o teste falha. E como o mesmo header
@@ -17,6 +18,7 @@
 #ifndef BC_REQ_DISPATCH_H
 #define BC_REQ_DISPATCH_H
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -38,15 +40,22 @@ struct bc_req_handlers {
     bc_req_list_fn list;
 };
 
-// Le UMA request e despacha. Devolve 1 se atendeu, 0 se recusou.
+// Le UMA request e despacha. Contrato de retorno:
+//    1  = atendeu (o handler respondeu)
+//    0  = recusou — e a recusa RESPONDEU no socket (linha "<errno>\n"): proto
+//         errado ou verbo desconhecido. A conexao segue util: o cliente pode
+//         tentar outro pedido.
+//   -1  = fim da conexao (read <= 0): quem chama fecha o fd.
 //
-// "<proto> <verbo> <a> [b]" — o mesmo formato que bc_fd_build_request2 monta.
-// Verbo desconhecido, proto errado ou linha malformada viram recusa, nunca um
-// silencio: silencio no canal de pedidos e o sintoma que a revisiao achou.
+// Silencio e o sintoma que a revisao achou: toda recusa responde, nunca fica
+// mudA. E a resposta e uma LINHA de errno, igual ao resto do protocolo — a
+// versao anterior mandava "unknown_verb" SEM '\n' (e com um NUL a mais): o
+// parser de linha do cliente nao consumia, o pedido seguinte herdava bytes
+// soltos no buffer, e o e2e travava no "verbo desconhecido: respondeu".
 static inline int bc_req_dispatch_one(int fd, const struct bc_req_handlers *h) {
     char buf[4096];
     ssize_t n = bc_fd_read_line(fd, buf, sizeof(buf));
-    if (n <= 0) return 0;
+    if (n <= 0) return -1;
     int proto = 0;
     char verb[32] = {0};
     char arg1[320] = {0};
@@ -73,7 +82,9 @@ static inline int bc_req_dispatch_one(int fd, const struct bc_req_handlers *h) {
     if (strcmp(verb, BC_FD_VERB_SO) == 0 && h->so != NULL) { h->so(fd, arg1, arg2); return 1; }
     if (strcmp(verb, "TX") == 0 && h->txt != NULL) { h->txt(fd, arg1, arg2); return 1; }
     if (strcmp(verb, BC_FD_VERB_LS) == 0 && h->list != NULL) { h->list(fd, arg1); return 1; }
-    bc_fd_send_data(fd, "unknown_verb", 13);
+    char e[BC_FD_ERR_MAX];
+    ssize_t k = bc_fd_build_error(e, sizeof(e), EINVAL);
+    if (k > 0) bc_fd_send_data(fd, e, (size_t)k);
     return 0;
 }
 

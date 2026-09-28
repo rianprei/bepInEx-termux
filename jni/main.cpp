@@ -41,6 +41,7 @@
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
 #include "bc_mods_fd.h" // entrega do .so por FD (SCM_RIGHTS), do companion
 #include "bc_req_channel.h" // papel REQ/STREAM na 1a linha do socket
+#include "bc_req_client.h" // pedidos ao companion: cliente REAL (extr. de cá p/ o teste e2e)
 #include "bc_stream_guard.h" // caminho quente do socket compartilhado (try_lock)
 
 // Declaracoes antecipadas: as implementacoes ficam mais abaixo (depois do
@@ -128,203 +129,38 @@ static std::atomic<unsigned> g_stream_dropped{0};
 // log, NUNCA o jogo travado num recvmsg. E um companion que responde com um
 // .so corrompido tambem: o dlopen volta e o log explica qual arquivo.
 
-// O socket do companion, ou -1. Snapshot unico: se cair no meio do envio o
-// mod nao carrega, e o proximo ciclo tenta de novo.
-static int bc_fd_socket(void) {
-    return g_stream_fd.load(std::memory_order_relaxed);
-}
-
-// O socket de PEDIDOS. Socket separado, portanto sem mutex: o stream e os
-// pedidos nao se misturam mais, e o timeout de um nao vaza para o outro.
+// O socket de PEDIDOS (mod_fd/mod_txt/mod_list), aberto no postAppSpecialize
+// como conexão ao @bc_companion com o SO_PEERCRED REAL do app (ver
+// bc_req_channel.h). Socket dedicado: o mutex g_companion_io serializa
+// request+resposta entre as threads de carga/reload que compartilham o canal.
 static inline int bc_req_socket(void) {
     return g_req_fd;
 }
 
-// Pede o FD de `path` ao companion. Devolve o fd pronto para o dlopen, ou -1
-// (com motivo em `why`). NUNCA bloqueia para sempre.
+// ---------------------------------------------------------------------------
+// Os TRÊS pedidos são o cliente REAL de bc_req_client.h — o MESMO código que
+// o teste e2e usa no socketpair. Extraídos de cá (WIP 5dcc38f) porque as
+// cópias locais tinham três defeitos que só o e2e revelaria: fd/txt enviavam
+// pelo socket de STREAMING (bc_fd_socket — o do broadcast), list destravava
+// um mutex que nunca travou (UB), e text não travava nada. O pacote não vem
+// do chamador: é o g_game_pkg do preAppSpecialize — o companion valida
+// (pkg,nome) e o SO_PEERCRED da conexão amarra o pedido ao app real.
+// ---------------------------------------------------------------------------
+
+// FD do .so `name` (na pasta do próprio jogo), pronto pro android_dlopen_ext.
 static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
-    why[0] = '\0';
-    int sock = bc_fd_socket();
-    if (sock < 0) {
-        snprintf(why, whycap, "sem canal com o companion");
-        return -1;
-    }
-    // Socket DEDICADO de pedidos (canal REQ): nao e compartilhado com o
-    // streaming, entao NAO precisa de mutex — request+response sao uma
-    // transacao so num socket so nosso. O timeout e explicito porque um
-    // companion mudo nao pode virar travada de jogo; e desarmado no fim para
-    // nao vazar para o proximo pedido.
-    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    char req[BC_FD_REQ_MAX];
-    // O companion NAO aceita caminho: recebe (pkg, nome) e monta. `path` aqui
-    // e o nome do arquivo, que o loader ja validou por
-    // bc_loader_is_mod_filename; o pacote vem do proprio jogo.
-    ssize_t n = bc_fd_build_request2(req, sizeof(req), BC_FD_PROTO,
-                                     BC_FD_VERB_SO, g_game_pkg, path);
-    int fd = -1;
-    if (n <= 0) {
-        snprintf(why, whycap, "caminho invalido para o pedido");
-    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
-        snprintf(why, whycap, "companion nao recebeu o pedido: %s", strerror(errno));
-    } else {
-        char payload[BC_FD_ERR_MAX];
-        ssize_t r = bc_fd_recv_fd(sock, payload, sizeof(payload), &fd);
-        if (r < 0) {
-            // -1 do recvmsg com SO_RCVTIMEO = companion mudo. E o caso que
-            // travaria o jogo sem o timeout.
-            snprintf(why, whycap, "companion nao respondeu em 5s");
-        } else if (fd < 0) {
-            int e = 0;
-            if (bc_fd_parse_error(payload, &e))
-                snprintf(why, whycap, "companion recusou: errno %d (%s)", e, strerror(e));
-            else
-                snprintf(why, whycap, "resposta sem fd e sem erro");
-        }
-    }
-    // Desarma: o streaming de eventos nao pode herdar o timeout de 5s.
-    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
-    return fd;
+    return bc_req_ask_so(bc_req_socket(), &g_companion_io, g_game_pkg, path, why, whycap);
 }
 
-// A LISTA tambem vem pelo socket: a arvore e root-only e o jogo nao pode (e nao
-// deve) scandir() nela. O companion enumera, e devolve um nome por linha, ja
-// filtrado para .so e ja ordenado.
+// Lista de .so da pasta do próprio jogo (o `dir` é o pacote — a arvore e
+// root-only, quem enumera e o companion).
 static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why, size_t whycap) {
-    out[0] = '\0';
-    why[0] = '\0';
-    int sock = bc_req_socket();
-    if (sock < 0) {
-        snprintf(why, whycap, "sem canal de pedidos com o companion");
-        return -1;
-    }
-    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    char req[BC_FD_REQ_MAX];
-    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, BC_FD_VERB_LS, dir);
-    int total = -1;
-    if (n <= 0) {
-        snprintf(why, whycap, "caminho invalido para o pedido de lista");
-    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
-        snprintf(why, whycap, "companion nao recebeu o pedido de lista");
-    } else {
-        // "<n>\n" e depois n linhas de nome.
-        char buf[4096];
-        size_t used = 0, head = 0;
-        char *nl = NULL;
-        for (;;) {
-            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
-            if (r < 0) {
-                if (errno == EINTR) continue;
-                snprintf(why, whycap, "companion nao respondeu a lista em 5s");
-                break;
-            }
-            if (r == 0) { snprintf(why, whycap, "companion fechou antes da lista"); break; }
-            used += (size_t)r;
-            buf[used] = '\0';
-            nl = (char *)memchr(buf, '\n', used);
-            if (nl != NULL) break;
-            if (used >= sizeof(buf) - 1) { snprintf(why, whycap, "resposta de lista grande demais"); break; }
-        }
-        if (nl != NULL) {
-            *nl = '\0';
-            head = (size_t)(nl - buf) + 1;
-            total = atoi(buf);
-            if (total < 0) { snprintf(why, whycap, "resposta de lista invalida"); total = -1; }
-            else if ((size_t)total > cap / 2) { snprintf(why, whycap, "lista maior que o buffer"); total = -1; }
-            else {
-                // o resto ja esta em buf+head
-                char *rest = buf + head;
-                size_t rlen = used - head;
-                // NORMALIZA: a resposta vem com o total no fim por construcao
-                // do companion; aqui consumed so o que veio.
-                if ((size_t)total > 0 && rlen > 0) {
-                    char *p2 = rest;
-                    for (int k = 0; k < total; k++) {
-                        char *e = strchr(p2, '\n');
-                        if (e == NULL) break;
-                        *e = '\0';
-                        if (p2[0] != '\0') {
-                            size_t l = strlen(p2);
-                            if (l + 2 < cap) { memcpy(out, p2, l); out[l++] = '\n'; out[l] = '\0'; }
-                        }
-                        p2 = e + 1;
-                    }
-                }
-            }
-        }
-    }
-    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
-    pthread_mutex_unlock(&g_companion_io);
-    return total;
+    return bc_req_ask_list(bc_req_socket(), &g_companion_io, dir, out, cap, why, whycap);
 }
 
-// O CONTEUDO de um texto da arvore (conf, allowlist): o jogo pede, o companion
-// (root) le e manda. Mesmo timeout e mesmo mutex do FD — o socket e o mesmo.
-//
-// A arvore e root-only, entao o jogo nao pode abrir esses arquivos: e para
-// isso que eles viajam por conteudo em vez de por descritor (o .so precisa
-// ser MAPEAVEL e vem por FD; um .conf so precisa do texto).
-static int bc_mod_text_request(const char *rel, char *out, size_t cap,
-                               char *why, size_t whycap) {
-    out[0] = '\0';
-    why[0] = '\0';
-    int sock = bc_fd_socket();
-    if (sock < 0) { snprintf(why, whycap, "sem canal com o companion"); return -1; }
-    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    char req[BC_FD_REQ_MAX];
-    ssize_t n = bc_fd_build_request2(req, sizeof(req), BC_FD_PROTO, "TX",
-                                     g_game_pkg, rel);
-    long total = -1;
-    if (n <= 0) {
-        snprintf(why, whycap, "caminho invalido para o pedido de conteudo");
-    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
-        snprintf(why, whycap, "companion nao recebeu o pedido de conteudo");
-    } else {
-        char buf[16384];
-        size_t used = 0, head = 0;
-        char *nl = NULL;
-        for (;;) {
-            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
-            if (r < 0) {
-                if (errno == EINTR) continue;
-                snprintf(why, whycap, "companion nao respondeu o conteudo em 5s");
-                break;
-            }
-            if (r == 0) { snprintf(why, whycap, "companion fechou antes do conteudo"); break; }
-            used += (size_t)r;
-            buf[used] = '\0';
-            nl = (char *)memchr(buf, '\n', used);
-            if (nl != NULL) break;
-            if (used >= sizeof(buf) - 1) { snprintf(why, whycap, "conteudo maior que o buffer"); break; }
-        }
-        if (nl != NULL) {
-            *nl = '\0';
-            head = (size_t)(nl - buf) + 1;
-            total = atol(buf);
-            if (total < 0) { snprintf(why, whycap, "resposta de conteudo invalida"); total = -1; }
-            else if ((size_t)total >= cap) { snprintf(why, whycap, "conteudo maior que o buffer (%ld)", total); total = -1; }
-            else {
-                size_t rlen = used - head;
-                if ((size_t)total > rlen) rlen = (size_t)total;   // pode vir em partes
-                if (rlen > 0) memcpy(out, buf + head, rlen);
-                out[rlen < cap ? rlen : cap - 1] = '\0';
-            }
-        }
-    }
-    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
-    return (int)total;
+// Conteudo de `rel` (ex.: bc_mods.conf) na pasta do próprio jogo.
+static int bc_mod_text_request(const char *rel, char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_txt(bc_req_socket(), &g_companion_io, g_game_pkg, rel, out, cap, why, whycap);
 }
 
 // dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
@@ -742,7 +578,10 @@ struct HookPlan {
 
 // --- Fakes (log-only, re-forward completo) ---
 
-// STREAMING de eventos pro companion (socket @bc_companion, comando "stream").
+// STREAMING de eventos pro companion (o socket do connectCompanion(),
+// lido pelo stream_socket_reader do daemon — o jogo NÃO conecta no
+// @bc_companion para isto; aquele socket abstract serve o canal de pedidos
+// REQ e os clientes Termux).
 // Estratégia: publica aqui as MESMAS linhas que o hook loga no logcat, mas
 // via socket pro companion, que faz broadcast aos clientes Termux conectados
 // em modo streaming (tail -f do LogOutput.log). O game process e o daemon
@@ -2016,16 +1855,9 @@ static bool pkg_mods_dir(const char *pkg, char *dir, size_t size) {
     return n > 0 && (size_t)n < size;
 }
 
-// Pacote com pasta de mods própria = mods autônomos cuidam de tudo: sem
-// companion (o companion abre o console do Termux por cima do jogo) e sem o
-// hook de log genérico do experimento Cocos2d-x (crashava o Swamp Attack 2
-// 3s depois de abrir).
-static bool has_pkg_mods_dir(const char *pkg) {
-    char dir[320];
-    if (!pkg_mods_dir(pkg, dir, sizeof(dir))) return false;
-    struct stat st;
-    return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
-}
+// (has_pkg_mods_dir foi removido: desde a árvore root-only o stat do jogo dá
+// EACCES — sempre falso. Os fatos vêm do companion, pelo verbo PATH; a decisão
+// continua em bc_decide_path.)
 
 // Caminho decidido no preAppSpecialize (bc_decide_path) e lido pela thread de
 // carga — o pthread_create já é barreira de memória, não precisa de atomic.
@@ -2401,24 +2233,39 @@ public:
             // estágio). Só marca o candidato pela allowlist; a detecção de
             // verdade (com poll+timeout, já que não sabemos o nome da lib
             // como no caminho Battle Cats) acontece em postAppSpecialize.
-            // F1 (zero-config): 1 stat decide. A allowlist só é lida quando
-            // não há pasta — ela continua servindo ao experimento Cocos2d-x
-            // legado, não é mais pré-requisito de nada. Decisão pura em
-            // bc_path_decide.h (testada no harness), I/O fica aqui.
-            bool dir_exists = has_pkg_mods_dir(pkg_copy);
-            // A allowlist vem por CONTEUDO, nao por caminho: a arvore e
-            // root-only e o jogo nao a abre. O companion (root) le e manda pelo
-            // socket. Sem companion, a allowlist nao esta disponivel — e o
-            // mod continua carregando pela pasta, que e o caminho principal.
+            // F1 (zero-config). A DECISÃO é pura em bc_path_decide.h (testada
+            // no harness) — mas os DOIS FATOS que ela precisa vivem na árvore
+            // root-only (existe mods/<pkg>? está na allowlist?), e o stat do
+            // jogo dá EACCES ali desde a mudança de árvore: o has_pkg_mods_dir
+            // local morreu com ela. Quem enxerga os fatos é o companion (root),
+            // pelo verbo PATH — o loader pergunta PRÉ-specialize (neste ponto
+            // ele ainda é uid 0, filho do zygote, e passa no gate de UID do
+            // @bc_companion) e a DECISÃO continua aqui, na função pura.
+            //
+            // O connectCompanion() abaixo precisa vir ANTES do PATH: é ele que
+            // faz o companion_handler subir e o daemon fazer o bind do
+            // @bc_companion — sem isso o PATH não tem a quem conectar.
+            bool dir_exists = false;
             bool na_allowlist = false;
-            if (!dir_exists) {
-                char buf[8192];
-                char why[160] = {0};
-                if (bc_mod_text_request("bc_generic_allowlist.conf", buf, sizeof(buf),
-                                        why, sizeof(why)) >= 0) {
-                    na_allowlist = bc_generic_allowlist_contains_buf(buf, pkg_copy);
+            {
+                int companion_fd = api->connectCompanion();
+                if (companion_fd >= 0) {
+                    g_stream_fd.store(companion_fd, std::memory_order_relaxed);
                 } else {
-                    LOGI("%s: allowlist indisponivel (%s) — segue sem ela", pkg_copy, why);
+                    LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
+                }
+                char why[160] = {0};
+                int pfd = bc_req_connect(BC_COMPANION_SOCKET_NAME, NULL, 10,
+                                         why, sizeof(why));
+                if (pfd >= 0) {
+                    if (bc_req_ask_path(pfd, pkg_copy, &dir_exists, &na_allowlist,
+                                        why, sizeof(why)) < 0) {
+                        LOGI("%s: PATH indisponível (%s) — segue sem allowlist", pkg_copy, why);
+                    }
+                    close(pfd);
+                } else {
+                    LOGI("%s: companion ainda não atende @%s (%s) — segue sem allowlist",
+                         pkg_copy, BC_COMPANION_SOCKET_NAME, why);
                 }
             }
             g_path_kind = bc_decide_path(pkg_copy, dir_exists, na_allowlist);
@@ -2435,21 +2282,17 @@ public:
                 // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
 
 
-// g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
-                // Termux, porque só o caminho be_bc chamava connectCompanion().
-                // Mesma restrição de SELinux do caminho BC: só funciona aqui,
-                // em preAppSpecialize.
+// g_stream_fd setado acima (ANTES do PATH — o daemon precisa existir pra
+                // o @bc_companion aceitar a pergunta): o streaming serve o
+                // caminho Cocos e agora também o de mods/<pkg> — sem custo
+                // (era o motivo de o caminho por pasta abrir NENHUM socket, e
+                // isso deixava o daemon sem subir, matando o canal de pedidos
+                // do jogo na raiz).
                 if (g_path_kind == BC_PATH_PKG_MODS) {
-                    LOGI("%s: mods/<pkg>/ presente — carga direta, sem allowlist e sem companion",
+                    LOGI("%s: mods/<pkg>/ presente — carga por FD no canal REQ (postAppSpecialize)",
                          pkg_copy);
                 } else {
                     LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
-                    int companion_fd = api->connectCompanion();
-                    if (companion_fd >= 0) {
-                        g_stream_fd.store(companion_fd, std::memory_order_relaxed);
-                    } else {
-                        LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
-                    }
                 }
             } else {
                 api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
@@ -2466,24 +2309,12 @@ public:
         // Sem essa chamada, companion_handler() nunca roda e o socket
         // @bc_companion pro Termux nunca existe.
         int companion_fd = api->connectCompanion();
-        // O canal de PEDIDOS e uma segunda conexao, com "REQ\n" na primeira
-        // linha. E o que faz o despacho de mod_fd/mod_txt/mod_list existir de
-        // verdade: antes eles iam pelo g_stream_fd, cujo unico leitor faz
-        // broadcast. O stream continua sendo so stream, e o mutex do socket
-        // compartilhado deixa de ser necessario para o caminho de mod_*.
-        int req_fd = api->connectCompanion();
-        if (req_fd >= 0) {
-            ssize_t hn = write(req_fd, BC_REQ_HELLO, strlen(BC_REQ_HELLO));
-            if (hn == (ssize_t)strlen(BC_REQ_HELLO)) {
-                g_req_fd = req_fd;
-                LOGI("canal de pedidos aberto (fd=%d)", req_fd);
-            } else {
-                LOGE("canal de pedidos: falha ao enviar o papel — %s", strerror(errno));
-                close(req_fd);
-            }
-        } else {
-            LOGE("connectCompanion() do canal de pedidos falhou — nenhum mod vai carregar");
-        }
+        // (O canal de pedidos NÃO é mais um 2º connectCompanion: é a conexão
+        // do jogo ao @bc_companion aberta no postAppSpecialize, com o
+        // SO_PEERCRED REAL do app — ver bc_req_channel.h. Aqui pré-specialize
+        // o peer seria o uid 0 do zygote, e o gate por pacote recusaria o
+        // próprio jogo; e a 2ª conexão zygisk viraria um 2º daemon que morre
+        // no bind EADDRINUSE levando o canal junto.)
         if (companion_fd >= 0) {
             LOGI("companion conectado (fd=%d) — socket @bc_companion deve estar ativo", companion_fd);
             // NÃO é leak: este fd é o canal STREAMING de eventos pro companion
@@ -2501,6 +2332,24 @@ public:
     }
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
+        // CANAL DE PEDIDOS (aberto AQUI, pós-specialize, de propósito): o
+        // SO_PEERCRED da conexão precisa ver o uid REAL do app para o gate
+        // por pacote funcionar (companion: SO_PEERCRED -> packages.list ->
+        // "só os mods do chamador"). No connectCompanion pré-specialize o
+        // peer congelaria como uid 0 do zygote e o próprio jogo seria
+        // recusado (fail-closed). Sem canal: nenhum mod carrega por FD —
+        // logado alto, nunca crash.
+        if (be_generic_candidate || be_bc) {
+            char why[160] = {0};
+            int req_fd = bc_req_connect(BC_COMPANION_SOCKET_NAME, BC_REQ_HELLO, 20,
+                                        why, sizeof(why));
+            if (req_fd >= 0) {
+                g_req_fd = req_fd;
+                LOGI("canal de pedidos aberto (fd=%d)", req_fd);
+            } else {
+                LOGE("canal de pedidos falhou (%s) — mods não carregam por FD", why);
+            }
+        }
         if (be_generic_candidate) {
             // Detecção de verdade acontece AQUI (postAppSpecialize), não em
             // preAppSpecialize — achado freebuff acima. Ainda assim as libs

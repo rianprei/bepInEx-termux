@@ -31,7 +31,8 @@
 #include "bc_req_channel.h" // papel do socket (REQ/STREAM) na 1a linha
 #include "bc_req_dispatch.h" // despacho do pedido (nucleo puro, testado no host)
 #include "bc_peercred.h"  // amarra o pedido ao uid de quem conectou (SO_PEERCRED)
-#include "bc_loader.h"  // BC_MODS_DIR + BC_MODS_ROOT + bc_loader_is_mod_filename() — validação de nome pro push_mod
+#include "bc_loader.h"
+#include "bc_generic_allowlist.h"  // PATH <pkg>: a allowlist mora na árvore root-only, quem lê é o root
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
 // Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
@@ -47,7 +48,7 @@ static unsigned bc_signal_seq() {
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-static const char *SOCKET_NAME = "bc_companion";
+static const char *SOCKET_NAME = BC_COMPANION_SOCKET_NAME; // fonte única: bc_req_channel.h
 
 // Forward decl: stream_broadcast é usado por stream_add_client (mais
 // abaixo, mas antes da definição real de stream_broadcast no arquivo).
@@ -755,14 +756,20 @@ static void handle_push_mod(int fd, const char *name, long size) {
 static void handle_mod_fd(int fd, const char *pkg, const char *name);
 static void handle_mod_txt(int fd, const char *pkg, const char *name);
 static void handle_mod_list(int fd, const char *pkg);
-static void *bc_req_socket_thread(void *arg);
-void bc_serve_request_channel(int fd);
-static void handle_mod_txt(int fd, const char *pkg, const char *name);
-static void handle_mod_list(int fd, const char *pkg);
+static void handle_path_request(int fd, const char *pkg);
 
-bool handle_termux_request(int client_fd) {
+// first/firstlen: a PRIMEIRA LINHA da conexão, já lida pelo accept loop (é
+// ela que decide o papel da conexão — REQ adota antes daqui; todo o resto
+// vem para cá). NULL/n<=0 = nada lido ainda (comportamento legado).
+bool handle_termux_request(int client_fd, const char *first, ssize_t firstlen) {
     char buf[4096];
-    ssize_t n = read_command(client_fd, buf, sizeof(buf));
+    size_t blen = 0;
+    if (first != NULL && firstlen > 0) {
+        blen = (size_t)firstlen >= sizeof(buf) ? sizeof(buf) - 1 : (size_t)firstlen;
+        memcpy(buf, first, blen);
+        buf[blen] = '\0';
+    }
+    ssize_t n = (blen > 0) ? (ssize_t)blen : read_command(client_fd, buf, sizeof(buf));
     if (n > 0) {
         LOGI("received command: %s", buf);
 
@@ -811,14 +818,12 @@ bool handle_termux_request(int client_fd) {
             write_all(client_fd, response, strlen(response));
         } else if (strcmp(buf, "list_mods") == 0) {
             handle_list_mods(client_fd);
-        } else if (strncmp(buf, "mod_fd ", 7) == 0) {
-            // legado: o canal de pedido e o socket REQ (bc_req_socket_thread).
-            // O Termux nao usa mod_fd; o despacho fica no canal de pedido.
-            (void)buf;
-        } else if (strncmp(buf, "mod_txt ", 8) == 0) {
-            (void)buf;
-        } else if (strncmp(buf, "mod_list ", 9) == 0) {
-            (void)buf;
+        } else if (strncmp(buf, "PATH ", 5) == 0) {
+            // Decisão de caminho pré-specialize: o loader (ainda uid 0, filho
+            // do zygote) pergunta os FATOS que não enxerga na árvore root-only
+            // (existe mods/<pkg>? está na allowlist?); a DECISÃO continua no
+            // loader (bc_decide_path, pura e testada no harness).
+            handle_path_request(client_fd, buf + 5);
         } else if (strncmp(buf, "toggle_mod ", 11) == 0) {
             handle_toggle_mod(client_fd, buf + 11);
         } else if (strncmp(buf, "set_mod ", 8) == 0) {
@@ -940,9 +945,10 @@ bool handle_termux_request(int client_fd) {
 // Quem abre o .so e o companion, como root; o que CRUZA a fronteira e o
 // DESCRITOR.
 //
-//   mod_fd  <caminho>  -> o companion abre com O_RDONLY|O_NOFOLLOW|O_CLOEXEC
-//                         e manda o FD por SCM_RIGHTS
-//   mod_txt <caminho>  -> o conteudo (conf/allowlist, que nao sao mapeaveis)
+//   mod_fd  <pkg> <nome>  -> o companion monta <raiz>/mods/<pkg>/<nome>, abre
+//                            com O_RDONLY|O_NOFOLLOW|O_CLOEXEC e manda o FD por
+//                            SCM_RIGHTS (o cliente NUNCA manda caminho)
+//   mod_txt <pkg> <nome>  -> o conteudo (conf/allowlist, nao mapeaveis)
 //
 // O_NOFOLLOW e o que impede o root de abrir um link de dentro da arvore para
 // fora dela. A arvore e root-only e o migrador nao segue link, mas o open() e a
@@ -1086,6 +1092,58 @@ static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *
     return true;
 }
 
+// PATH <pkg> — os DOIS FATOS da decisão de caminho (bc_decide_path), que o
+// loader pergunta pré-specialize porque a árvore de mods é root-only e o stat
+// do jogo sempre daria EACCES (o has_pkg_mods_dir do loader morreu com a
+// mudança de árvore). Quem responde é o root, com os MESMOS critérios que o
+// loader usava ao vivo:
+//   - existe /data/adb/bepinex/mods/<pkg> como diretório?
+//   - <pkg> está na allowlist do experimento Cocos2d-x?
+// A DECISÃO não vem daqui: o loader recebe "<dir> <allow>\n" e chama
+// bc_decide_path — a função pura, testada no harness, continua sendo o único
+// ponto de decisão. O companion só entrega os fatos.
+//
+// Gate: esta conexão passa pelo is_authorized_uid do accept loop — e o
+// chamador pré-specialize é o loader, ainda uid 0 (filho do zygote), que o
+// gate já aceita como root. Código de mod não chega aqui: mods rodam depois
+// do specialize com uid de app, fora da whitelist de UID.
+static void handle_path_request(int fd, const char *pkg_arg) {
+    char pkg[192];
+    size_t pl = strlen(pkg_arg);
+    if (pl == 0 || pl >= sizeof(pkg) || !bc_mod_pkg_ok(pkg_arg)) {
+        const char *e = "error: pacote invalido\n";
+        write_all(fd, e, strlen(e));
+        return;
+    }
+    memcpy(pkg, pkg_arg, pl + 1);
+
+    bool dir_exists = false;
+    char dir[640];
+    int pn = snprintf(dir, sizeof(dir), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
+    if (pn > 0 && (size_t)pn < sizeof(dir)) {
+        struct stat st;
+        dir_exists = (stat(dir, &st) == 0 && S_ISDIR(st.st_mode));
+    }
+
+    bool in_allowlist = false;
+    FILE *f = fopen(BC_GENERIC_ALLOWLIST_FILE, "r");
+    if (f != nullptr) {
+        char buf[16384];
+        size_t got = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        buf[got < sizeof(buf) - 1 ? got : sizeof(buf) - 1] = '\0';
+        in_allowlist = bc_generic_allowlist_contains_buf(buf, pkg);
+    }
+    // allowlist ausente = NÃO está na lista (mesma semântica do loader: sem
+    // allowlist, só o caminho por pasta conta).
+
+    char resp[64];
+    int rn = snprintf(resp, sizeof(resp), "%d %d\n", dir_exists ? 1 : 0,
+                      in_allowlist ? 1 : 0);
+    if (rn > 0) write_all(fd, resp, (size_t)rn);
+    LOGI("PATH %s -> dir=%d allow=%d", pkg, dir_exists ? 1 : 0, in_allowlist ? 1 : 0);
+}
+
 
 
 // A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
@@ -1216,38 +1274,31 @@ static void handle_mod_txt(int fd, const char *pkg, const char *name) {
 // ============================================================================
 // O CANAL DE PEDIDOS (achado BLOQUEANTE do OpenCode em c242d5f)
 // ============================================================================
-// O jogo mandava mod_fd/mod_txt/mod_list pelo g_stream_fd, que e o socket de
-// STREAMING. O unico leitor desse socket (stream_socket_reader) faz BROADCAST e
-// nao despacha nada; os handlers so eram alcancados pelo termux_accept_loop, que
-// o JOGO nunca conecta. Em runtime: todo pedido virava timeout de 5s e nenhum
-// mod carregava — e os testes passavam porque mediam as PECAS, nao o FIO.
+// O canal de pedidos do JOGO: conexão ao @bc_companion, pós-specialize, com
+// SO_PEERCRED REAL do app (uid do jogo -> /data/system/packages.list -> os
+// pacotes do próprio chamador). Achado do OpenCode em c242d5f: os pedidos iam
+// pelo socket de STREAMING, cujo único leitor faz broadcast, e nenhum mod
+// carregava — com a suite toda verde, porque media as PEÇAS e não o FIO.
 //
-// Agora o jogo abre um SEGUNDO connectCompanion() no specialize, manda
-// "REQ\n" como primeira linha, e este dispatcher le os pedidos. O stream volta a
-// ser so stream, e o mutex do socket compartilhado (g_companion_io) deixa de ter
-// razao de existir para o caminho de mod_*.
+// O DESPACHO é o núcleo puro de bc_req_dispatch.h — o MESMO que o teste de
+// host exercita no socketpair. Aqui só entram os handlers REAIS de root, e
+// cada um já é gateado por bc_peer_ok_for_pkg (SO_PEERCRED -> packages.list ->
+// "o pedido só é servido se o pkg for do chamador"): um mod malicioso dentro
+// do jogo A pede os mods do jogo B e leva EACCES.
 //
-// Um socket so de pedido tambem e o que torna o SO_PEERCRED honesto: o uid do
-// peer e o do proprio cliente, sem mistura com quem assiste ao stream.
-static void bc_req_dispatch_one(int fd) {
-    // O DESPACHO e o nucleo puro de bc_req_dispatch.h, o MESMO que o teste de
-    // host exercita. Aqui so entram os handlers REAIS de root.
-    static const struct bc_req_handlers h = {
-        handle_mod_fd,   // "SO"  -> FD do .so
-        handle_mod_txt,  // "TX"  -> conteudo
-        handle_mod_list, // "LS"  -> lista
-    };
-    bc_req_dispatch_one(fd, &h);
-}
-
-static void *bc_req_socket_thread(void *arg) {
+// Contrato do loop: bc_req_dispatch_one devolve 1=atendido, 0=recusado COM
+// resposta (linha de errno — a conexão segue útil), -1=fim (read <= 0). O
+// -1 é o que fecha: a versão WIP ignorava o retorno e o loop virava SPIN
+// de CPU 100% no EOF (read de socket fechado retorna 0 na hora, para sempre).
+static void *req_channel_thread(void *arg) {
     int fd = (int)(intptr_t)arg;
-    // O DAEMON ja leu e classificou a primeira linha (o papel) antes de nos
-    // chamar; aqui o socket e de pedido por definicao.
-    if (false) {
-    }
+    static const struct bc_req_handlers root = {
+        handle_mod_fd,   // "SO"  -> FD do .so (SCM_RIGHTS)
+        handle_mod_txt,  // "TX"  -> conteúdo (conf/allowlist)
+        handle_mod_list, // "LS"  -> lista de .so da pasta do pacote
+    };
     for (;;) {
-        bc_req_dispatch_one(fd);
+        if (bc_req_dispatch_one(fd, &root) < 0) break;
     }
     close(fd);
     return nullptr;
@@ -1310,22 +1361,52 @@ static void *termux_accept_loop(void *) {
         consecutive_errors = 0;
 
         struct ucred cred;
-        if (getpeercred(client, &cred) == 0) {
-            LOGI("connection from UID=%d PID=%d", cred.uid, cred.pid);
-
-            if (is_authorized_uid(cred.uid)) {
-                bool adopted = handle_termux_request(client);
-                if (!adopted) close(client);
-                // adotado (comando "stream") — stream_add_client já é o
-                // novo dono, fecha quando o cliente desconectar, não aqui.
-            } else {
-                LOGE("rejected connection from UID=%d (not Termux)", cred.uid);
-                close(client);
-            }
-        } else {
+        if (getpeercred(client, &cred) != 0) {
             LOGE("getpeercred() failed: %s", strerror(errno));
             close(client);
+            continue;
         }
+        LOGI("connection from UID=%d PID=%d", cred.uid, cred.pid);
+
+        // A PRIMEIRA LINHA decide o papel desta conexão (bc_req_channel.h —
+        // o MESMO parser do teste de host). O accept já lê com o timeout de
+        // 3s armado acima: quem conecta e não fala nada morre no timeout sem
+        // prender o loop (DoS).
+        char first[4096];
+        ssize_t fn = read_command(client, first, sizeof(first));
+        if (fn <= 0) { close(client); continue; }
+
+        if (bc_req_role_from_line(first, fn) == BC_ROLE_REQ) {
+            // Canal de pedidos do JOGO (mod_fd/mod_txt/mod_list). Qualquer app
+            // pode abrir o CANAL; os VERBOS de dentro são gateados por pacote
+            // (SO_PEERCRED real do app -> packages.list -> só os mods do
+            // próprio chamador — bc_peer_ok_for_pkg dentro de cada handler).
+            // Vida longa: sem timeout de recv/send (igual ao "stream"), senão
+            // o canal morreria na primeira idle > 3s e o jogo ficaria sem
+            // carregar mods até relançar.
+            struct timeval notimeo = { .tv_sec = 0, .tv_usec = 0 };
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &notimeo, sizeof(notimeo));
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &notimeo, sizeof(notimeo));
+            pthread_t t;
+            if (pthread_create(&t, nullptr, req_channel_thread,
+                               (void *)(intptr_t)client) == 0) {
+                pthread_detach(t);   // a thread fecha o fd no fim
+            } else {
+                LOGE("pthread_create(req_channel_thread) falhou: %s", strerror(errno));
+                close(client);
+            }
+            continue;
+        }
+
+        if (!is_authorized_uid(cred.uid)) {
+            LOGE("rejected connection from UID=%d (not Termux)", cred.uid);
+            close(client);
+            continue;
+        }
+        bool adopted = handle_termux_request(client, first, fn);
+        if (!adopted) close(client);
+        // adotado (comando "stream") — stream_add_client já é o
+        // novo dono, fecha quando o cliente desconectar, não aqui.
     }
     return nullptr;
 }
@@ -1382,37 +1463,23 @@ static void daemonize_termux_server(int game_fd) {
     // streaming ANTES do accept loop bloquear a thread principal.
     LOGI("daemon Termux destacado (pid=%d)", getpid());
     if (game_fd >= 0) {
-        // A PRIMEIRA LINHA do socket diz o PAPEL. O jogo abre DOIS sockets com
-        // o companion (zygisk.hpp:211 — a API so funciona no pre-specialize,
-        // entao os dois tem de ser abertos la e mantidos): um de STREAM e um de
-        // REQ. Sem esta distincao, os pedidos iam para o leitor de streaming,
-        // que so faz broadcast, e nenhum mod carregava.
-        char hello[64];
-        ssize_t hn = read(game_fd, hello, sizeof(hello) - 1);
-        bool eh_req = false;
-        if (hn > 0) {
-            hello[hn] = '\0';
-            eh_req = strncmp(hello, BC_REQ_ROLE_LINE, strlen(BC_REQ_ROLE_LINE)) == 0;
-            LOGI("canal do jogo: papel=%s", eh_req ? "REQ" : "STREAM");
-        }
-        if (eh_req) {
-            bc_serve_request_channel(game_fd);   // assumes o fd
+        // O socket do connectCompanion() e SÓ DE STREAMING: quem lê é o
+        // stream_socket_reader, que faz broadcast das linhas de log do jogo
+        // pros clientes Termux. O canal de PEDIDOS (mod_fd/mod_txt/mod_list)
+        // NÃO vem por aqui — vem por uma conexão do jogo ao @bc_companion,
+        // pós-specialize, com SO_PEERCRED real do app (ver bc_req_channel.h:
+        // no connectCompanion pré-specialize o peer é o uid 0 do zygote, e o
+        // gate por pacote recusaria o próprio jogo; e uma 2ª conexão zygisk
+        // viraria um 2º daemon que morre no bind EADDRINUSE levando o canal
+        // junto). A versão WIP lia uma "primeira linha de papel" AQUI —
+        // engolia a 1ª linha de log do stream e nunca re-broadcastava.
+        pthread_t reader;
+        if (pthread_create(&reader, nullptr, stream_socket_reader,
+                            (void *)(intptr_t)game_fd) == 0) {
+            pthread_detach(reader);
         } else {
-            // stream: devolve a primeira linha ao leitor (o cliente mandou, e o
-            // leitor faz broadcast dela tambem, como qualquer linha de log)
-            pthread_t reader;
-            struct stream_first { int fd; ssize_t n; char buf[64]; };
-            if (hn > 0) {
-                // leitura ja consumiu a linha; reescreve no reader via struct
-                // simplificado: passa o primeiro bloco junto.
-            }
-            if (pthread_create(&reader, nullptr, stream_socket_reader,
-                                (void *)(intptr_t)game_fd) == 0) {
-                pthread_detach(reader);
-            } else {
-                LOGE("pthread_create(stream_socket_reader) falhou: %s", strerror(errno));
-                close(game_fd);
-            }
+            LOGE("pthread_create(stream_socket_reader) falhou: %s", strerror(errno));
+            close(game_fd);
         }
     }
     termux_accept_loop(nullptr);
@@ -1478,11 +1545,5 @@ void companion_handler(int zygisk_socket) {
 
 REGISTER_ZYGISK_COMPANION(companion_handler)
 
-// Ponto de entrada do canal de PEDIDOS, chamado pelo accept loop do daemon
-// quando o socket novo NAO diz "STREAM". Um thread por conexao.
-void bc_serve_request_channel(int fd) {
-    pthread_t t;
-    void *arg = (void *)(intptr_t)fd;
-    if (pthread_create(&t, nullptr, bc_req_socket_thread, arg) == 0) pthread_detach(t);
-    else { close(fd); }
-}
+// (bc_serve_request_channel foi removido: o canal de pedidos chega pelo
+// @bc_companion — o accept loop adota a conexão REQ direto em req_channel_thread.)

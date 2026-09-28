@@ -295,9 +295,23 @@ int main() {
             check("o jogo nao chama dlopen() por caminho (so android_dlopen_ext)",
                   ext > 0 && todos == 0);
             // E o pedido do FD tem TIMEOUT: companion mudo tem que virar "mod
-            // nao carrega", nunca o jogo travado.
-            bool tem_timeout = code.find("SO_RCVTIMEO") != std::string::npos &&
-                               code.find("nao respondeu em") != std::string::npos;
+            // nao carrega", nunca o jogo travado. O pedido vive agora em
+            // bc_req_client.h (extraído de cá para o e2e usar o cliente REAL):
+            // o guard segue o código — mesma asserção, arquivo novo. O e2e
+            // (req_channel_test) ainda cobre isso DINAMICAMENTE com alarm().
+            bool tem_timeout = false;
+            {
+                std::string client;
+                FILE *cf = fopen((self + "/../../jni/bc_req_client.h").c_str(), "r");
+                if (cf != nullptr) {
+                    char cbuf[65536] = {};
+                    size_t cn = fread(cbuf, 1, sizeof(cbuf) - 1, cf);
+                    fclose(cf);
+                    client.assign(cbuf, cn);
+                }
+                tem_timeout = client.find("SO_RCVTIMEO") != std::string::npos &&
+                              client.find("nao respondeu em") != std::string::npos;
+            }
             check("o recvmsg do FD tem timeout (companion mudo nao trava o jogo)", tem_timeout);
             // E o dlopen e pelo FD de verdade, com a flag PUBLICA do NDK.
             bool usa_dlext = code.find("ANDROID_DLEXT_USE_LIBRARY_FD") != std::string::npos &&
