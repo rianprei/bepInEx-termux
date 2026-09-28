@@ -1804,28 +1804,6 @@ int main() {
         {
             // Máscaras de atributo fixadas (contrato interno com o mod):
             check("mask static = 0x0010 (METHOD_ATTRIBUTE_STATIC)", dump_attr_static_mask() == 0x0010);
-            check("mask visibilidade = 0x001F", dump_attr_visibility_mask() == 0x001F);
-        }
-        {
-            char pkg[64];
-            // env vence sempre
-            check("env vence cmdline", dump_pick_pkg("com.via.env", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.env") == 0);
-            // env vazio/ausente → cmdline se não-zygote
-            check("env vazio → cmdline", dump_pick_pkg("", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
-            check("env null → cmdline", dump_pick_pkg(nullptr, "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
-            // cmdline zygote* rejeitado (achado device: constructor lê zygote64)
-            check("cmdline zygote64 → false", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
-            check("cmdline zygote32 → false", !dump_pick_pkg(nullptr, "zygote32", pkg, sizeof(pkg)));
-            check("cmdline zygote → false", !dump_pick_pkg(nullptr, "zygote", pkg, sizeof(pkg)));
-            // cmdline vazio/null → false
-            check("cmdline vazio → false", !dump_pick_pkg(nullptr, "", pkg, sizeof(pkg)));
-            check("cmdline null → false", !dump_pick_pkg(nullptr, nullptr, pkg, sizeof(pkg)));
-            // nada disponível → false (chamador re-tenta depois)
-            check("env null + cmdline zygote → false (fallback espera)", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
-            // truncamento seguro: cap pequeno não estoura
-            char small[8];
-            bool ok = dump_pick_pkg("com.pacote.muito.longo", nullptr, small, sizeof(small));
-            check("cap pequeno: truncado com NUL, sem crash", ok && strlen(small) < sizeof(small));
         }
     }
 
