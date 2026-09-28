@@ -60,6 +60,20 @@ def expect_pass(name: str, sources: dict[str, str], expected: str) -> None:
     print(f"  [OK] {name}: exit=0; {expected}")
 
 
+def expect_failure_lines(
+    name: str, sources: dict[str, str], expected_lines: tuple[str, ...]
+) -> None:
+    result = run_checker(sources)
+    if result.returncode != 1 or any(line not in result.stderr for line in expected_lines):
+        raise AssertionError(
+            f"{name}: exit={result.returncode}; stdout={result.stdout!r}; "
+            f"stderr={result.stderr!r}"
+        )
+    print(f"  [OK] {name}: exit=1; {len(expected_lines)} citações fantasma reportadas")
+    for line in expected_lines:
+        print(f"       {line}")
+
+
 def run() -> None:
     cases = (
         ('printf("ver ' + label(9999) + ' aqui");', "quoted context"),
@@ -85,6 +99,20 @@ def run() -> None:
         sources[path] = citation + "\n"
         expect_failure(f"author citation sabotage in {path}", sources,
                        "cita um caso inexistente")
+
+    laundering = baseline()
+    laundering["test/fuzz/README.md"] = (
+        "```c\nprintf(\"" + label(9999) + "\");\n```\n"
+    )
+    laundering["docs/ROADMAP-UNIVERSAL.md"] = reference(9999) + "\n"
+    expect_failure_lines(
+        "Markdown code block cannot define a cited case",
+        laundering,
+        (
+            "test/fuzz/README.md:2: cita um caso inexistente: " + reference(9999),
+            "docs/ROADMAP-UNIVERSAL.md:1: cita um caso inexistente: " + reference(9999),
+        ),
+    )
 
     missing_definition = baseline()
     missing_definition["mods/u_patch/jni/u_patch_resolve.h"] = (

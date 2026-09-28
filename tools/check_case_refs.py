@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Check test-harness case definitions, duplicate IDs, and citations."""
+"""Check test-harness case definitions, duplicate IDs, and citations.
+
+Only .c, .cpp, .h, .hpp, .py, and .java harness files define cases. Markdown,
+text, shell scripts, and other scanned files can cite cases but never define them.
+"""
 
 from dataclasses import dataclass
 import re
@@ -7,7 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCAN_SUFFIXES = (".md", ".h", ".cpp", ".c", ".py", ".sh", ".java")
+SCAN_SUFFIXES = (".md", ".txt", ".h", ".hpp", ".cpp", ".c", ".py", ".sh", ".java")
+DEFINITION_SUFFIXES = (".c", ".cpp", ".h", ".hpp", ".py", ".java")
 HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(cpp|c|py|java)$")
 CASE_LABEL = re.compile(r"\[Caso (\d+)\]")
 CASE_REFERENCE = re.compile(r"\bCaso (\d+)\b")
@@ -166,7 +171,7 @@ def analyze_sources(sources: dict[str, str]) -> Analysis:
     errors = []
 
     for path, source in sorted(sources.items()):
-        if not HARNESS.search(path):
+        if Path(path).suffix not in DEFINITION_SUFFIXES or not HARNESS.search(path):
             continue
         for call_start, literal in _output_literals(source):
             if literal is None:
