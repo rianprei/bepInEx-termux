@@ -9,11 +9,32 @@
 #   python3 termux_client.py stream      # fica aberto, imprime eventos em tempo real
 #   python3 termux_client.py list_mods
 #   python3 termux_client.py toggle_mod appUpdateDraw
+#
+# BEPINEX_COMPANION_SOCKET sobrescreve o socket (usado pelo teste de host).
 
 import socket
 import sys
 
-SOCKET_NAME = '\0bc_companion'
+# O socket do companion. O default e o de producao; o override por ambiente
+# existe para o TESTE de host, que sobe um abstract socket proprio porque o
+# abstract do companion (SOCKET_NAME do companion) so existe no aparelho.
+#
+# Sem isso, o teste tinha que COPIAR este arquivo e trocar o socket — e um teste
+# que roda uma copia nao prova nada sobre o arquivo: um dia o cliente ganha uma
+# mudanca e a copia fica desatualizada, e o teste continua verde. (Achado do
+# hermes em 7d084a5.)
+#
+# O override e o nome do socket ABSTRACT SEM o byte NUL inicial, porque o valor
+# de uma variavel de ambiente e uma string C terminada em NUL e nao comporta um
+# NUL no comeco. O cliente recoloca o NUL, entao o override continua sendo um
+# abstract socket — o mesmo mecanismo de producao, nao um filesystem socket
+# THROUGH (que exigiria outras garantias de permissao).
+#
+# O default continua sendo o do companion, entao em producao nada muda.
+import os as _os
+
+_override = _os.environ.get("BEPINEX_COMPANION_SOCKET")
+SOCKET_NAME = ('\0' + _override) if _override else '\0bc_companion'
 
 # Cores ANSI por nível de log — fonte real: BepInEx/BepInEx,
 # Console/Unix/TtyHandler.cs L101-104 (ansiColorMapping[], indexado por

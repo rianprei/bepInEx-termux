@@ -43,9 +43,48 @@ DEST_ROOT="${1:-${HOME}}"
 DEST="$DEST_ROOT/$REL_DEST"
 
 [ -f "$SRC" ] || { echo "install_termux_client: fonte ausente: $SRC" >&2; exit 1; }
-mkdir -p "$(dirname "$DEST")"
-# -p preserva o bit de execucao, que o console usa (python3 "$CLIENT" nao
-# precisa, mas o Termux:GUI e o usuario chamam direto).
-cp -p "$SRC" "$DEST"
-chmod 0755 "$DEST"
+
+# ---------------------------------------------------------------------------
+# NUNCA SEGUIR SYMLINK, em nenhum nivel (achado do hermes em 7d084a5)
+# ---------------------------------------------------------------------------
+# O hermes reproduziu: com um link plantado no caminho, o `cp` escrevia FORA da
+# arvore de destino. Num aparelho isso e o root escrevendo onde um app mandou
+# apontar — por isso a recusa e ANTES de qualquer escrita, e vale para o
+# destino E para cada diretorio entre DEST_ROOT e ele.
+#
+# Nao basta checar o destino final: um `mods` symlink para /sdcard faz o
+# caminho INTEIRO parecer legitimo e o cp grava em /sdcard. Por isso a checagem
+# e de cada componente, do raiz ate o destino.
+# ---------------------------------------------------------------------------
+aviso() { echo "install_termux_client: $1" >&2; }
+
+# 1) nenhum componente do caminho relativo pode ser symlink. Os diretorios
+#    ainda podem nao existir: nesse caso nao ha link.
+rel_dir="$(dirname "$REL_DEST")"
+cur=""
+for comp in $(echo "$rel_dir" | tr '/' ' '); do
+    [ -n "$comp" ] || continue
+    cur="$cur$comp"
+    probe="$DEST_ROOT/$cur"
+    if [ -L "$probe" ]; then
+        aviso "recusado: $probe e symlink — escreveria fora da arvore de destino"
+        exit 1
+    fi
+done
+# 2) o DEST final tambem.
+if [ -L "$DEST" ]; then
+    aviso "recusado: o destino $DEST ja e symlink"
+    exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")" || { aviso "nao criei $(dirname "$DEST")"; exit 1; }
+# 3) escrita ATOMICA: temporario no MESMO diretorio + mv. Um cp direto deixa o
+#    arquivo pela metade se o processo morrer no meio, e o console executaria
+#    um cliente truncado.
+tmp="$(mktemp "$(dirname "$DEST")/.termux_client.XXXXXX")" || {
+    aviso "mktemp falhou em $(dirname "$DEST")"; exit 1; }
+# -p preserva o bit de execucao do fonte; o chmod abaixo normaliza.
+cp -p "$SRC" "$tmp" || { rm -f "$tmp"; aviso "cp falhou"; exit 1; }
+chmod 0755 "$tmp" || { rm -f "$tmp"; aviso "chmod falhou"; exit 1; }
+mv -f "$tmp" "$DEST" || { rm -f "$tmp"; aviso "mv falhou para $DEST"; exit 1; }
 printf '%s\n' "$DEST"

@@ -28,6 +28,7 @@ import os
 import socket
 import subprocess
 import sys
+import shutil
 import tempfile
 import threading
 import time
@@ -69,6 +70,8 @@ PONTUAL_COM_ARG = {
 # recv unico nao pega.
 LIST_MODS = ["appInit=on", "appUpdateDraw=on", "appTouch=off", "appKey=off"]
 LIST_PATCHES = "patches 0"
+# push_mod <nome> <tamanho> -> "ok: <n> bytes written"
+# (companion.cpp, handle_push_mod)
 HOOK_OVERHEAD_PREFIX = "avg_dispatcher_overhead_us="
 
 
@@ -97,6 +100,8 @@ def despachante(sock):
             sock.sendall((l + "\n").encode())
     elif linha == "list_patches":
         sock.sendall((LIST_PATCHES + "\n").encode())
+    elif linha == "push_mod mod.so 12":
+        sock.sendall(b"ok: 12 bytes written\n")
     elif linha == "hook_overhead":
         sock.sendall((HOOK_OVERHEAD_PREFIX + "7\n").encode())
     else:
@@ -125,11 +130,11 @@ def subir_despachante():
     return srv, None
 
 
-def rodar_cliente(cli_path, verbos, timeout=20):
+def rodar_cliente(cli_path, verbos, env, timeout=20):
     """Roda o cliente REAL, e devolve a saida dele."""
     cli = subprocess.Popen([sys.executable, cli_path] + list(verbos),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True, stdin=subprocess.DEVNULL)
+                           text=True, stdin=subprocess.DEVNULL, env=env)
     try:
         out, err = cli.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -173,6 +178,50 @@ def main():
     check("o console aponta para o MESMO caminho que o staging instala (%s)" % expect_rel,
           expect_rel == dest_rel)
 
+    # --- 0b. symlink plantado no caminho: RECUSA e nada escrito fora -------
+    # Achado do hermes em 7d084a5: o instalador seguia symlink sob DEST_ROOT e
+    # gravava FORA dele. Num aparelho isso e o root escrevendo onde um app mandou
+    # apontar.
+    #
+    # Raiz SEPARADA de proposito: plantar o symlink DESTRUI a arvore de staging,
+    # e os testes de verbo precisam dela inteira.
+    root_sym = tempfile.mkdtemp(prefix="bepin-termux-sym-")
+    fora = tempfile.mkdtemp(prefix="bepin-fora-")
+    # planta no MEIO do caminho, que e o caso perigoso: com um diretorio real
+    # no lugar, o caminho inteiro PARECE legitimo e o cp grava em /sdcard. Nao
+    # basta checar o destino final.
+    planta = os.path.join(root_sym, "battlecats-mods")
+    os.symlink(fora, planta)
+    antes = set()
+    for dp, _dn, fn in os.walk(fora):
+        for f in fn:
+            antes.add(os.path.join(dp, f))
+    r2 = subprocess.run(["bash", INSTALLER, root_sym], capture_output=True, text=True)
+    depois = set()
+    for dp, _dn, fn in os.walk(fora):
+        for f in fn:
+            depois.add(os.path.join(dp, f))
+    check("symlink no meio do caminho: o instalador RECUSA (rc != 0)",
+          r2.returncode != 0)
+    check("symlink no meio do caminho: nada foi escrito FORA da arvore de destino",
+          antes == depois)
+    check("symlink no meio do caminho: a recusa diz que e symlink",
+          "symlink" in (r2.stderr or "").lower())
+
+    # e o DEST final, que e o outro caso
+    root_fin = tempfile.mkdtemp(prefix="bepin-termux-sym2-")
+    fora2 = tempfile.mkdtemp(prefix="bepin-fora2-")
+    destino2 = os.path.join(fora2, "termux_client.py")
+    os.makedirs(os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc"))
+    os.symlink(destino2,
+               os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc",
+                            "termux_client.py"))
+    r3 = subprocess.run(["bash", INSTALLER, root_fin], capture_output=True, text=True)
+    check("symlink no DESTINO final: o instalador RECUSA (rc != 0)",
+          r3.returncode != 0)
+    check("symlink no destino final: nada foi escrito no alvo do link",
+          not os.path.exists(destino2))
+
     srv, err = subir_despachante()
     if srv is None:
         check("o despacho subiu (abstract socket)", False)
@@ -181,57 +230,51 @@ def main():
     check("o despacho subiu num abstract socket (como o companion)", True)
 
     # --- 1. cada verbo tem request e resposta ----------------------------
-    # O cliente tem que falar com o socket abstract; o tools/termux_client.py
-    # tem o nome fixo do companion, entao o teste aponta o cliente para o
-    # abstract de teste por uma copia minima do arquivo (mesmo codigo, so o
-    # SOCKET_NAME trocado) — OU, se o cliente aceitar override, usa ele.
-    with open(dest, encoding="utf-8") as f:
-        src = f.read()
-    if "SOCKET_NAME = '\\0bc_companion'" in src:
-        patched = src.replace("SOCKET_NAME = '\\0bc_companion'",
-                              "SOCKET_NAME = %r" % SOCK_NAME)
-        if patched == src:
-            print("  nao achei a linha SOCKET_NAME para apontar o cliente pro "
-                  "socket de teste -- o cliente mudou de forma", file=sys.stderr)
-            return 1
-        cli_path = os.path.join(root, "termux_client_test_socket.py")
-        with open(cli_path, "w", encoding="utf-8") as f:
-            f.write(patched)
-        check("o cliente e o do repo, so com o SOCKET_NAME do teste", True)
-    else:
-        cli_path = dest
+    # O cliente roda o ARQUIVO REAL (o do staging, byte a byte igual ao do repo,
+    # conferido acima). Nao ha copia: o teste aponta o socket pela env
+    # BEPINEX_COMPANION_SOCKET, que o cliente le. O default do cliente continua
+    # sendo o socket do companion, entao producao nao muda.
+    #
+    # Um teste que roda uma COPIA com o socket trocado nao prova nada sobre o
+    # arquivo: um dia o cliente ganha uma mudanca e a copia fica desatualizada,
+    # e o teste continua verde. Achado do hermes em 7d084a5.
+    cli_path = dest
+    cli_env = dict(os.environ, BEPINEX_COMPANION_SOCKET=SOCK_NAME[1:])
 
     for verbo, esperado in sorted(PONTUAL.items()):
-        out, err_txt, rc = rodar_cliente(cli_path, [verbo])
+        out, err_txt, rc = rodar_cliente(cli_path, [verbo], cli_env)
         check("%s -> %r" % (verbo, esperado), esperado in out)
 
     for verbo, esperado in sorted(PONTUAL_COM_ARG.items()):
-        out, err_txt, rc = rodar_cliente(cli_path, verbo.split())
+        out, err_txt, rc = rodar_cliente(cli_path, verbo.split(), cli_env)
         check("%s -> %r" % (verbo, esperado), esperado in out)
 
     # --- 2. multi-linha: o bug de 2026-09-14 --------------------------
-    out, err_txt, rc = rodar_cliente(cli_path, ["list_mods"])
+    out, err_txt, rc = rodar_cliente(cli_path, ["list_mods"], cli_env)
     faltando = [l for l in LIST_MODS if l not in out]
     check("list_mods devolve as %d linhas (recv unico cortaria)" % len(LIST_MODS),
           not faltando)
     if faltando:
         print("    faltaram: %s" % faltando, file=sys.stderr)
 
-    out, err_txt, rc = rodar_cliente(cli_path, ["list_patches"])
+    out, err_txt, rc = rodar_cliente(cli_path, ["list_patches"], cli_env)
     check("list_patches -> %r" % LIST_PATCHES, LIST_PATCHES in out)
 
-    out, err_txt, rc = rodar_cliente(cli_path, ["hook_overhead"])
+    out, err_txt, rc = rodar_cliente(cli_path, ["hook_overhead"], cli_env)
     check("hook_overhead -> prefixo avg_dispatcher_overhead_us=",
           HOOK_OVERHEAD_PREFIX in out)
 
     # --- 3. verbo que o companion nao tem -------------------------------
-    out, err_txt, rc = rodar_cliente(cli_path, ["verbo_que_nao_existe"])
+    out, err_txt, rc = rodar_cliente(cli_path, ["push_mod", "mod.so", "12"], cli_env)
+    check("push_mod -> 'ok: 12 bytes written'", "ok: 12 bytes written" in out)
+
+    out, err_txt, rc = rodar_cliente(cli_path, ["verbo_que_nao_existe"], cli_env)
     check("verbo desconhecido -> unknown_command", "unknown_command" in out)
 
     # --- 4. o verbo stream, que e o que o console roda em background -----
     cli = subprocess.Popen([sys.executable, cli_path, "stream"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True, stdin=subprocess.DEVNULL)
+                           text=True, stdin=subprocess.DEVNULL, env=cli_env)
     time.sleep(1.5)
     vivo = cli.poll() is None
     cli.kill()
