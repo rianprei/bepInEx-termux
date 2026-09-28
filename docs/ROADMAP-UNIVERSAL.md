@@ -288,7 +288,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - Limite real: só roda `.dll` feito pra versão **IL2CPP** do jogo. Mod de PC Mono não entra aqui.
 
 ### F13 — Mods `.dll` Mono em jogo Unity Mono
-- [ ] `mono_min.h` + carregar assembly (`mono_domain_assembly_open`) + HarmonyX (roda nativo em Mono). (Falta tudo: não existe `mono_min.h` no repo, e sem jogo-alvo Unity Mono real não dá para validar.)
+- [~] `mono_min.h`: detecção Mono/IL2CPP por mapas e resolução atômica dos 7 símbolos Mono (host verificado). (Falta: integrar o runtime ao loader; abrir assembly real com `mono_domain_assembly_open`; HarmonyX; validação em device com jogo Unity Mono.)
 - [ ] Compat BepInEx 5 mínima (`BaseUnityPlugin`, `Logger`, `Config`) pra mod de PC do mesmo jogo carregar sem recompilar, quando o jogo Android também é Mono. (Depende do item acima.)
 - Precisa de jogo-alvo Unity Mono real pra validar.
 
