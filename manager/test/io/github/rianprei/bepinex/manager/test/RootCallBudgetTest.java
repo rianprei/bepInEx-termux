@@ -45,7 +45,7 @@ public class RootCallBudgetTest {
     }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 
     private static List<String> apps(int n) {

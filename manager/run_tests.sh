@@ -32,7 +32,43 @@ javac --release 17 -d "${BUILD_DIR}" \
     "${SCRIPT_DIR}"/test/io/github/rianprei/bepinex/manager/test/*.java
 
 echo "[*] Rodando TestRunner..."
-java -cp "${BUILD_DIR}" io.github.rianprei.bepinex.manager.test.TestRunner
+RUNNER_LOG="$(mktemp)"
+trap 'rm -f "${RUNNER_LOG}"' EXIT
+if java -cp "${BUILD_DIR}" io.github.rianprei.bepinex.manager.test.TestRunner 2>&1 \
+    | tee "${RUNNER_LOG}"; then
+    RUNNER_STATUS=0
+else
+    RUNNER_STATUS=$?
+fi
+
+SUMMARY_COUNT="$(grep -Ec '^RUNNER: checks=[0-9]+ falhas=[0-9]+$' "${RUNNER_LOG}" || true)"
+if [ "${SUMMARY_COUNT}" -ne 1 ]; then
+    echo "ERRO: resumo RUNNER ausente ou duplicado" >&2
+    exit 1
+fi
+SUMMARY="$(grep -E '^RUNNER: checks=[0-9]+ falhas=[0-9]+$' "${RUNNER_LOG}")"
+CHECKS="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=([0-9]+) falhas=[0-9]+$/\1/')"
+FAILURES="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=[0-9]+ falhas=([0-9]+)$/\1/')"
+# Baseline captured from the complete suite; this guards against silently
+# dropping test classes while keeping the runner's process status green.
+MIN_CHECKS=1813
+
+if grep -Fq '[RUNNER FAIL]' "${RUNNER_LOG}"; then
+    echo "ERRO: TestRunner registrou falha por teste" >&2
+    exit 1
+fi
+if [ "${FAILURES}" -ne 0 ]; then
+    echo "ERRO: TestRunner reportou ${FAILURES} falha(s)" >&2
+    exit 1
+fi
+if [ "${CHECKS}" -lt "${MIN_CHECKS}" ]; then
+    echo "ERRO: TestRunner executou ${CHECKS} checks; mínimo ${MIN_CHECKS}" >&2
+    exit 1
+fi
+if [ "${RUNNER_STATUS}" -ne 0 ]; then
+    echo "ERRO: TestRunner terminou com status ${RUNNER_STATUS}" >&2
+    exit 1
+fi
 
 # --- (f) APK e keystore fora do git ---------------------------------------
 # O build gera manager/bepinex-manager.apk, o .idsig e o .debug.keystore. Se
