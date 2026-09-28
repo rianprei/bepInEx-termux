@@ -33,12 +33,34 @@ extern "C" {
 typedef void (*bc_req_so_fn)(int fd, const char *pkg, const char *name);
 typedef void (*bc_req_txt_fn)(int fd, const char *pkg, const char *name);
 typedef void (*bc_req_list_fn)(int fd, const char *pkg);
+// Verbos da árvore Battle Cats: layout próprio (flat, sem subpasta por
+// pacote) e confs na RAIZ da árvore — por isso verbos próprios, e não uma
+// forçação do formato (pkg, nome): o servidor quem monta o caminho, e o
+// "BT" só aceita nome de uma LISTA FIXA (nunca um caminho do cliente).
+typedef void (*bc_req_bc_so_fn)(int fd, const char *name);
+typedef void (*bc_req_bc_list_fn)(int fd);
+typedef void (*bc_req_bc_conf_fn)(int fd, const char *name);
 
 struct bc_req_handlers {
     bc_req_so_fn so;
     bc_req_txt_fn txt;
     bc_req_list_fn list;
+    bc_req_bc_so_fn bc_so;    // "BO"
+    bc_req_bc_list_fn bc_list; // "BL"
+    bc_req_bc_conf_fn bc_conf; // "BT" — nome da lista fixa abaixo
 };
+
+// LISTA FIXA dos arquivos de configuração da RAIZ da árvore que o "BT"
+// serve. O cliente manda um NOME; o servidor só aceita se estiver AQUI e
+// monta o caminho sozinho — nunca um caminho vindo do cliente (mesma regra
+// estrutural do (pkg, nome) dos outros verbos). bc_mods.conf: config dos 4
+// hooks estáticos (toggle_mod/set_mod escrevem); bc_generic_allowlist.conf:
+// a allowlist do experimento Cocos (pública, o Manager/Termux também lê).
+static inline bool bc_req_root_conf_ok(const char *name) {
+    if (name == NULL) return false;
+    return strcmp(name, "bc_mods.conf") == 0 ||
+           strcmp(name, "bc_generic_allowlist.conf") == 0;
+}
 
 // Le UMA request e despacha. Contrato de retorno:
 //    1  = atendeu (o handler respondeu)
@@ -82,6 +104,9 @@ static inline int bc_req_dispatch_one(int fd, const struct bc_req_handlers *h) {
     if (strcmp(verb, BC_FD_VERB_SO) == 0 && h->so != NULL) { h->so(fd, arg1, arg2); return 1; }
     if (strcmp(verb, "TX") == 0 && h->txt != NULL) { h->txt(fd, arg1, arg2); return 1; }
     if (strcmp(verb, BC_FD_VERB_LS) == 0 && h->list != NULL) { h->list(fd, arg1); return 1; }
+    if (strcmp(verb, BC_FD_VERB_BC_SO) == 0 && h->bc_so != NULL) { h->bc_so(fd, arg1); return 1; }
+    if (strcmp(verb, BC_FD_VERB_BC_LIST) == 0 && h->bc_list != NULL) { h->bc_list(fd); return 1; }
+    if (strcmp(verb, BC_FD_VERB_BC_TXT) == 0 && h->bc_conf != NULL) { h->bc_conf(fd, arg1); return 1; }
     char e[BC_FD_ERR_MAX];
     ssize_t k = bc_fd_build_error(e, sizeof(e), EINVAL);
     if (k > 0) bc_fd_send_data(fd, e, (size_t)k);

@@ -222,8 +222,9 @@ int main() {
                 return tot;
             };
             // Um por handler (handle_mod_fd e handle_mod_txt).
-            check("companion abre o caminho do cliente por bc_fd_open_ro (2x, um por handler)",
-                  conta("bc_fd_open_ro(path)") == 2);
+            check("companion abre o caminho montado por bc_fd_open_ro "
+                  "(4x: mod_fd, mod_txt, bc_so, bc_conf)",
+                  conta("bc_fd_open_ro(path)") == 4);
             // NENHUM open(path, ...) sem O_NOFOLLOW. Isso cobre a LEITURA por
             // fd (que vai por bc_fd_open_ro) e a ESCRITA do push_mod — e a
             // escrita e a mais perigosa: sem o flag, um link pre-plantado no
@@ -320,7 +321,8 @@ int main() {
             check("o dlopen e por android_dlopen_ext + DLEXT_USE_LIBRARY_FD", usa_dlext);
             // (2) CONF/ALLOWLIST por CONTEUDO: o jogo nao abre esses arquivos
             // (a arvore e root-only), e o companion (root) devolve o texto.
-            bool pede_texto = code.find("bc_mod_text_request(") != std::string::npos;
+            bool pede_texto = code.find("bc_mod_text_request(") != std::string::npos ||
+                              code.find("bc_mod_bc_conf_request(") != std::string::npos;
             check("o jogo pede o CONTEUDO do conf/allowlist ao companion", pede_texto);
             // e nao ha leitor por caminho da allowlist em lugar nenhum do jogo
             bool tem_fopen = code.find("bc_generic_allowlist_contains(") != std::string::npos;

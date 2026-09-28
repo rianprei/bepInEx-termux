@@ -49,7 +49,7 @@
 static inline const char *bc_app_state_dir(char *out, size_t cap);
 static int bc_mod_fd_request(const char *path, char *why, size_t whycap);
 static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap);
-static int bc_mod_text_request(const char *rel, char *out, size_t cap, char *why, size_t whycap);
+static void *bc_dlopen_fd(const char *path, int flags, int fd, char *why, size_t whycap);
 static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
 static const char *bc_app_state_dir_impl(char *out, size_t cap);
 
@@ -158,9 +158,23 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
     return bc_req_ask_list(bc_req_socket(), &g_companion_io, dir, out, cap, why, whycap);
 }
 
-// Conteudo de `rel` (ex.: bc_mods.conf) na pasta do próprio jogo.
-static int bc_mod_text_request(const char *rel, char *out, size_t cap, char *why, size_t whycap) {
-    return bc_req_ask_txt(bc_req_socket(), &g_companion_io, g_game_pkg, rel, out, cap, why, whycap);
+// FD de um .so da árvore BATTLE CATS ("BO"): layout flat, gate = o chamador
+// é o próprio jogo BC (bc_peer_is_bc_game no companion). O jogo não pode
+// opendir/dlopen por caminho na árvore root-only — quem abre é o root.
+static int bc_mod_bc_fd_request(const char *name, char *why, size_t whycap) {
+    return bc_req_ask_bc_so(bc_req_socket(), &g_companion_io, name, why, whycap);
+}
+
+// Lista de .so da árvore BATTLE CATS ("BL").
+static int bc_mod_bc_list_request(char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_bc_list(bc_req_socket(), &g_companion_io, out, cap, why, whycap);
+}
+
+// Conteudo de um conf da RAIZ da árvore ("BT") — nome da lista fixa do
+// companion (bc_mods.conf / bc_generic_allowlist.conf): o jogo pede um
+// CONFIG conhecido, nunca um caminho.
+static int bc_mod_bc_conf_request(const char *name, char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_bc_conf(bc_req_socket(), &g_companion_io, name, out, cap, why, whycap);
 }
 
 // dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
@@ -180,12 +194,20 @@ static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t why
     // mas "mesmo assim" e uma defesa, e nao o desenho.)
     int fd = bc_mod_fd_request(path, why, whycap);
     if (fd < 0) return nullptr;
+    // dlopen FORA da transação do pedido (o construtor do mod pode disparar
+    // hooks que tocam no mesmo mutex — ver o comentário do deadlock acima).
+    return bc_dlopen_fd(path, flags, fd, why, whycap);
+}
+
+// A cauda: android_dlopen_ext por descritor. O fd já foi obtido (verbo
+// "SO" p/ mods de pacote, "BO" p/ a árvore BC) e é NOSSO — o dlopen faz
+// dup() dele e o SO fecha a cópia; o close() abaixo fecha o original.
+static void *bc_dlopen_fd(const char *path, int flags, int fd, char *why, size_t whycap) {
     android_dlextinfo info;
     memset(&info, 0, sizeof(info));
     info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
     info.library_fd = fd;
     void *h = android_dlopen_ext(path, flags, &info);
-    // O dlopen faz dup() do fd (e o SO o fecha depois), entao este e o nosso.
     close(fd);
     if (h == nullptr && why[0] == '\0') {
         snprintf(why, whycap, "android_dlopen_ext falhou: %s", dlerror());
@@ -331,7 +353,10 @@ static bool read_mods_config_into(struct bc_mod_entry *dst, int cap) {
     // a CONSTANTE do caminho, entao passou quando a leitura voltou.
     char buf[2048];
     char why[160] = {0};
-    if (bc_mod_text_request("bc_mods.conf", buf, sizeof(buf), why, sizeof(why)) >= 0) {
+    // bc_mods.conf mora na RAIZ da árvore (BC_MODS_CONF_FILE) — o "TX" monta
+    // <arvore>/mods/<pkg>/<nome>, que não é onde ele está. Verbo "BT": nome
+    // da LISTA FIXA, conteúdo servido pelo root.
+    if (bc_mod_bc_conf_request("bc_mods.conf", buf, sizeof(buf), why, sizeof(why)) >= 0) {
         // v2: parse tipado com defaults preenchidos (present=false)
         bc_mods_parse(buf, BC_SCHEMA, BC_SCHEMA_N, dst, cap);
         return true;
@@ -1392,30 +1417,37 @@ static void load_dynamic_mods() {
     // (sem limite de slot avisado, HOOK_MAX_CALLBACKS=4 por hook), causando
     // dispatch duplicado (ex.: hook de stats aplicando 2x por frame) e,
     // após reloads repetidos, falha silenciosa ao esgotar os 4 slots.
-    DIR *dir = opendir(BC_MODS_DIR);
-    if (dir == nullptr) {
-        // achado real (revisão OpenCode, pós-v0.3.5): opendir pode falhar por
-        // motivo TRANSIENTE (EMFILE, permissão temporária, I/O) sem que os
-        // mods no disco tenham mudado — se o reset de g_hook_callbacks
-        // acontecesse aqui em cima (como na v0.3.5), um mod já ativo perderia
-        // os hooks numa falha passageira, sem re-registro nenhum depois.
-        // Reset fica mais abaixo, só quando a função REALMENTE vai
-        // reconstruir a partir do que achou no disco.
-        LOGI("mod loader: %s ausente ou sem acesso — sem mods dinâmicos (normal se não usa)",
-             BC_MODS_DIR);
-        return;
-    }
-
+    // A árvore é root-only desde a relocação: o jogo NÃO pode opendir nem
+    // dlopen por caminho em BC_MODS_DIR (era o buraco que fechava o caminho
+    // BC inteiro — o opendir dava EACCES e NENHUM mod dinâmico carregava).
+    // A LISTA vem pelo canal de pedidos (verbo "BL"), gateado pelo
+    // companion: só o próprio jogo BC recebe a lista dos mods dele.
+    //
+    // Falha do pedido (companion morto, canal fechado) = sem mods + log —
+    // mesma semântica do opendir antigo: nada reconstruído, nada resetado.
     char names[64][256];
     int n_names = 0;
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != nullptr && n_names < 64) {
-        if (!bc_loader_is_mod_filename(ent->d_name)) continue;
-        strncpy(names[n_names], ent->d_name, sizeof(names[n_names]) - 1);
-        names[n_names][sizeof(names[n_names]) - 1] = '\0';
-        n_names++;
+    {
+        char list[4096] = {0};
+        char why[192] = {0};
+        int got = bc_mod_bc_list_request(list, sizeof(list), why, sizeof(why));
+        if (got < 0) {
+            LOGI("mod loader: lista de %s indisponível (%s) — sem mods dinâmicos",
+                 BC_MODS_DIR, why);
+            return;
+        }
+        const char *cursor = list;
+        while (n_names < 64) {
+            const char *e = strchr(cursor, '\n');
+            if (e == NULL) break;
+            size_t l = (size_t)(e - cursor);
+            if (l == 0 || l >= sizeof(names[0])) { cursor = e + 1; continue; }
+            memcpy(names[n_names], cursor, l);
+            names[n_names][l] = '\0';
+            n_names++;
+            cursor = e + 1;
+        }
     }
-    closedir(dir);
 
     if (n_names == 0) {
         LOGI("mod loader: %s sem .so — nada pra carregar", BC_MODS_DIR);
@@ -1442,16 +1474,11 @@ static void load_dynamic_mods() {
     if (n_names > BC_MOD_GRAPH_MAX_MODS) n_names = BC_MOD_GRAPH_MAX_MODS;
 
     bc_loader_ops ops = {};
-    // dlopen POR FD. O caminho em BC_MODS_DIR e root-only e o jogo nao o abre
-    // mais: quem abre e o companion, como root, e o que CRUZA e o descritor.
-    // Sem o companion, o mod nao carrega e o motivo vai para o log — nunca
-    // dlopen por caminho, que seria a reabertura que a revisao fechou.
-    ops.dlopen = [](const char *path, int flags) -> void * {
-        char why[192] = {0};
-        void *h = bc_dlopen_via_fd(path, flags, why, sizeof(why));
-        if (h == nullptr) LOGW("dlopen por fd falhou em %s: %s", path, why);
-        return h;
-    };
+    // ops.dlopen ficou vazio DE PROPÓSITO: a carga BC abre pelo FD do verbo
+    // "BO" direto (bc_dlopen_fd com o mfd já em mão — o "BO" já custou, não
+    // se pede o mesmo FD duas vezes). Um ops.dlopen aqui voltaria a pedir
+    // pelo caminho-genérico, que não é onde a árvore BC mora. ops.dlsym/
+    // dlclose/run_entry seguem usados pelas fases 2/3.
     ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
     ops.dlclose = [](void *h) -> int { return dlclose(h); };
     ops.run_entry = mod_entry_runner;
@@ -1470,10 +1497,26 @@ static void load_dynamic_mods() {
     for (int i = 0; i < n_names; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
-        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(path);
+        // FD pelo verbo "BO" ANTES do probe: o probe lê o ARQUIVO, e o jogo
+        // não abre caminho na árvore root-only. /proc/self/fd/N reabre o
+        // mesmo arquivo a partir do descritor que o companion mandou — o
+        // preflight continua lendo bytes de verdade, sem ganhar acesso de
+        // caminho.
+        char fwhy[192] = {0};
+        int mfd = bc_mod_bc_fd_request(names[i], fwhy, sizeof(fwhy));
+        if (mfd < 0) {
+            LOGW("mod loader: %s — sem FD do companion (%s), descartado sem abrir",
+                 names[i], fwhy);
+            failed++;
+            continue;
+        }
+        char probe_path[64];
+        snprintf(probe_path, sizeof(probe_path), "/proc/self/fd/%d", mfd);
+        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(probe_path);
         if (probe.result == BC_ELF_FILE_ERROR) {
             LOGW("mod loader: %s — erro lendo ELF (%s), descartado sem abrir",
                  names[i], strerror(probe.error_number));
+            close(mfd);
             failed++;
             continue;
         }
@@ -1481,13 +1524,17 @@ static void load_dynamic_mods() {
             LOGW("mod loader: %s — sem bc_mod_register: nao e mod do Battle Cats, "
                  "descartado sem abrir; mods autonomos vao em /data/local/tmp/mods/<pacote>/",
                  names[i]);
+            close(mfd);
             failed++;
             continue;
         }
-        void *h = ops.dlopen(path, 2 /*RTLD_NOW*/);
+        // dlopen pelo MESMO fd do probe (o "BO" já custou; não pedir dois).
+        // path segue como NOME da biblioteca (log/dlerror), não é aberto.
+        char dwhy[192] = {0};
+        void *h = bc_dlopen_fd(path, 2 /*RTLD_NOW*/, mfd, dwhy, sizeof(dwhy));
         if (h == nullptr) {
-            LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
-                 names[i]);
+            LOGW("mod loader: %s — dlopen por fd falhou (%s), pulando",
+                 names[i], dwhy);
             failed++;
             continue;
         }

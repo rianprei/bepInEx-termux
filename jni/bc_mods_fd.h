@@ -79,6 +79,16 @@ extern "C" {
 // Verbo: "SO" quer o FD, "TXT" quer o conteúdo.
 #define BC_FD_VERB_SO "SO"
 #define BC_FD_VERB_TXT "TXT"
+
+// Verbos da árvore do Battle Cats (layout PRÓPRIO, sem subpasta por pacote):
+//   "BO" — FD do .so da árvore BC (nome validado; gate: chamador É o jogo BC)
+//   "BL" — lista de .so da árvore BC
+//   "BT" — conf da RAIZ da árvore, nome da LISTA FIXA (nunca caminho do
+//          cliente): bc_mods.conf / bc_generic_allowlist.conf. Ver
+//          bc_req_dispatch.h (bc_req_root_conf_ok).
+#define BC_FD_VERB_BC_SO "BO"
+#define BC_FD_VERB_BC_LIST "BL"
+#define BC_FD_VERB_BC_TXT "BT"
 // Dois argumentos (pkg e nome), separados por UM espaco. O caminho NUNCA e
 // enviado: o companion monta a partir da raiz fixa depois de validar os dois.
 // Ver bc_mod_pkg_ok/bc_mod_name_ok em companion.cpp: com caminho do cliente e
@@ -251,6 +261,28 @@ static inline int bc_fd_parse_request(const char *line, int *proto,
     if (ql == 0 || ql >= pathcap) return -1;
     memcpy(path, q, ql + 1);
     *proto = atoi(work);
+    return 1;
+}
+
+// Família TEXTO/LISTA ("TX"/"BT"/"LS"/"BL"): a resposta de sucesso começa com
+// "<len>\n" (conteúdo) ou com nomes terminando em "<total>\n" — ambas as
+// formas são SÓ DÍGITOS, igual ao "<errno>\n" do erro. Na família do "SO"
+// não há ambiguidade (o FD vem na ancillary data e o payload 'F' não é
+// dígito); na de TEXTO, o cliente parseava a recusa como COMPRIMENTO e
+// esperava bytes que não vinham — 5s de stall por conf recusado, achado
+// pelo e2e estendido. Erros dessas famílias ganham o prefixo 'E':
+// "E<errno>\n".
+static inline ssize_t bc_fd_build_txt_error(char *buf, size_t cap, int err) {
+    int n = snprintf(buf, cap, "E%d\n", err);
+    if (n < 0 || (size_t)n >= cap) return -1;
+    return (ssize_t)n;
+}
+
+// Lê erro com prefixo: 1=é erro (errno em *out), 0=não é.
+static inline int bc_fd_parse_txt_error(const char *line, int *out) {
+    if (line == NULL || line[0] != 'E') return 0;
+    if (line[1] < '0' || line[1] > '9') return 0;
+    *out = atoi(line + 1);
     return 1;
 }
 

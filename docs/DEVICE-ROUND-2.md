@@ -81,6 +81,21 @@ O que este passo prova, e o que ele **não** prova:
 **SKIP, nunca PASS**, em dois casos: o aparelho não consegue ficar em
 `Enforcing` (passo 7a), ou o `nmagisk`/instalação não_apply com sucesso.
 
+**7k. Canal de pedidos do jogo no @bc_companion (SELinux, item novo).** O
+jogo agora CONECTA ao `@bc_companion` pós-specialize como `untrusted_app`
+(canal REQ: lista/FD dos mods e confs, ver `jni/bc_req_channel.h`). Não há
+regra `connectto`/`unix_stream_socket` no `module/sepolicy.rule` DE PROPÓSITO:
+o Termux já conecta ao mesmo socket há rodadas de device inteiras
+(`termux-console/bepinex-console` é o caminho do console) e Termux é o MESMO
+domínio SELinux (`untrusted_app`) de qualquer jogo da Play Store — a permissão
+vem da policy base do Magisk para o socket do daemon, não do módulo;
+acrescentar regra com label chutado seria teatro com risco de label errada.
+O que coletar se algo negar: `adb logcat -d | grep "avc: denied"` filtrando
+`untrusted_app` + `unix_stream_socket`/`connectto` no launch do jogo com
+mods — o rótulo REAL do socket do daemon aparece no próprio AVC, e é com
+esse rótulo que a regra certa se escreve, nunca com palpite. O 7e cobre o
+resto do canal: se os mods carregam pelo FD, o connectto passou.
+
 **Ordem de reparo quando algo falha**, porque pular etapa esconde a causa:
 se 7b/7c falham, a árvore não foi criada pelo `post-fs-data.sh` (veja
 `/data/adb/bepinex-migrate.log`); se 7c passa e 7e falha, o problema é o

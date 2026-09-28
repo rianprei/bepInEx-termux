@@ -226,14 +226,24 @@ static inline int bc_req_ask_txt(int sock, pthread_mutex_t *io, const char *pkg,
         if (nl != NULL) {
             *nl = '\0';
             size_t head = (size_t)(nl - buf) + 1;
-            total = atol(buf);
-            if (total < 0) {
+            // Recusa da família texto vem como "E<errno>\n" — SEM o prefixo,
+            // o "<errno>\n" seria parseado como comprimento e o cliente
+            // esperaria bytes que não vêm (stall de 5s por recusa).
+            int perr = 0;
+            if (bc_fd_parse_txt_error(buf, &perr)) {
+                if (why) snprintf(why, whycap, "companion recusou: errno %d (%s)", perr, strerror(perr));
+                total = -1;
+            } else if (atol(buf) < 0) {
                 if (why) snprintf(why, whycap, "resposta de conteudo invalida");
                 total = -1;
-            } else if ((size_t)total >= cap) {
+            } else {
+                total = atol(buf);
+            }
+            if (total >= 0 && (size_t)total >= cap) {
                 if (why) snprintf(why, whycap, "conteudo maior que o buffer (%ld)", total);
                 total = -1;
-            } else {
+            }
+            if (total > 0) {
                 // 2a fase: ler ATÉ total bytes de fato chegarem — a versao
                 // anterior copiava `total` bytes a partir do que JÁ estava no
                 // buffer, mesmo faltando (copia de lixo) e deixava o resto
@@ -268,6 +278,88 @@ static inline int bc_req_ask_txt(int sock, pthread_mutex_t *io, const char *pkg,
     return (int)total;
 }
 
+// ---- implementação compartilhada: leitor de "nomes + total no fim" -------
+//
+// O mesmo formato do LS/BL: linhas de nome e o total "<n>\n" por último. A
+// extração evita duplicar o parser (o WIP já provou o que duplicar causa: o
+// cliente esperava o total primeiro, o servidor mandava no fim).
+static inline int bc_req_read_names_and_total(int sock, char *out, size_t cap,
+                                              int *names_seen, char *why, size_t whycap) {
+    char buf[4096];
+    size_t used = 0, used_out = 0;
+    int total = -1, seen = 0;
+    for (;;) {
+        ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            if (why) snprintf(why, whycap, "companion nao respondeu em %ds", BC_REQ_TIMEOUT_SEC);
+            break;
+        }
+        if (r == 0) {
+            if (why) snprintf(why, whycap, "companion fechou antes do total");
+            break;
+        }
+        used += (size_t)r;
+        buf[used] = '\0';
+        char *line = buf;
+        bool stop = false;
+        while (line != NULL && *line != '\0') {
+            char *e = strchr(line, '\n');
+            if (e == NULL) break;
+            *e = '\0';
+            bool only_digits = line[0] != '\0';
+            for (char *q = line; *q != '\0'; q++) {
+                if (*q < '0' || *q > '9') { only_digits = false; break; }
+            }
+            int perr = 0;
+            if (bc_fd_parse_txt_error(line, &perr)) {
+                // Recusa da família lista: "E<errno>\n" (sem o prefixo, o
+                // erro seria lido como o total de nomes).
+                if (why) snprintf(why, whycap, "companion recusou: errno %d (%s)", perr, strerror(perr));
+                total = -1;
+                out[used_out] = '\0';
+                stop = true;
+                break;
+            }
+            if (only_digits) {
+                total = atoi(line);
+                out[used_out] = '\0';
+                stop = true;
+                break;
+            }
+            size_t l = strlen(line);
+            if (l + used_out + 2 > cap) {
+                if (why) snprintf(why, whycap, "lista maior que o buffer");
+                total = -1;
+                stop = true;
+                break;
+            }
+            memcpy(out + used_out, line, l);
+            used_out += l;
+            out[used_out++] = '\n';
+            seen++;
+            line = e + 1;
+        }
+        if (stop) break;
+        if (line != NULL) {
+            size_t rest = (size_t)(line - buf);
+            memmove(buf, buf + rest, used - rest);
+            used -= rest;
+            buf[used] = '\0';
+        }
+        if (used >= sizeof(buf) - 1) {
+            if (why) snprintf(why, whycap, "resposta de lista grande demais");
+            break;
+        }
+    }
+    if (total >= 0 && total != seen) {
+        if (why) snprintf(why, whycap, "total (%d) != nomes recebidos (%d)", total, seen);
+        total = -1;
+    }
+    if (names_seen != NULL) *names_seen = seen;
+    return total;
+}
+
 // "LS <pkg>" -> "<n>\n" + n linhas "nome". Devolve n (0 = pasta vazia), ou -1
 // com motivo em why. Os nomes vão um por linha em `out` (sem o total).
 static inline int bc_req_ask_list(int sock, pthread_mutex_t *io, const char *pkg,
@@ -290,79 +382,191 @@ static inline int bc_req_ask_list(int sock, pthread_mutex_t *io, const char *pkg
     } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
         if (why) snprintf(why, whycap, "companion nao recebeu o pedido de lista");
     } else {
-        // Formato de fio do handle_mod_list (producao): um "nome\n" por mod,
-        // e o TOTAL "<n>\n" vem DEPOIS dos nomes — o contrario do WIP, que
-        // esperava o total primeiro: o cliente do jogo nunca bateu com o
-        // handler que o companion realmente tem. Terminador: a PRIMEIRA linha
-        // so-de-digitos apos os nomes (nome de mod termina em ".so", nunca e
-        // so digitos).
-        char buf[4096];
-        size_t used = 0;
-        size_t used_out = 0;
-        total = -1;
-        int names_seen = 0;
-        for (;;) {
-            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
-            if (r < 0) {
-                if (errno == EINTR) continue;
-                if (why) snprintf(why, whycap, "companion nao respondeu a lista em %ds", BC_REQ_TIMEOUT_SEC);
-                break;
-            }
-            if (r == 0) {
-                if (why) snprintf(why, whycap, "companion fechou antes do total");
-                break;
-            }
-            used += (size_t)r;
-            buf[used] = '\0';
-            char *line = buf;
-            while (line != NULL && *line != '\0') {
-                char *e = strchr(line, '\n');
-                if (e == NULL) break;   // linha incompleta: espera mais bytes
-                *e = '\0';
-                bool only_digits = line[0] != '\0';
-                for (char *p = line; *p != '\0'; p++) {
-                    if (*p < '0' || *p > '9') { only_digits = false; break; }
-                }
-                if (only_digits) {
-                    total = atoi(line);
-                    out[used_out] = '\0';
-                    goto done;
-                }
-                size_t l = strlen(line);
-                if (l + used_out + 2 > cap) {
-                    if (why) snprintf(why, whycap, "lista maior que o buffer");
-                    total = -1;
-                    goto done;
-                }
-                memcpy(out + used_out, line, l);
-                used_out += l;
-                out[used_out++] = '\n';
-                names_seen++;
-                line = e + 1;
-            }
-            if (used >= sizeof(buf) - 1) {
-                if (why) snprintf(why, whycap, "resposta de lista grande demais");
-                break;
-            }
-            // consome as linhas ja processadas e guarda o resto parcial
-            if (line != NULL) {
-                size_t rest = (size_t)(line - buf);
-                memmove(buf, buf + rest, used - rest);
-                used -= rest;
-                buf[used] = '\0';
-            }
-        }
-    done:;
-        if (total >= 0 && total != names_seen) {
-            if (why) snprintf(why, whycap, "total (%d) != nomes recebidos (%d)", total, names_seen);
-            total = -1;
-        }
+        // MESMO leitor do "BL" (bc_req_read_names_and_total): formato de fio
+        // da produção (nomes, total no fim) + recusa "E<errno>\n". Um leitor
+        // único para o mesmo formato — o WIP provou o que duplicar causa.
+        total = bc_req_read_names_and_total(sock, out, cap, NULL, why, whycap);
     }
     struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
     if (io != NULL) pthread_mutex_unlock(io);
     return total;
+}
+
+// ---- verbos da árvore Battle Cats (layout flat, confs na raiz) -----------
+//
+// Mesmo canal, mesmas regras: request+resposta = uma transação, timeout curto
+// armado/desarmado, mutex opcional. O gate (quem pode pedir) vive no
+// companion: chamador tem de SER o jogo BC (SO_PEERCRED -> packages.list).
+
+// "BO <nome>" -> FD de um .so da árvore BC (nome validado pelos DOIS lados).
+static inline int bc_req_ask_bc_so(int sock, pthread_mutex_t *io, const char *name,
+                                   char *why, size_t whycap) {
+    if (why) why[0] = '\0';
+    if (sock < 0) {
+        if (why) snprintf(why, whycap, "sem canal de pedidos com o companion");
+        return -1;
+    }
+    if (io != NULL) pthread_mutex_lock(io);
+    struct timeval tv = { .tv_sec = BC_REQ_TIMEOUT_SEC, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = (ssize_t)snprintf(req, sizeof(req), "%d %s %s\n", BC_FD_PROTO,
+                                  BC_FD_VERB_BC_SO, name);
+    int fd = -1;
+    if (n <= 0 || (size_t)n >= sizeof(req)) {
+        if (why) snprintf(why, whycap, "nome invalido para o pedido BO");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        if (why) snprintf(why, whycap, "companion nao recebeu o BO: %s", strerror(errno));
+    } else {
+        char payload[BC_FD_ERR_MAX];
+        ssize_t r = bc_fd_recv_fd(sock, payload, sizeof(payload), &fd);
+        if (r < 0) {
+            if (why) snprintf(why, whycap, "companion nao respondeu em %ds", BC_REQ_TIMEOUT_SEC);
+        } else if (fd < 0) {
+            int e = 0;
+            if (bc_fd_parse_error(payload, &e))
+                { if (why) snprintf(why, whycap, "companion recusou: errno %d (%s)", e, strerror(e)); }
+            else
+                { if (why) snprintf(why, whycap, "resposta sem fd e sem erro"); }
+        }
+    }
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    if (io != NULL) pthread_mutex_unlock(io);
+    return fd;
+}
+
+// "BL" -> nomes de .so da árvore BC, um por linha, total no FIM (mesmo
+// formato de fio do LS; ver bc_req_ask_list).
+static inline int bc_req_ask_bc_list(int sock, pthread_mutex_t *io,
+                                     char *out, size_t cap, char *why, size_t whycap);
+
+// "BT <nome>" -> conteudo de um conf da RAIZ da árvore. O nome tem de estar
+// na LISTA FIXA do servidor (bc_req_root_conf_ok): o cliente nao ganha um
+// "abra qualquer arquivo" — pede um dos confs que existem de propósito.
+static inline int bc_req_ask_bc_conf(int sock, pthread_mutex_t *io, const char *name,
+                                     char *out, size_t cap, char *why, size_t whycap);
+
+static inline int bc_req_ask_bc_list(int sock, pthread_mutex_t *io,
+                                     char *out, size_t cap, char *why, size_t whycap) {
+    if (out && cap) out[0] = '\0';
+    if (why) why[0] = '\0';
+    if (sock < 0) {
+        if (why) snprintf(why, whycap, "sem canal de pedidos com o companion");
+        return -1;
+    }
+    if (io != NULL) pthread_mutex_lock(io);
+    struct timeval tv = { .tv_sec = BC_REQ_TIMEOUT_SEC, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = (ssize_t)snprintf(req, sizeof(req), "%d %s\n", BC_FD_PROTO,
+                                  BC_FD_VERB_BC_LIST);
+    int total = -1;
+    if (n <= 0 || (size_t)n >= sizeof(req)) {
+        if (why) snprintf(why, whycap, "pedido BL invalido");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        if (why) snprintf(why, whycap, "companion nao recebeu o BL");
+    } else {
+        total = bc_req_read_names_and_total(sock, out, cap, NULL, why, whycap);
+    }
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    if (io != NULL) pthread_mutex_unlock(io);
+    return total;
+}
+
+static inline int bc_req_ask_bc_conf(int sock, pthread_mutex_t *io, const char *name,
+                                     char *out, size_t cap, char *why, size_t whycap) {
+    if (out && cap) out[0] = '\0';
+    if (why) why[0] = '\0';
+    if (sock < 0) {
+        if (why) snprintf(why, whycap, "sem canal de pedidos com o companion");
+        return -1;
+    }
+    if (io != NULL) pthread_mutex_lock(io);
+    struct timeval tv = { .tv_sec = BC_REQ_TIMEOUT_SEC, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    char req[BC_FD_REQ_MAX];
+    ssize_t n = (ssize_t)snprintf(req, sizeof(req), "%d %s %s\n", BC_FD_PROTO,
+                                  BC_FD_VERB_BC_TXT, name);
+    long total = -1;
+    if (n <= 0 || (size_t)n >= sizeof(req)) {
+        if (why) snprintf(why, whycap, "nome invalido para o pedido BT");
+    } else if (bc_fd_send_data(sock, req, (size_t)n) < 0) {
+        if (why) snprintf(why, whycap, "companion nao recebeu o BT");
+    } else {
+        // MESMO formato do TX: "<len>\n" + bytes — leitor completo (espera
+        // os len bytes de fato chegarem; ver bc_req_ask_txt).
+        char buf[16384];
+        size_t used = 0;
+        char *nl = NULL;
+        for (;;) {
+            ssize_t r = read(sock, buf + used, sizeof(buf) - 1 - used);
+            if (r < 0) {
+                if (errno == EINTR) continue;
+                if (why) snprintf(why, whycap, "companion nao respondeu o conf em %ds", BC_REQ_TIMEOUT_SEC);
+                break;
+            }
+            if (r == 0) {
+                if (why) snprintf(why, whycap, "companion fechou antes do conf");
+                break;
+            }
+            used += (size_t)r;
+            buf[used] = '\0';
+            nl = (char *)memchr(buf, '\n', used);
+            if (nl != NULL) break;
+            if (used >= sizeof(buf) - 1) {
+                if (why) snprintf(why, whycap, "conf maior que o buffer");
+                break;
+            }
+        }
+        if (nl != NULL) {
+            *nl = '\0';
+            size_t head = (size_t)(nl - buf) + 1;
+            int perr = 0;
+            if (bc_fd_parse_txt_error(buf, &perr)) {
+                if (why) snprintf(why, whycap, "companion recusou: errno %d (%s)", perr, strerror(perr));
+                total = -1;
+            } else if (atol(buf) < 0 || (size_t)atol(buf) >= cap) {
+                if (why) snprintf(why, whycap, "conf maior que o buffer");
+                total = -1;
+            } else {
+                total = atol(buf);
+                size_t have = used - head;
+                while (have < (size_t)total) {
+                    ssize_t r = read(sock, buf + head + have, (size_t)total - have);
+                    if (r < 0) {
+                        if (errno == EINTR) continue;
+                        if (why) snprintf(why, whycap, "conf incompleto em %ds", BC_REQ_TIMEOUT_SEC);
+                        total = -1;
+                        break;
+                    }
+                    if (r == 0) {
+                        if (why) snprintf(why, whycap, "companion fechou no meio do conf");
+                        total = -1;
+                        break;
+                    }
+                    have += (size_t)r;
+                }
+                if (total > 0) {
+                    memcpy(out, buf + head, (size_t)total);
+                    out[total] = '\0';
+                }
+            }
+        }
+    }
+    struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
+    if (io != NULL) pthread_mutex_unlock(io);
+    return (int)total;
 }
 
 #ifdef __cplusplus

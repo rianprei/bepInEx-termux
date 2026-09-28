@@ -196,8 +196,11 @@ int main() {
             int guards = 0;
             size_t p = 0;
             while ((p = limpo.find("bc_peer_ok_for_pkg(", p)) != std::string::npos) { guards++; p += 10; }
-            guards -= 1;  // a definicao
-            char nome[128];
+            p = 0;  // o segundo loop recomeca do inicio (p nao e resetado sozinho)
+            while ((p = limpo.find("bc_peer_ok_for_pkg_txt(", p)) != std::string::npos) { guards++; p += 15; }
+            guards -= 2;  // as DUAS definicoes (a variante txt so muda o
+                          // formato do ERROR na familia texto — o gate e o mesmo)
+            char nome[160];
             snprintf(nome, sizeof(nome),
                      "os 3 verbos exigem o peer (mod_fd/mod_txt/mod_list): achei %d", guards);
             check(nome, guards == 3);

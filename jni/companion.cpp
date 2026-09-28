@@ -33,6 +33,7 @@
 #include "bc_peercred.h"  // amarra o pedido ao uid de quem conectou (SO_PEERCRED)
 #include "bc_loader.h"
 #include "bc_generic_allowlist.h"  // PATH <pkg>: a allowlist mora na árvore root-only, quem lê é o root
+#include "bc_path_decide.h"  // bc_path_is_bc: o gate dos verbos BC (chamador É o jogo BC)
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
 // Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
@@ -757,6 +758,9 @@ static void handle_mod_fd(int fd, const char *pkg, const char *name);
 static void handle_mod_txt(int fd, const char *pkg, const char *name);
 static void handle_mod_list(int fd, const char *pkg);
 static void handle_path_request(int fd, const char *pkg);
+static void handle_bc_so(int fd, const char *name);
+static void handle_bc_list(int fd);
+static void handle_bc_conf(int fd, const char *name);
 
 // first/firstlen: a PRIMEIRA LINHA da conexão, já lida pelo accept loop (é
 // ela que decide o papel da conexão — REQ adota antes daqui; todo o resto
@@ -1016,6 +1020,15 @@ static void bc_fd_deny(int fd, const char *what) {
     LOGE("mod_* recusado: %s", what);
 }
 
+// Recusa da família TEXTO/LISTA: prefixo 'E' (o "<errno>\n" puro é
+// indistinguível do "<len>\n" de sucesso — ver bc_mods_fd.h).
+static void bc_fd_deny_txt(int fd, const char *what) {
+    char e[BC_FD_ERR_MAX];
+    ssize_t n = bc_fd_build_txt_error(e, sizeof(e), EACCES);
+    if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+    LOGE("mod_* recusado: %s", what);
+}
+
 // ============================================================================
 // DE QUEM E O PEDIDO (SO_PEERCRED)
 // ============================================================================
@@ -1092,6 +1105,28 @@ static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *
     return true;
 }
 
+// O mesmo gate para a família TEXTO/LISTA: a RECUSA sai no formato 'E'
+// ("E<errno>\n") — na família texto, o "<errno>\n" puro é indistinguível
+// do "<len>\n" de sucesso e o cliente parseava a recusa como comprimento
+// (stall de 5s por recusa; ver bc_mods_fd.h).
+static bool bc_peer_ok_for_pkg_txt(int client_fd, const char *want_pkg, const char *what) {
+    char (*caller)[BC_PEERCRED_PKG_CAP] =
+        (char (*)[BC_PEERCRED_PKG_CAP])alloca(sizeof(*caller) * BC_PEERCRED_PKG_MAX);
+    int n = bc_peer_is_caller(client_fd, caller, BC_PEERCRED_PKG_MAX);
+    if (n <= 0) {
+        bc_fd_deny_txt(client_fd, "peer nao identificavel");
+        LOGE("%s: recusado — nao deu para identificar o chamador", what);
+        return false;
+    }
+    if (!bc_peercred_pkg_matches(caller, n, want_pkg)) {
+        bc_fd_deny_txt(client_fd, "pkg nao e do chamador");
+        LOGE("%s: recusado — o chamador (appId %s) pediu %s", what,
+             caller[0], want_pkg ? want_pkg : "(nulo)");
+        return false;
+    }
+    return true;
+}
+
 // PATH <pkg> — os DOIS FATOS da decisão de caminho (bc_decide_path), que o
 // loader pergunta pré-specialize porque a árvore de mods é root-only e o stat
 // do jogo sempre daria EACCES (o has_pkg_mods_dir do loader morreu com a
@@ -1144,6 +1179,155 @@ static void handle_path_request(int fd, const char *pkg_arg) {
     LOGI("PATH %s -> dir=%d allow=%d", pkg, dir_exists ? 1 : 0, in_allowlist ? 1 : 0);
 }
 
+// ============================================================================
+// Verbos da árvore Battle Cats: "BO"/"BL"/"BT".
+//
+// POR QUE VERBOS PRÓPRIOS (e não uma força do formato (pkg, nome)): a árvore
+// BC é FLAT (BC_MODS_DIR sem subpasta por pacote) e os CONFS moram na RAIZ da
+// árvore — montar isso como (pkg, nome) seria fingir um layout que não é o
+// dela. O servidor monta o caminho em CADA verbo; o "BT" só aceita nome da
+// LISTA FIXA (bc_req_root_conf_ok): nunca um caminho vindo do cliente.
+//
+// GATE (o mesmo modelo de ameaça dos outros verbos): o chamador tem de SER o
+// jogo Battle Cats. SO_PEERCRED -> /data/system/packages.list -> a lista de
+// pacotes do appId do chamador; serve se (e só se) algum deles é o pacote do
+// BC (bc_path_is_bc aceita o nome base com sufixos de processo). Um mod
+// dentro de OUTRO jogo pedindo a árvore BC leva EACCES — a árvore BC não é
+// "mods de quem pede", é do jogo que a populate (push_mod).
+// ============================================================================
+static bool bc_peer_is_bc_game(int client_fd) {
+    char (*caller)[BC_PEERCRED_PKG_CAP] =
+        (char (*)[BC_PEERCRED_PKG_CAP])alloca(sizeof(*caller) * BC_PEERCRED_PKG_MAX);
+    int n = bc_peer_is_caller(client_fd, caller, BC_PEERCRED_PKG_MAX);
+    if (n <= 0) {
+        // bc_peer_is_caller já logou o motivo (fail-closed)
+        return false;
+    }
+    for (int i = 0; i < n; i++) {
+        if (bc_path_is_bc(caller[i])) return true;
+    }
+    LOGE("verbos BC recusados: o chamador (appId %s) nao e o jogo BC", caller[0]);
+    return false;
+}
+
+// Gate dos verbos BC com o formato de RECUSA da família do verbo: "BO" é
+// família do FD (erro em "<errno>\n", sem ambiguidade — o FD vem na
+// ancillary data); "BL"/"BT" são família TEXTO/LISTA (erro em "E<errno>\n").
+static bool bc_peer_bc_gate(int client_fd, bool txt_family) {
+    if (bc_peer_is_bc_game(client_fd)) return true;
+    if (txt_family) bc_fd_deny_txt(client_fd, "verbos BC so para o jogo BC");
+    else bc_fd_deny(client_fd, "verbos BC so para o jogo BC");
+    return false;
+}
+
+// "BO <nome>" -> FD do .so da árvore BC (BC_MODS_DIR é root-only desde a
+// relocação: o jogo NÃO pode opendir/dlopen por caminho — quem abre é o
+// root e o que cruza a fronteira é o descritor).
+static void handle_bc_so(int fd, const char *name) {
+    if (!bc_peer_bc_gate(fd, false)) return;
+    if (!bc_mod_name_ok(name)) {
+        bc_fd_deny(fd, "BO: nome invalido");
+        return;
+    }
+    char path[512];
+    int pn = snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, name);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) {
+        bc_fd_deny(fd, "BO: caminho montado grande demais");
+        return;
+    }
+    int f = bc_fd_open_ro(path);
+    if (f < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        LOGE("BO: open(%s) falhou: %s", path, strerror(errno));
+        return;
+    }
+    static const char kAck = 'F';
+    if (bc_fd_send(fd, f, &kAck, 1) < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+    }
+    close(f);
+}
+
+// "BL" -> lista de .so da árvore BC. Mesmo formato de fio do mod_list
+// (nomes, total no fim) — o loader do jogo ordena a lista dele (qsort por
+// nome, para o grafo de dependências); o companion não inventa ordem.
+static void handle_bc_list(int fd) {
+    if (!bc_peer_bc_gate(fd, true)) return;
+    DIR *d = opendir(BC_MODS_DIR);
+    if (d == nullptr) {
+        // Sem árvore BC não é erro: o jogo só não carrega nada.
+        bc_fd_send_data(fd, "0\n", 2);
+        return;
+    }
+    char line[512];
+    int total = 0;
+    struct dirent *de;
+    while ((de = readdir(d)) != nullptr) {
+        if (de->d_name[0] == '.') continue;
+        if (!bc_loader_is_mod_filename(de->d_name)) continue;
+        char full[1024];
+        int fw = snprintf(full, sizeof(full), "%s/%s", BC_MODS_DIR, de->d_name);
+        if (fw <= 0 || (size_t)fw >= sizeof(full)) continue;
+        struct stat st;
+        if (lstat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        int n = snprintf(line, sizeof(line), "%s\n", de->d_name);
+        if (n > 0 && bc_fd_send_data(fd, line, (size_t)n) < 0) break;
+        total++;
+    }
+    closedir(d);
+    snprintf(line, sizeof(line), "%d\n", total);
+    bc_fd_send_data(fd, line, strlen(line));
+}
+
+// "BT <nome>" -> conteudo de um conf da RAIZ da árvore. Lista fixa
+// (bc_req_root_conf_ok): bc_mods.conf (config dos 4 hooks estáticos, que
+// toggle_mod/set_mod escrevem) e bc_generic_allowlist.conf (allowlist do
+// experimento Cocos). Qualquer outro nome: EACCES — o cliente nunca ganha
+// "abra o arquivo que eu pedir".
+static void handle_bc_conf(int fd, const char *name) {
+    if (!bc_peer_bc_gate(fd, true)) return;
+    if (!bc_req_root_conf_ok(name)) {
+        bc_fd_deny_txt(fd, "BT: conf fora da lista fixa");
+        return;
+    }
+    char path[512];
+    int pn = snprintf(path, sizeof(path), "%s/%s", BC_MODS_ROOT, name);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) {
+        bc_fd_deny_txt(fd, "BT: caminho montado grande demais");
+        return;
+    }
+    int f = bc_fd_open_ro(path);
+    if (f < 0) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_txt_error(e, sizeof(e), errno);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        return;
+    }
+    char head[32];
+    off_t sz = lseek(f, 0, SEEK_END);
+    if (sz < 0 || sz > BC_FD_TXT_MAX) {
+        char e[BC_FD_ERR_MAX];
+        ssize_t n = bc_fd_build_txt_error(e, sizeof(e), sz < 0 ? errno : EFBIG);
+        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+        close(f);
+        return;
+    }
+    int n2 = snprintf(head, sizeof(head), "%lld\n", (long long)sz);
+    if (n2 > 0) bc_fd_send_data(fd, head, (size_t)n2);
+    if (sz > 0 && lseek(f, 0, SEEK_SET) == (off_t)0) {
+        char buf[4096];
+        ssize_t got;
+        while ((got = read(f, buf, sizeof(buf))) > 0) {
+            if (bc_fd_send_data(fd, buf, (size_t)got) < 0) break;
+        }
+    }
+    close(f);
+}
+
 
 
 // A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
@@ -1155,14 +1339,14 @@ static void handle_path_request(int fd, const char *pkg_arg) {
 // cliente: o companion monta a partir do pacote validado.
 static void handle_mod_list(int fd, const char *pkg) {
     if (!bc_mod_pkg_ok(pkg)) {
-        bc_fd_deny(fd, "mod_list: pacote invalido");
+        bc_fd_deny_txt(fd, "mod_list: pacote invalido");
         return;
     }
-    if (!bc_peer_ok_for_pkg(fd, pkg, "mod_list")) return;
+    if (!bc_peer_ok_for_pkg_txt(fd, pkg, "mod_list")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
     if (pn <= 0 || (size_t)pn >= sizeof(path)) {
-        bc_fd_deny(fd, "mod_list: caminho montado grande demais");
+        bc_fd_deny_txt(fd, "mod_list: caminho montado grande demais");
         return;
     }
     // lstat pelo root: um link dentro da arvore nao e seguido, e um item que
@@ -1231,20 +1415,20 @@ static void handle_mod_fd(int fd, const char *pkg, const char *name) {
 // mod_fd: o cliente manda (pkg, nome) e o companion monta o caminho.
 static void handle_mod_txt(int fd, const char *pkg, const char *name) {
     if (!bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
-        bc_fd_deny(fd, "mod_txt: pacote ou nome invalido");
+        bc_fd_deny_txt(fd, "mod_txt: pacote ou nome invalido");
         return;
     }
-    if (!bc_peer_ok_for_pkg(fd, pkg, "mod_txt")) return;
+    if (!bc_peer_ok_for_pkg_txt(fd, pkg, "mod_txt")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s/%s", BC_GENERIC_MODS_DIR, pkg, name);
     if (pn <= 0 || (size_t)pn >= sizeof(path)) {
-        bc_fd_deny(fd, "mod_txt: caminho montado grande demais");
+        bc_fd_deny_txt(fd, "mod_txt: caminho montado grande demais");
         return;
     }
     int f = bc_fd_open_ro(path);
     if (f < 0) {
         char e[BC_FD_ERR_MAX];
-        ssize_t n = bc_fd_build_error(e, sizeof(e), errno);
+        ssize_t n = bc_fd_build_txt_error(e, sizeof(e), errno);
         if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
         return;
     }
@@ -1254,7 +1438,7 @@ static void handle_mod_txt(int fd, const char *pkg, const char *name) {
     off_t sz = lseek(f, 0, SEEK_END);
     if (sz < 0 || sz > BC_FD_TXT_MAX) {
         char e[BC_FD_ERR_MAX];
-        ssize_t n = bc_fd_build_error(e, sizeof(e), sz < 0 ? errno : EFBIG);
+        ssize_t n = bc_fd_build_txt_error(e, sizeof(e), sz < 0 ? errno : EFBIG);
         if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
         close(f);
         return;
@@ -1296,6 +1480,9 @@ static void *req_channel_thread(void *arg) {
         handle_mod_fd,   // "SO"  -> FD do .so (SCM_RIGHTS)
         handle_mod_txt,  // "TX"  -> conteúdo (conf/allowlist)
         handle_mod_list, // "LS"  -> lista de .so da pasta do pacote
+        handle_bc_so,    // "BO"  -> FD do .so da árvore BC (gate: é o jogo BC)
+        handle_bc_list,  // "BL"  -> lista da árvore BC
+        handle_bc_conf,  // "BT"  -> conf da raiz, nome da LISTA FIXA
     };
     for (;;) {
         if (bc_req_dispatch_one(fd, &root) < 0) break;
