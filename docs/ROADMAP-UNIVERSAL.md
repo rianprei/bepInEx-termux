@@ -281,7 +281,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 
 ### F9 — Pesquisa: bloqueio de anúncio genérico + UX de referência
 - [~] Ponto de hook comum de AdMob/AppLovin/ironSource/Unity Ads (Java via JNI vs wrapper C#). Go/no-go de um `u_noads`. (host OK: `f08164b` — `mods/u_noads` hooka os `Show` de 6 SDKs (15 hooks) e dispara o fechamento pelo callback de cada SDK, com "nunca suprimir sem fechar"; Caso 64 + `test_targets.cpp`/`test_closers.cpp`; device: pendente — precisa rodar no SA2 com o `sa2content` desligado, senão os dois mods brigam pelo mesmo banner.)
-- [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager. (Falta: existe `docs/ROADMAP-COMPETITORS.md` (pesquisa de concorrentes por fonte primária, 3 agentes), mas a lista de padrões de UX para copiar no Manager não foi escrita.)
+- [x] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Padrões verificados, equivalentes no Manager, custos e top 5 em `docs/UX-REFERENCE.md`. Lucky Patcher sem padrões verificáveis: site oficial retornou HTTP 403. (`3307976d94b5347a7a9c8ea1cb497810ee9436f6`.)
 
 ### F11 — Scripts Frida como mod (runtime, sem PC)
 - [x] Mod `mods/u_frida` (existe, branch): com `*.js` na pasta do jogo, confere `frida-gadget.bin` + `frida-gadget.config` ao lado e dá `dlopen` no gadget. Só no modo script: `uf_config_is_script_mode()` exige JSON válido (≤4KB) com `interaction.type` `script`/`script-directory` — `{}`, `listen`, `connect` ou inválido recusa (o default do gadget é `listen` + `on_load: wait`, que congela o jogo). Selftest Caso 61.
