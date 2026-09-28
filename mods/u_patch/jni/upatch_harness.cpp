@@ -718,7 +718,7 @@ int main() {
               && strcmp(cname, "Inner") != 0);
     }
 
-    printf("\n[Caso 92] decode do imm16 do MOVZ/MOVK: bits [20:5], não os 16 baixos\n");
+    printf("\n[Caso 93] decode do imm16 do MOVZ/MOVK: bits [20:5], não os 16 baixos\n");
     {
         // Prova fixa da fórmula que o fuzz_upatch_encoder usa para
         // reconstruir o valor: imm16 = (insn>>5) & 0xFFFF. A leitura errada
