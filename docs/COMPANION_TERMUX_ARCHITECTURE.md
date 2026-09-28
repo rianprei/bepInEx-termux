@@ -531,32 +531,37 @@ REGISTER_ZYGISK_COMPANION(companion_handler)
 
 ### termux_client.py
 
-```python
-#!/usr/bin/env python3
-import socket
-import sys
+**Fonte: [`tools/termux_client.py`](../tools/termux_client.py).** Não há cópia
+inline deste arquivo aqui, e não deve haver: o que estava neste trecho era um
+rascunho de ~20 linhas que **não funcionava** com o console.
 
-SOCKET_NAME = '\0bc_companion'
+Diferenças entre o rascunho antigo e o arquivo real (achado A4 do wiring-audit
+em 139aceb):
 
-def send_command(cmd):
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.connect(SOCKET_NAME)
-        sock.send(cmd.encode())
-        response = sock.recv(4096)
-        return response.decode()
-    finally:
-        sock.close()
+| | rascunho (doc) | arquivo real |
+|---|---|---|
+| `stream` (verbo) | ausente | presente — e o console roda `python3 "$CLIENT" stream &` |
+| terminador de linha | `send(cmd)` sem `\n` | `sendall(cmd + "\n")` — o companion faz `read_command` e espera a linha |
+| leituras | um `recv(4096)` | laço até EOF (achado de 2026-09-14: um recv só cortava `list_mods`, que faz 4 `write_all` separados) |
+| timeout | nenhum | 5s, com mensagem de erro por tipo |
+| cor por nível | nenhuma | ANSI por nível, com os valores medidos no fonte do BepInEx |
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python3 termux_client.py <command>")
-        sys.exit(1)
+Um rascunho num doc é pior que a ausência dele: o console é invocado com
+`stream`, e o rascunho não tem o verbo — quem copiasse dali teria um cliente que
+não sobe o stream.
 
-    cmd = ' '.join(sys.argv[1:])
-    response = send_command(cmd)
-    print(response)
-```
+**Staging:** `tools/install_termux_client.sh` copia o arquivo para
+`~/battlecats-mods/zygisk-bc-poc/termux_client.py`, que é o caminho que
+`termux-console/bepin-console` procura (`CLIENT=...`). No aparelho o destino é o
+home do Termux; fora dele é o `$HOME` de quem roda, que é a mesma árvore
+relativa — então o mesmo comando serve para os dois e o teste de host exercita o
+de verdade.
+
+**Nota sobre `jni/companion.cpp`** (NÃO editado aqui, e fora do escopo desta
+tarefa): o companion sobe o console por caminho fixo,
+`/data/data/com.termux/files/home/battlecats-mods/zygisk-bc-poc/termux-console/bepin-console`.
+Esse caminho é a origem do A4 — o console é chamado de um lugar fixo na home do
+Termux em vez de algo instalável. Ver a nota do FEITO.
 
 ---
 
