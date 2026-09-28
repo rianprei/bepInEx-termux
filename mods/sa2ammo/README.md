@@ -32,7 +32,8 @@ Classe, método e offset de campo saem da API il2cpp exportada (`il2cpp_class_fr
 Com o jogo aberto:
 
 ```
-adb push libs/arm64-v8a/libsa2ammo.so /data/local/tmp/libsa2ammo.so
+. tools/symbols.sh && symbols_ship mods/sa2ammo/libs/arm64-v8a/libsa2ammo.so /tmp/libsa2ammo.so
+adb push /tmp/libsa2ammo.so /data/local/tmp/libsa2ammo.so
 adb shell chmod 644 /data/local/tmp/libsa2ammo.so
 echo "Module.load('/data/local/tmp/libsa2ammo.so');" > /tmp/sa2load.js && adb push /tmp/sa2load.js /data/local/tmp/
 adb shell su -c "/data/local/tmp/frida-inject -p \$(pidof com.hyperdotstudios.swampattack2) -s /data/local/tmp/sa2load.js -e"

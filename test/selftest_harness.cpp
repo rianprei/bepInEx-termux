@@ -58,7 +58,7 @@
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
-#include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
+#include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + layout IL2CPP), sem Android/il2cpp
 #include "../mods/common/il2cpp_min.h"
 #include "../mods/u_patch/jni/u_patch_parse.h"  // F4: parser C4/C3 (puro)
 #include "../mods/u_patch/jni/u_patch_arm64.h"  // F4: emissores arm64 (puros)
@@ -1453,7 +1453,8 @@ int main() {
             if (f->n < 8) { snprintf(f->names[f->n], 64, "%s", name); f->n++; }
         };
 
-        int n = bc_elf_symtab_scan(syms, 6, strtab, sizeof(strtab), cb, &found);
+        int n = bc_elf_symtab_scan(syms, 6, strtab, sizeof(strtab),
+                                   bc_elf_filter_jni_prefix, cb, &found, false);
         check("achou exatamente 2 símbolos JNI-like (STB_GLOBAL/WEAK + STT_FUNC + prefixo Java_)", n == 2);
         check("primeiro símbolo é metodo1", found.n >= 1 && strcmp(found.names[0], "Java_com_foo_Bar_metodo1") == 0);
         check("segundo símbolo é metodo2 (STB_WEAK também conta)", found.n >= 2 && strcmp(found.names[1], "Java_com_foo_Bar_metodo2") == 0);
@@ -1468,18 +1469,21 @@ int main() {
         syms2[1] = {1, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0x9000, 0};
         syms2[2] = {(uint32_t)(1 + strlen("_ZN7cocos2d8DirectorC1Ev") + 1),
                     (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xA000, 0};
-        int n2 = bc_elf_symtab_scan_filtered(syms2, 3, strtab2, sizeof(strtab2), cocos_filter, cb, &found);
+        int n2 = bc_elf_symtab_scan(syms2, 3, strtab2, sizeof(strtab2),
+                                    cocos_filter, cb, &found, false);
         check("filtro customizado (cocos2d substring) acha só o símbolo certo", n2 == 1);
 
         // Bounds-safety: st_name apontando fora do strtab nunca lê fora dos limites
         bc_elf64_sym bad[2] = {};
         bad[0] = {0, 0, 0, 0, 0, 0};
         bad[1] = {9999, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xB000, 0};
-        int n3 = bc_elf_symtab_scan(bad, 2, strtab, sizeof(strtab), cb, &found);
+        int n3 = bc_elf_symtab_scan(bad, 2, strtab, sizeof(strtab),
+                                    bc_elf_filter_jni_prefix, cb, &found, false);
         check("st_name fora do strtab é ignorado, não lê fora dos limites", n3 == 0);
 
         // sym_count == 0 (contagem GNU_HASH zerada, ex.: DT_GNU_HASH ausente) → 0 achados, sem crash
-        int n4 = bc_elf_symtab_scan(syms, 0, strtab, sizeof(strtab), cb, &found);
+        int n4 = bc_elf_symtab_scan(syms, 0, strtab, sizeof(strtab),
+                                    bc_elf_filter_jni_prefix, cb, &found, false);
         check("sym_count=0 (sem DT_GNU_HASH) → 0 símbolos, sem crash", n4 == 0);
     }
 
@@ -1749,12 +1753,11 @@ int main() {
     }
 
     // ================================================================
-    // Caso 57: dump_core (F3 u_dump) — formato C5 exato + pkg C1
-    // (env BEPINEX_PKG vence; cmdline só fora de zygote*). Núcleo puro,
-    // usado por mods/u_dump/jni/u_dump_mod.cpp.
+    // Caso 57: dump_core (F3 u_dump) — layout System.String ARM32/64
+    // e serialização C5. Núcleo puro usado por mods/u_dump/jni/u_dump_mod.cpp.
     // ================================================================
     {
-        printf("\n[Caso 57] dump_core: formato C5 (dump.tsv) e pkg C1 (u_dump)\n");
+        printf("\n[Caso 57] dump_core: layout IL2CPP e formato C5\n");
         Il2CppStringLayout arm32_layout = il2cpp_string_layout_for_pointer_size(4);
         Il2CppStringLayout arm64_layout = il2cpp_string_layout_for_pointer_size(8);
         check("System.String ARM32 usa len +0x08 e chars +0x0c",
@@ -1800,28 +1803,6 @@ int main() {
         {
             // Máscaras de atributo fixadas (contrato interno com o mod):
             check("mask static = 0x0010 (METHOD_ATTRIBUTE_STATIC)", dump_attr_static_mask() == 0x0010);
-            check("mask visibilidade = 0x001F", dump_attr_visibility_mask() == 0x001F);
-        }
-        {
-            char pkg[64];
-            // env vence sempre
-            check("env vence cmdline", dump_pick_pkg("com.via.env", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.env") == 0);
-            // env vazio/ausente → cmdline se não-zygote
-            check("env vazio → cmdline", dump_pick_pkg("", "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
-            check("env null → cmdline", dump_pick_pkg(nullptr, "com.via.cmd", pkg, sizeof(pkg)) && strcmp(pkg, "com.via.cmd") == 0);
-            // cmdline zygote* rejeitado (achado device: constructor lê zygote64)
-            check("cmdline zygote64 → false", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
-            check("cmdline zygote32 → false", !dump_pick_pkg(nullptr, "zygote32", pkg, sizeof(pkg)));
-            check("cmdline zygote → false", !dump_pick_pkg(nullptr, "zygote", pkg, sizeof(pkg)));
-            // cmdline vazio/null → false
-            check("cmdline vazio → false", !dump_pick_pkg(nullptr, "", pkg, sizeof(pkg)));
-            check("cmdline null → false", !dump_pick_pkg(nullptr, nullptr, pkg, sizeof(pkg)));
-            // nada disponível → false (chamador re-tenta depois)
-            check("env null + cmdline zygote → false (fallback espera)", !dump_pick_pkg(nullptr, "zygote64", pkg, sizeof(pkg)));
-            // truncamento seguro: cap pequeno não estoura
-            char small[8];
-            bool ok = dump_pick_pkg("com.pacote.muito.longo", nullptr, small, sizeof(small));
-            check("cap pequeno: truncado com NUL, sem crash", ok && strlen(small) < sizeof(small));
         }
     }
 

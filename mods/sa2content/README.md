@@ -73,10 +73,11 @@ A lista de armas, as fusões e o mapa de chefes ficam no topo do script.
 
 ## Teste rápido, sem reboot (Frida)
 
-Com o jogo aberto:
+Com o jogo aberto (na raiz do repo; o `.so` do build sai com símbolos, então só a cópia stripada vai para o aparelho):
 
 ```
-adb push libs/arm64-v8a/libsa2content.so /data/local/tmp/libsa2content.so
+. tools/symbols.sh && symbols_ship mods/sa2content/libs/arm64-v8a/libsa2content.so /tmp/libsa2content.so
+adb push /tmp/libsa2content.so /data/local/tmp/libsa2content.so
 adb shell chmod 644 /data/local/tmp/libsa2content.so
 echo "Module.load('/data/local/tmp/libsa2content.so');" > /tmp/sa2c.js && adb push /tmp/sa2c.js /data/local/tmp/
 adb shell su -c "/data/local/tmp/frida-inject -p \$(pidof com.hyperdotstudios.swampattack2) -s /data/local/tmp/sa2c.js -e"

@@ -141,7 +141,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         (void)bc_elf_symtab_scan_filtered_ex(
             nullptr, 0, strtab.data(), reported, bc_elf_file_symbol_filter, sym_cb, &st, true);
         (void)bc_elf_symtab_scan(
-            nullptr, 0, strtab.data(), reported, sym_cb, &st);
+            nullptr, 0, strtab.data(), reported,
+            bc_elf_filter_jni_prefix, sym_cb, &st, false);
 
         std::vector<bc_elf64_sym> syms;
         build_symtab(data, size, reported, &syms);

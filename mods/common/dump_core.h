@@ -57,10 +57,8 @@ static inline int dump_join_class_name(char *out, size_t cap, const char *ns,
     return (int)used;
 }
 
-// Flags de atributo que interessam pro usuário do dump (escopo/hiding).
-// 0x0010 static, 0x0004 public, 0x0001 private, 0x0006 protected, 0x001F visibilidade.
+// Flag de atributo serializada pelo dump C5: 0x0010 static.
 static inline uint32_t dump_attr_static_mask() { return 0x0010; }
-static inline uint32_t dump_attr_visibility_mask() { return 0x001F; }
 
 // Linha de método C5. method_get_flags devolve flags + iflags (2º out);
 // o static vem dos flags de atributo (0x0010), não do iflags.
@@ -78,27 +76,4 @@ static inline int dump_write_field(char *out, size_t cap, const char *cls,
                                    bool is_static, int offset) {
     return snprintf(out, cap, "F\t%s\t%s\t%s\t%d\t%d\n", cls, field, type,
                     is_static ? 1 : 0, offset);
-}
-
-// --- pkg (C1 novo): env primeiro, cmdline só fora de zygote* ---
-// Loader Zygisk seta BEPINEX_PKG antes do dlopen (contrato C1 2026-09-26+);
-// /proc/self/cmdline no constructor do .so ainda é "zygote64" (achado em
-// device com o u_patch: a especialização do app_process reescreve argv
-// depois do fork). Nada de leitura de arquivo aqui — o chamador passa as
-// strings já lidas.
-static inline bool dump_zygote_name(const char *n) {
-    return n && strncmp(n, "zygote", 6) == 0;  // zygote, zygote64, zygote32
-}
-
-// Decide o pkg: env do loader vence; cmdline só se não-vazia e não-zygote.
-// false = nada confiável ainda (chamador re-tenta cmdline depois de um
-// sleep; fora do constructor o cmdline já virou o do app).
-static inline bool dump_pick_pkg(const char *env, const char *cmd, char *out,
-                                 size_t cap) {
-    if (env && env[0]) { snprintf(out, cap, "%s", env); return true; }
-    if (cmd && cmd[0] && !dump_zygote_name(cmd)) {
-        snprintf(out, cap, "%s", cmd);
-        return true;
-    }
-    return false;
 }

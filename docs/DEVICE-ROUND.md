@@ -174,7 +174,8 @@ Restaurar removendo apenas os arquivos criados nesta rodada via **Remover** ou
 ### Crashguard e Reativar
 
 ```bash
-adb push mods/t_crash/libs/arm64-v8a/libt_crash.so /data/local/tmp/t_crash.so
+. tools/symbols.sh && symbols_ship mods/t_crash/libs/arm64-v8a/libt_crash.so /tmp/t_crash.so
+adb push /tmp/t_crash.so /data/local/tmp/t_crash.so
 adb shell su -c "cp /data/local/tmp/t_crash.so /data/local/tmp/mods/$PKG/t_crash.so"
 adb shell am force-stop "$PKG"; adb shell monkey -p "$PKG" 1
 sleep 4

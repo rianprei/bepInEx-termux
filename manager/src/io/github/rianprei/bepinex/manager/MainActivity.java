@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -18,6 +19,8 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -25,9 +28,11 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import io.github.rianprei.bepinex.manager.core.GameInfoSorter;
 import io.github.rianprei.bepinex.manager.core.LooseModInstaller;
 import io.github.rianprei.bepinex.manager.core.ModInventory;
 import io.github.rianprei.bepinex.manager.core.PendingStagedFile;
@@ -45,7 +50,6 @@ import io.github.rianprei.bepinex.manager.model.ModManifest;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -61,6 +65,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private TextView mTvStatusVersion;
     private EditText mEtSearch;
     private CheckBox mCbFilterGames;
+    private Spinner mSpGameSort;
     private ProgressBar mProgress;
     private ListView mListGames;
     private TextView mTvEmpty;
@@ -69,6 +74,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     private final List<GameInfo> mAllGames = new ArrayList<>();
     private final List<GameInfo> mFilteredGames = new ArrayList<>();
     private GameAdapter mAdapter;
+    private GameInfoSorter.SortOrder mSortOrder = GameInfoSorter.SortOrder.MODS_FIRST;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private Uri mPendingIncomingUri;
     // Estado do arquivo escolhido: fora da Activity e por tela (estático) —
@@ -87,6 +93,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
         mTvStatusVersion = findViewById(R.id.tv_status_version);
         mEtSearch = findViewById(R.id.et_search);
         mCbFilterGames = findViewById(R.id.cb_filter_games);
+        mSpGameSort = findViewById(R.id.sp_game_sort);
         mProgress = findViewById(R.id.progress_loading);
         mListGames = findViewById(R.id.list_games);
         mTvEmpty = findViewById(R.id.tv_empty);
@@ -94,6 +101,28 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
 
         mAdapter = new GameAdapter(this, mFilteredGames);
         mListGames.setAdapter(mAdapter);
+
+        SharedPreferences preferences = getSharedPreferences("manager_settings", MODE_PRIVATE);
+        mSortOrder = GameInfoSorter.SortOrder.fromStoredValue(
+                preferences.getString("game_sort_order", GameInfoSorter.SortOrder.MODS_FIRST.storedValue()));
+        ArrayAdapter<CharSequence> sortAdapter = ArrayAdapter.createFromResource(
+                this, R.array.game_sort_options, android.R.layout.simple_spinner_item);
+        sortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        mSpGameSort.setAdapter(sortAdapter);
+        mSpGameSort.setSelection(mSortOrder.position());
+        mSpGameSort.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                GameInfoSorter.SortOrder selected = GameInfoSorter.SortOrder.fromPosition(position);
+                if (selected == mSortOrder) return;
+                mSortOrder = selected;
+                preferences.edit().putString("game_sort_order", selected.storedValue()).apply();
+                applyFilter();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         mListGames.setOnItemClickListener((parent, view, position, id) -> {
             GameInfo game = mFilteredGames.get(position);
@@ -262,9 +291,6 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
                 loaded.add(info);
             }
 
-            // Ordena alfabeticamente
-            Collections.sort(loaded, (a, b) -> a.appName.compareToIgnoreCase(b.appName));
-
             mMainHandler.post(() -> {
                 mProgress.setVisibility(View.GONE);
 
@@ -320,6 +346,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
             mFilteredGames.add(g);
         }
 
+        GameInfoSorter.sort(mFilteredGames, mSortOrder);
         mAdapter.notifyDataSetChanged();
         mTvEmpty.setVisibility(mFilteredGames.isEmpty() ? View.VISIBLE : View.GONE);
     }

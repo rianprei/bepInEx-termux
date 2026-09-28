@@ -9,8 +9,15 @@
 
     <string name="search_hint">Buscar jogo por nome ou pacote...</string>
     <string name="filter_games_only">Apenas jogos / engines detectados</string>
+    <string name="sort_games_label">Ordenação dos jogos</string>
     <string name="no_games_found">Nenhum jogo ou app compatível encontrado.</string>
     <string name="loading_games">Carregando aplicativos instalados...</string>
+    <string-array name="game_sort_options">
+        <item>@string/sort_option_mods_first</item>
+        <item>@string/sort_option_name_asc</item>
+    </string-array>
+    <string name="sort_option_mods_first">Com mods primeiro, depois nome</string>
+    <string name="sort_option_name_asc">Nome (A-Z)</string>
 
     <string name="btn_restart_game">Reiniciar Jogo</string>
     <string name="btn_view_log">Ver Log</string>

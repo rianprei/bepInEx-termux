@@ -91,9 +91,10 @@ public final class LooseModInstaller {
         // modo script-directory apontando para a propria pasta de mods.
         if (det.kind == ModContentDetector.Kind.FRIDA_GADGET) {
             String gadgetAbi = NativeAbiDetector.abiFromElfHeader(sample.head);
-            if (!java.util.Objects.equals(gadgetAbi, gameAbi)) {
+            String abiError = gadgetAbiError(gadgetAbi, gameAbi);
+            if (abiError != null) {
                 return new Result(false,
-                        NativeAbiDetector.incompatibilityMessage(gadgetAbi, gameAbi), det.kind, null);
+                        abiError, det.kind, null);
             }
             return installGadget(src, pkg);
         }
@@ -126,6 +127,16 @@ public final class LooseModInstaller {
         }
 
         return new Result(true, "Instalado: " + destName + "\n" + posInstallHint(det), det.kind, destName);
+    }
+
+    public static String gadgetAbiError(String gadgetAbi, String gameAbi) {
+        if (gadgetAbi == null) {
+            return "O arquivo não é uma biblioteca ELF válida para o Frida Gadget.";
+        }
+        if (!gadgetAbi.equals(gameAbi)) {
+            return NativeAbiDetector.incompatibilityMessage(gadgetAbi, gameAbi);
+        }
+        return null;
     }
 
     // Instala o gadget no lugar certo: frida-gadget.bin + frida-gadget.config

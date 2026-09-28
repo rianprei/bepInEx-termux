@@ -83,10 +83,24 @@ fi
 # --- 3. staging (limpo a cada run) ---------------------------------------------
 rm -rf "$STAGE" "$OUT/bepinex-termux-$VERSION.zip"
 mkdir -p "$STAGE/zygisk" "$STAGE/META-INF/com/google/android"
+# O ndk-build agora sai NÃO-stripado (jni/repro.mk põe APP_STRIP_MODE := none),
+# porque sem .symtab/DWARF o .so de release é um offset morto: um tombstone do
+# device traz build-id e pc, e não há como transformar isso em função:linha.
+#
+# Aqui o loader é dividido em dois: a cópia não-stripada vai para $SYMBOLS_DIR
+# indexada pelo build-id, e o que segue para o STAGE (e portanto para o zip
+# Magisk e para o device) é o .so STRIPPED — o binário do device não cresce.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "$ROOT/tools/symbols.sh"
+# symbols_ship faz as duas metades: guarda o não-stripado em symbols/ (quando
+# SYMBOLS_DIR está setado) e escreve o STRIPPED no stage. É o mesmo helper usado
+# por pack_bmod, deploy_mod e manager/build, para não existir um segundo caminho
+# de strip com regra diferente.
 for abi in arm64-v8a armeabi-v7a; do
     loader="libs/$abi/libbc-poc.so"
     [ -f "$loader" ] || { echo "ERRO: build não gerou $loader" >&2; exit 1; }
-    cp "$loader" "$STAGE/zygisk/$abi.so"
+    symbols_ship "$loader" "$STAGE/zygisk/$abi.so" "${SYMBOLS_DIR:-}" || exit 1
 done
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
 cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \

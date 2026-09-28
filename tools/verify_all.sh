@@ -178,11 +178,26 @@ while IFS= read -r test_file; do
             "$3"
         ' bash "$ROOT/test" "$(basename "$test_file")" "$binary"
     fi
-done < <(find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print | sort)
+done < <(find "$ROOT/test" -maxdepth 1 -type f \
+    \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) \
+    ! -name 'mono_min_test.cpp' -print | sort)
 if [ ! -f "$ROOT/test/selftest_harness.cpp" ]; then
     record "host selftest_harness.cpp" FAIL 0 1
     echo "selftest_harness.cpp ausente: teste central do loader" >&2
 fi
+
+run_step "host test/mono_min_test.cpp" "$TIMEOUT_TEST" bash -c '
+    set -e
+    tmp="$1"
+    root="$2"
+    g++ -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
+        "$root/test/fixtures/mono_min_api_complete.cpp" -o "$tmp/mono_min_api_complete.so"
+    g++ -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
+        "$root/test/fixtures/mono_min_api_missing.cpp" -o "$tmp/mono_min_api_missing.so"
+    g++ -std=c++17 -Wall -Wextra -Werror "$root/test/mono_min_test.cpp" \
+        -ldl -o "$tmp/mono_min_test"
+    "$tmp/mono_min_test" "$tmp/mono_min_api_complete.so" "$tmp/mono_min_api_missing.so"
+' bash "$TMP" "$ROOT"
 
 while IFS= read -r test_file; do
     test_name=${test_file#"$ROOT"/}
@@ -212,6 +227,10 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
 ' bash "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
+# UX-REFERENCE citations must each carry one exact source anchor. The anchor
+# must occur once in its target file, inside the cited range, and on code rather
+# than package/import/comment/license lines. This proves the quote can be found,
+# not that it semantically supports the prose; that remains a review judgment.
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"
 import re
@@ -222,6 +241,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 count_file = Path(sys.argv[2])
 ref_re = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z_][A-Za-z0-9_]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
+anchor_re = re.compile(r"\(anchor:\s*`([^`]+)`\)")
 files = subprocess.check_output(
     ["git", "ls-files", "docs/*.md", "mods/*/README.md"], cwd=root, text=True
 ).splitlines()
@@ -237,8 +257,15 @@ for doc_name in files:
         refs = list(ref_re.finditer(line))
         if not refs:
             continue
+        is_ux_reference = doc_name == "docs/UX-REFERENCE.md"
+        anchors = anchor_re.findall(line) if is_ux_reference else []
+        if is_ux_reference and len(anchors) != len(refs):
+            errors.append(
+                f"{doc_name}:{line_no}: cada citação exige uma âncora explícita "
+                "no formato (anchor: `texto`)"
+            )
         targets = []
-        for match in refs:
+        for ref_index, match in enumerate(refs):
             name = match.group("path")
             start = int(match.group("start"))
             end = int(match.group("end") or start)
@@ -254,8 +281,55 @@ for doc_name in files:
             if start < 1 or end < start or end > len(target_lines):
                 errors.append(f"{doc_name}:{line_no}: linha fora do arquivo: {name}:{start}-{end}")
                 continue
-            targets.append((target, target_lines))
+            targets.append((target, target_lines, start, end))
             checked += 1
+            if is_ux_reference and ref_index < len(anchors):
+                anchor = anchors[ref_index]
+                occurrence_count = sum(source_line.count(anchor) for source_line in target_lines)
+                occurrences = [
+                    (idx, source_line) for idx, source_line in enumerate(target_lines)
+                    if anchor in source_line
+                ]
+                if occurrence_count != 1:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} ocorre "
+                        f"{occurrence_count} vezes em {target}; esperado exatamente uma"
+                    )
+                    continue
+                anchor_line, source_line = occurrences[0]
+                if not start - 1 <= anchor_line <= end - 1:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} fora da faixa "
+                        f"citada {name}:{start}-{end}"
+                    )
+                stripped = source_line.lstrip()
+                if re.match(r"(?:package|import)\b", stripped):
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} está em "
+                        f"package/import ({target}:{anchor_line + 1})"
+                    )
+                    continue
+                in_comment = False
+                comment_line = False
+                for source_index, candidate_line in enumerate(target_lines[:anchor_line + 1]):
+                    candidate = candidate_line.lstrip()
+                    if source_index == anchor_line and (
+                        in_comment
+                        or candidate.startswith(("//", "/*", "*", "*/", "<!--", "-->"))
+                    ):
+                        comment_line = True
+                    if in_comment:
+                        if "*/" in candidate_line or "-->" in candidate_line:
+                            in_comment = False
+                    elif candidate.startswith("/*") and "*/" not in candidate_line:
+                        in_comment = True
+                    elif candidate.startswith("<!--") and "-->" not in candidate_line:
+                        in_comment = True
+                if comment_line:
+                    errors.append(
+                        f"{doc_name}:{line_no}: âncora {anchor!r} está em "
+                        f"comentário/licença ({target}:{anchor_line + 1})"
+                    )
         literals = [
             span for span in re.findall(r"`([^`\n]+)`", line)
             if not ref_re.fullmatch(span) and not ref_re.search(span)
@@ -263,8 +337,10 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if targets and not any(literal in "\n".join(lines) for _, lines in targets):
-                errors.append(f"{doc_name}:{line_no}: literal nao encontrado: {literal!r}")
+            if not is_ux_reference and targets and not any(
+                literal in "\n".join(lines) for _, lines, _, _ in targets
+            ):
+                errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
 if errors:
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)
@@ -274,6 +350,30 @@ PY
 if [ -f "$DOC_REF_COUNT" ]; then
     cat "$DOC_REF_COUNT"
 fi
+
+# Hash citado como mesclado tem que existir e ser ancestral de HEAD. Sem
+# isso, um hash de branch fora da base escrito como 'merged' passa no gate
+# e a verdade só aparece na revisão humana.
+if [ -f "$ROOT/test/docs_hash_gate.sh" ]; then
+    run_step "docs: hash mesclado existe na base" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/docs_hash_gate.sh"
+  else
+      record "docs: hash mesclado existe na base (check ausente)" FAIL 0 1
+      echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
+  fi
+
+  # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
+  # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
+  # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
+  # linha ali seria conferida. A fixture e o que prova.
+  if [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/docs_hash_gate_fixture.sh"
+  else
+      record "docs: fixture do hash-gate (ausente)" FAIL 0 1
+      echo "test/docs_hash_gate_fixture.sh ausente: a cobertura do CHANGELOG fica so estrutural" >&2
+  fi
+
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
@@ -411,6 +511,72 @@ else
     echo "test/fuzz/run_fuzz_gate.sh ausente: os parsers de dado do usuario ficam sem cobertura no gate"
 fi
 
+# Build-id reproduzível: o MESMO commit tem que dar o MESMO build-id em
+# diretórios diferentes, senão o build-id de um tombstone não identifica nada
+# e um crash de usuário não vira função:linha. Foi o que travou o crash do SA2
+# (tombstone_07): o build-id 041d9b51... não batia com nenhum build local.
+# A etapa compila em DOIS diretórios temporários de profundidades diferentes e
+# exige build-id e .so byte a byte iguais. Diferente = FAIL, nunca SKIP.
+if [ -f "$ROOT/test/symbols/build_id_repro_test.sh" ]; then
+    run_step "build-id reproduzivel (2 diretorios)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/build_id_repro_test.sh"
+else
+    record "build-id reproduzivel (test ausente)" FAIL 0 1
+    echo "test/symbols/build_id_repro_test.sh ausente: o build-id volta a depender do diretorio"
+fi
+
+# Nada que sai da máquina pode carregar símbolo. Com APP_STRIP_MODE := none
+# (jni/repro.mk) o .so de build tem ~1,8 MB de DWARF, e TODO consumidor de
+# mods/*/libs/arm64-v8a/*.so passa a ter esse binário na mão: o .bmod que o
+# usuário baixa, o .so do adb push e o u_dump.so nos assets do APK. A etapa
+# gera um mod de verdade (new_mod.sh), empacota em .bmod e confere que o .so
+# entregue está stripped e com o build-id preservado. Diferente = FAIL.
+if [ -f "$ROOT/test/symbols/ship_stripped_test.sh" ]; then
+    run_step "nada entregue leva simbolo" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ship_stripped_test.sh"
+else
+    record "nada entregue leva simbolo (teste ausente)" FAIL 0 1
+    echo "test/symbols/ship_stripped_test.sh ausente: o .so nao-stripado vaza para o .bmod/APK/device"
+fi
+
+# Nenhuma rota (doc ou script) entrega .so de libs/ ou obj/ sem strip.
+# O teste acima prova o artefato; este prova as ROTAS: adb push / cp pra
+# /data com origem no diretório de build, direto ou via variável sem
+# symbols_ship no mesmo arquivo.
+if [ -f "$ROOT/test/symbols/ship_routes_check.sh" ]; then
+    run_step "rotas entregam só .so stripado" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/ship_routes_check.sh"
+else
+    record "rotas entregam só .so stripado (check ausente)" FAIL 0 1
+    echo "test/symbols/ship_routes_check.sh ausente: doc/script pode empurrar .so nao-stripado"
+fi
+
+# O build não pode depender de ONDE o NDK está. A raiz do NDK era descoberta por
+# um glob em "$HOME/Android/Sdk/ndk/*", que funciona nesta máquina e só nesta:
+# com o NDK em /opt, em ANDROID_NDK_HOME, num CI ou no home de outro usuário o
+# glob não acha, o prefix-map da raiz do NDK some, e o caminho de máquina volta
+# a vazar com o build-id mudando — exatamente o item 3.
+# A etapa compila a mesma árvore com o NDK no $HOME e com o NDK apontado para um
+# caminho FORA do $HOME, e exige sha256 idêntico do símbolo e do .so entregue.
+if [ -f "$ROOT/test/symbols/ndk_path_test.sh" ]; then
+    run_step "build independe do caminho do NDK" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ndk_path_test.sh"
+else
+    record "build independe do caminho do NDK (teste ausente)" FAIL 0 1
+    echo "test/symbols/ndk_path_test.sh ausente: o build-id volta a depender de onde o NDK esta"
+fi
+
+# tools/symbolize.sh: o crash do usuário tem que virar função:linha em 1
+# comando. O teste cruza um tombstone sintético, o tombstone REAL do device e
+# o cruzamento histórico do offset 0x1bb34 com o build que o gerou.
+if [ -f "$ROOT/test/symbols/symbolize_test.sh" ] && [ -x "$ROOT/tools/symbolize.sh" ]; then
+    run_step "symbolize.sh (tombstone -> funcao:linha)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/symbolize_test.sh"
+else
+    record "symbolize.sh (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_test.sh ausente: crash de usuario nao vira funcao:linha"
+fi
+
 # Execução real do thunk (qemu-aarch64): run_host.sh do thunk_exec.
 # qemu ausente = SKIP com aviso, nunca PASS.
 if [ -f "$ROOT/test/device/thunk_exec/run_host.sh" ]; then
@@ -523,6 +689,18 @@ if [ -f "$ROOT/test/symbols/stream_guard_test.cpp" ]; then
 else
     record "streaming do companion nao espera (teste ausente)" FAIL 0 1
     echo "test/symbols/stream_guard_test.cpp ausente: o caminho quente pode voltar a esperar"
+
+# O TOMBSTONE e entrada de outra pessoa: um crash report que o usuario manda
+# nunca pode virar comando na maquina de quem symboliza (revisao do OpenCode em
+# 668cc9f: o awk montava uma command line com o token .so e rodava com
+# `cmd | getline`).
+if [ -f "$ROOT/test/symbols/symbolize_injection_test.sh" ]; then
+    run_step "symbolize: tombstone nunca vira comando" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/symbolize_injection_test.sh"
+else
+    record "symbolize: tombstone nunca vira comando (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_injection_test.sh ausente: o tombstone pode executar comando"
+fi
 # Guarda de arquitetura dos hooks: em ARM32, todo mod que usa DobbyHook tem que
 # recusar COM LOG antes de alcancar o hook, porque o hook so foi validado em
 # aparelho AArch64 (revisao de 5edfb41: sa2ammo e sa2content chamavam
@@ -587,6 +765,20 @@ if [ -f "$ROOT/test/symbols/req_channel_test.cpp" ]; then
 else
     record "canal de pedidos e2e (teste ausente)" FAIL 0 1
     echo "test/symbols/req_channel_test.cpp ausente: o fio dos pedidos nao e testado"
+fi
+
+# O cliente do REPL do Termux (achado A4 do wiring-audit): 11 dos 12 verbos do
+# companion tm como UNICO sender esse cliente, e o console apontava para um
+# arquivo que NINGUEM instalava. O teste sobe um abstract socket (como o
+# companion) e fala com ele pelo cliente REAL, verbo por verbo — incluindo o
+# multi-linha de list_mods e o keep-alive de stream, que sao os dois jeitos
+# classicos de o cliente quebrar.
+if [ -f "$ROOT/test/termux_client_test.py" ]; then
+    run_step "cliente do REPL do Termux (12 verbos)" "$TIMEOUT_TEST" \
+        python3 "$ROOT/test/termux_client_test.py"
+else
+    record "cliente do REPL do Termux (teste ausente)" FAIL 0 1
+    echo "test/termux_client_test.py ausente: o lado que envia o protocolo nao e testado"
 fi
 
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
