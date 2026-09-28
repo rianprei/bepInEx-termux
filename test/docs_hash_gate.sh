@@ -5,11 +5,31 @@
 # docs/CHANGELOG*.md (se existir algum). Em cada arquivo coberto, extrai
 # todo hash de 7 a 40 hexadecimais (com ou sem crase, com limite de palavra)
 # das linhas que se declaram mescladas — 'merged', 'mesclado' ou caixa [x]
-# — e FALHA se o hash não existir (git cat-file) ou não for ancestral de
-# HEAD (git merge-base --is-ancestor). Linha que se declara mesclada E diz
-# 'fora da base' é CONTRADIÇÃO e falha; linha sem marca de merge continua
-# fora do check. Se nenhum arquivo coberto existir, FALHA em vez de passar
-# em silêncio.
+# (caixa alta também) — e FALHA se o hash não existir (git cat-file) ou não
+# for ancestral de HEAD (git merge-base --is-ancestor). Linha que se declara
+# mesclada E diz 'fora da base' é CONTRADIÇÃO e falha; linha sem marca de
+# merge continua fora do check. Se nenhum arquivo coberto existir, FALHA em
+# vez de passar em silêncio.
+#
+# O QUE "SE DECLARA MESCLADA" SIGNIFICA — e o que NÃO significa. A marca é
+# palavra, não substring: 'merged'/'mesclado' com limite de palavra, ou a
+# linha começando por '- [x]' em qualquer caixa. NEGAÇÃO conta como o
+# contrário: 'unmerged', 'not merged', 'não merged', 'não mesclado' e as
+# variantes sem acento declaram que NÃO está mesclado, e a linha é pulada.
+# Sem isso, "não merged: <hash de branch>" — que é justamente a linha que
+# documenta trabalho pendente — caía no check e falhava, punindo a pessoa
+# certa pelo motivo errado.
+#
+# O LIMITE CONHECIDO, e ele é deliberado: só estas três marcas contam.
+# 'integrado', 'done' e 'landed' NÃO são reconhecidos, e uma linha que usa
+# só essas palavras fica fora do check. Não é suporte faltando por acidente:
+# é o vocabulário que este gate promete conferir. Ampliar a lista é decisão
+# de quem mantém o gate, não um efeito colateral de arrumar outra coisa —
+# porque o custo de errar aqui é assimétrico. Falso positivo (linha de
+# trabalho pendente derrubando o gate) faz o autor desligar a regra; falso
+# negativo (linha de merge real escaping) é o que a revisão humana pega. Se
+# um dia o vocabulário crescer, que seja escrito aqui e coberto por fixture
+# em test/docs_hash_gate_fixture.sh.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -30,6 +50,32 @@ if not covered:
     raise SystemExit(1)
 
 ref_re = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+# Marca de merge por PALAVRA, nao por substring: e o que separa "unmerged" e
+# "not merged" — que nao estao mergeados — de uma declaracao de merge real.
+MERGED_WORD = re.compile(r"\b(?:merged|mesclado)\b", re.IGNORECASE)
+# Negacao imediatamente antes da palavra. Cobre 'unmerged' (sem espaco), 'not
+# merged', 'nao merged', 'nao mesclado' e as formas com acento.
+NEGATED_MERGE = re.compile(
+    r"\b(?:un|not|nao|n[ãa]o)\s*[ -]?\s*(?:merged|mesclado)\b", re.IGNORECASE
+)
+
+
+def declares_merged(line: str) -> bool:
+    """A linha afirma que algo foi mergeado?
+
+    Verdadeiro se houver 'merged'/'mesclado' como palavra que NAO esteja sob
+    uma negacao, ou se a linha for uma caixa '- [x]' em qualquer caixa.
+    """
+    negations = [m.span() for m in NEGATED_MERGE.finditer(line)]
+    for match in MERGED_WORD.finditer(line):
+        if any(start <= match.start() and match.end() <= end
+               for start, end in negations):
+            continue
+        return True
+    return line.lstrip().lower().startswith("- [x]")
+
+
 errors = []
 checked = 0
 for doc in covered:
@@ -38,8 +84,7 @@ for doc in covered:
     except ValueError:
         rel = doc.name
     for line_no, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
-        is_merged = bool(re.search(r"merged|mesclado", line, re.IGNORECASE)) \
-            or line.lstrip().startswith("- [x]")
+        is_merged = declares_merged(line)
         mentions_outside = bool(re.search(r"fora da base", line, re.IGNORECASE))
         if mentions_outside:
             if is_merged:

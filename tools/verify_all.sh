@@ -281,10 +281,23 @@ fi
 if [ -f "$ROOT/test/docs_hash_gate.sh" ]; then
     run_step "docs: hash mesclado existe na base" "$TIMEOUT_TEST" \
         bash "$ROOT/test/docs_hash_gate.sh"
-else
-    record "docs: hash mesclado existe na base (check ausente)" FAIL 0 1
-    echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
-fi
+  else
+      record "docs: hash mesclado existe na base (check ausente)" FAIL 0 1
+      echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
+  fi
+
+  # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
+  # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
+  # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
+  # linha ali seria conferida. A fixture e o que prova.
+  if [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/docs_hash_gate_fixture.sh"
+  else
+      record "docs: fixture do hash-gate (ausente)" FAIL 0 1
+      echo "test/docs_hash_gate_fixture.sh ausente: a cobertura do CHANGELOG fica so estrutural" >&2
+  fi
+
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
