@@ -27,8 +27,11 @@ cp "$GATE_SRC" "$TREE/test/docs_hash_gate.sh"
 (
     cd "$TREE" || exit 1
     git init -q .
-    git config user.email f@t; git config user.name f
-    git config commit.gpgsign false
+    # NUNCA 'git config' puro aqui: sem -C, um refactor que remova o cd
+    # acima escreve no config LOCAL do repo real (foi assim que user.name=t
+    # parou no ~/repos/bepInEx-termux). -C prende tudo ao repo temporário.
+    git -C "$TREE" config user.email f@t; git -C "$TREE" config user.name f
+    git -C "$TREE" config commit.gpgsign false
     echo base > base.txt
     git add -A && git commit -qm base
     git rev-parse HEAD > "$TMP/h0"
