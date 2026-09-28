@@ -141,6 +141,26 @@ static void test_long_maps_line() {
     check("linha > 4096 com a lib no fim detecta Mono",
             bc_mono_runtime_from_maps_file(tmpl) == BC_MANAGED_RUNTIME_MONO);
     unlink(tmpl);
+
+    // Teto de 1MB: linha maior que o teto, mesmo com a lib no fim, é
+    // truncada e NÃO casa — sem alocar acima do teto, sem travar.
+    char tmpl2[] = "/tmp/mono-maps-big-XXXXXX";
+    int fd2 = mkstemp(tmpl2);
+    check("maps gigante criado", fd2 >= 0);
+    if (fd2 >= 0) {
+        FILE *fp2 = fdopen(fd2, "w");
+        check("maps gigante aberto", fp2 != nullptr);
+        if (fp2) {
+            for (size_t i = 0; i < 1024 * 1024 + 128; i++) fputc('Y', fp2);
+            fputs(" /system/lib64/libmonobdwgc-2.0.so\n", fp2);
+            fclose(fp2);
+            check("linha > 1MB com a lib no fim NÃO casa (teto, sem OOM)",
+                    bc_mono_runtime_from_maps_file(tmpl2) == BC_MANAGED_RUNTIME_NONE);
+        } else {
+            close(fd2);
+        }
+        unlink(tmpl2);
+    }
 }
 
 int main(int argc, char **argv) {

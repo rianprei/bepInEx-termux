@@ -44,6 +44,12 @@ int main() {
     check("read_soname recusa symlink",
             r.result == BC_ELF_FILE_ERROR && r.error_number == ELOOP);
 
+    // read_soname32 (caminho ARM32) tem open próprio: sem O_NOFOLLOW só
+    // nele, a suíte ficava verde no host 64-bit e o furo passava.
+    bc_elf_file_probe s32 = bc_elf_file_read_soname32(link.c_str(), soname, sizeof(soname));
+    check("read_soname32 recusa symlink",
+            s32.result == BC_ELF_FILE_ERROR && s32.error_number == ELOOP);
+
     unlink(link.c_str());
     rmdir(dir);
     printf("=== elf_symlink_test: %d falha(s) ===\n", failures);
