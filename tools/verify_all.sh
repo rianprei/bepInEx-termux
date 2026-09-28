@@ -275,6 +275,17 @@ if [ -f "$DOC_REF_COUNT" ]; then
     cat "$DOC_REF_COUNT"
 fi
 
+# Hash citado como mesclado tem que existir e ser ancestral de HEAD. Sem
+# isso, um hash de branch fora da base escrito como 'merged' passa no gate
+# e a verdade só aparece na revisão humana.
+if [ -f "$ROOT/test/docs_hash_gate.sh" ]; then
+    run_step "docs: hash mesclado existe na base" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/docs_hash_gate.sh"
+else
+    record "docs: hash mesclado existe na base (check ausente)" FAIL 0 1
+    echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
+fi
+
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
