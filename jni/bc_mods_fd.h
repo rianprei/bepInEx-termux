@@ -200,6 +200,13 @@ static inline ssize_t bc_fd_recv_fd(int sock, void *data, size_t cap, int *out_f
         *out_fd = got[0];
         return r;
     }
+    if (nfd == 0) {
+        // Dados SEM cmsg nenhum é a RESPOSTA DE ERRO legítima do protocolo
+        // ("<errno>\n" do SO / "E<errno>\n" da família texto): quem chamou
+        // parseia o payload. Devolver -1 aqui matava o caminho de recusa na
+        // mão (o jogo lia r<0 como "conpanion mudo" em vez de errno).
+        return r;
+    }
     for (int i = 0; i < nfd; i++) close(got[i]);   // nenhum vaza
     errno = EPROTO;
     return -1;

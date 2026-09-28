@@ -49,11 +49,11 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `03eac87` — uni/termux-client4 — contrato de saída do cliente
 - `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
 - `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
+- `c242d5f` — uni/mods-reloc — árvore de mods em /data/adb/bepinex (root-only), entrega de .so por descritor (SCM_RIGHTS + android_dlopen_ext), canal REQ com SO_PEERCRED por pacote e sessão limitada (gate de abertura: pacote servível + userId 0; teto global/por-uid), verbos BO/BL/BT para a árvore do Battle Cats, PATH pré-specialize pro loader decidir caminho, conf/allowlist por conteúdo, migração sem seguir symlink e sepolicy enxuta
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
 
-- mods-reloc — mods em diretório root-only com entrega por descritor
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio
 - audit3-hardening — endurecimento da terceira rodada de auditoria
 
