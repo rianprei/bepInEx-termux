@@ -79,6 +79,52 @@ if "$ROOT/tools/pack_bmod.sh" "$ID" > /dev/null 2>&1; then
 fi
 echo "pack_bmod sem ABI: recusado"
 
+# .so inválido tem que morrer na validação com mensagem amigável, nunca no
+# strip (que diria "invalid buffer" sem explicar o que está errado).
+check_rejeitado() {
+    local motivo=$1
+    local so_out
+    if so_out=$("$ROOT/tools/pack_bmod.sh" "$ID" arm64-v8a 2>&1); then
+        echo "pack_bmod aceitou $motivo" >&2
+        exit 1
+    fi
+    printf '%s\n' "$so_out" | grep -Fq "não é um ELF da ABI selecionada" || {
+        echo "sem mensagem amigável para $motivo" >&2
+        printf '%s\n' "$so_out" >&2
+        exit 1
+    }
+    if printf '%s\n' "$so_out" | grep -Fq "invalid buffer"; then
+        echo "strip rodou antes da validação ($motivo)" >&2
+        exit 1
+    fi
+    echo "$motivo: recusado com mensagem amigável"
+}
+
+# Caso 20 bytes não-ELF.
+head -c 20 /dev/zero > "$MOD_DIR/libs/arm64-v8a/lib$ID.so"
+check_rejeitado "20 bytes não-ELF"
+
+# Caso ELF de ABI errada (ELF32/ARM onde se pediu arm64-v8a).
+python3 - "$MOD_DIR" <<'PY'
+from pathlib import Path
+import struct, sys
+
+root = Path(sys.argv[1])
+e32 = bytearray(164)
+e32[:7] = b"\x7fELF" + bytes((1, 1, 1))
+struct.pack_into("<H", e32, 16, 3)
+struct.pack_into("<H", e32, 18, 40)
+struct.pack_into("<I", e32, 20, 1)
+struct.pack_into("<I", e32, 28, 52)
+struct.pack_into("<H", e32, 40, 52)
+struct.pack_into("<H", e32, 42, 32)
+struct.pack_into("<H", e32, 44, 1)
+struct.pack_into("<H", e32, 46, 40)
+struct.pack_into("<I", e32, 52, 1)
+(root / "libs" / "arm64-v8a" / f"lib{root.name}.so").write_bytes(e32)
+PY
+check_rejeitado "ELF de ABI errada"
+
 abi=$(printf 'primaryCpuAbi=armeabi-v7a secondaryCpuAbi=arm64-v8a\n' \
     | "$ROOT/tools/parse_primary_abi.sh")
 [ "$abi" = armeabi-v7a ]

@@ -23,41 +23,46 @@ dir="mods/$id"
 # símbolo aí seria Gift-Wrapping the ELF. symbols_ship também confere que o
 # build-id sobreviveu ao strip — é o que liga um crash do device aos símbolos
 # guardados em symbols/.
-# REGRA DE ORDEM: a validação ELF/ABI vem ANTES do strip. Com o stub de 20
-# bytes do test/abi_packaging_test.sh, o strip falharia primeiro ("invalid
-# buffer: the size (20) is smaller than an ELF header (64)") em vez da
-# mensagem amigável de validação.
+# REGRA DE ORDEM: a validação ELF/ABI vem ANTES do strip. Entrada inválida
+# (não-ELF, ELF de outra ABI) morre aqui com mensagem amigável; se chegasse
+# ao strip, o llvm falharia primeiro ("invalid buffer...") sem dizer o que
+# está errado no .so.
 # shellcheck source=tools/symbols.sh
 # shellcheck disable=SC1091
 . "$ROOT/tools/symbols.sh"
 stage="$dir/.bmod-stage"
 rm -rf "$stage"; mkdir -p "$stage"
 
-# Validacao ELF/ABI ANTES do strip: o stub de 20 bytes do
-# test/abi_packaging_test.sh precisa ver a mensagem amigavel, nao o erro do
-# symbols_ship ("invalid buffer: the size (20) is smaller than an ELF header").
+# Validacao ELF/ABI ANTES do strip: o test/abi_packaging_test.sh exige a
+# mensagem amigavel para .so inválido e PROIBE o erro do llvm-strip
+# ("invalid buffer"). Os stubs válidos do teste são ELFs mínimos de verdade,
+# que o strip aceita e encolhe.
 python3 - "$dir/manifest.json" "$id" "$dir" "$abi" <<'PY'
 import json, os, sys
 
 man_path, mod_id, mod_dir, abi = sys.argv[1:5]
 
-def die(msg):
+def die_manifest(msg):
     print(f"manifest inválido: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+def die(msg):
+    print(f"mod.so inválido: {msg}", file=sys.stderr)
     sys.exit(1)
 
 try:
     man = json.load(open(man_path, encoding="utf-8"))
 except (OSError, json.JSONDecodeError) as e:
-    die(str(e))
+    die_manifest(str(e))
 
-if man.get("format") != 1: die("format deve ser 1")
-if man.get("id") != mod_id: die(f"id '{man.get('id')}' != diretório '{mod_id}'")
-if not man.get("name"): die("name ausente")
-if not man.get("version"): die("version ausente")
+if man.get("format") != 1: die_manifest("format deve ser 1")
+if man.get("id") != mod_id: die_manifest(f"id '{man.get('id')}' != diretório '{mod_id}'")
+if not man.get("name"): die_manifest("name ausente")
+if not man.get("version"): die_manifest("version ausente")
 if man.get("engine") not in ("unity-il2cpp", "unity-mono", "cocos2dx", "native"):
-    die("engine inválida (unity-il2cpp|unity-mono|cocos2dx|native)")
-if man.get("type") not in ("native", "patch"): die("type inválido (native|patch)")
-if not man.get("game"): die("game ausente")
+    die_manifest("engine inválida (unity-il2cpp|unity-mono|cocos2dx|native)")
+if man.get("type") not in ("native", "patch"): die_manifest("type inválido (native|patch)")
+if not man.get("game"): die_manifest("game ausente")
 
 if man["type"] == "native":
     if abi not in ("arm64-v8a", "armeabi-v7a"):
