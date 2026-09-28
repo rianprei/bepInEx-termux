@@ -53,7 +53,7 @@ ok "(4) licenca MIT guardada em tools/frida_il2cpp_bridge.LICENSE"
 version=$(sed -n 's/^VERSION=//p' "$LOCKFILE" | head -n1)
 sha=$(sed -n 's/^SHA256=//p' "$LOCKFILE" | head -n1)
 [ -n "$version" ] || die "lockfile sem VERSION"
-printf '%s' "$sha" | grep -qE '^[0-9a-f]{64}$' || die "lockfile sem SHA256 de 64 hex: ${sha:-vazio}"
+grep -qE '^[0-9a-f]{64}$' <<<"$sha" || die "lockfile sem SHA256 de 64 hex: ${sha:-vazio}"
 ok "(5) lockfile pinado: ponte $version, sha256 conferido"
 
 # 6. Prova executada: node roda o bundle contra um stub mínimo de Frida e o
@@ -79,7 +79,7 @@ JS
 # (o bundle é um script solto, não um módulo).
 out="$( { cat "$STUB"; cat "$BUNDLE"; echo 'if (!globalThis.__calls.length) { throw new Error("perform nao chamou console.log: o bundle nao rodou"); }'; } | node 2>&1 )" \
     || die "node nao executou o bundle: $out"
-printf '%s' "$out" | grep -q 'perform() respondeu' \
+grep -q 'perform() respondeu' <<<"$out" \
     || die "o bundle rodou mas Il2Cpp.perform nao respondeu como o script espera: $out"
 ok "(6) node executou o bundle: $(printf '%s' "$out" | tail -n1)"
 

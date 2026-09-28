@@ -85,7 +85,11 @@ symbols_add() {
         return 1
     fi
     sections="$("$(symbols_readelf)" -S "$so" 2>/dev/null)"
-    if ! printf '%s' "$sections" | grep -q '\.symtab'; then
+    # Sem `| grep -q`: o here-string escreve o conteudo antes de o grep rodar,
+    # entao o grep e o unico processo do pipeline e nao ha produtor para levar
+    # SIGPIPE. Com pipefail, o 141 do produtor viraria falha mesmo com o
+    # .symtab presente. Ver tools/pipefail_grep_check.sh.
+    if ! grep -q '\.symtab' <<<"$sections"; then
         echo "symbols: $name saiu sem .symtab — o build voltou a stripar e o" >&2
         echo "symbols: build-id não vai servir para nada. See jni/repro.mk." >&2
         return 1
