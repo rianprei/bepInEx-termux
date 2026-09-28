@@ -753,11 +753,12 @@ public final class ModContentDetector {
     // Nome do processador para o qual o arquivo foi feito. Texto que vai
     // aparecer para o usuario: sem codigo de maquina, so o nome que ele
     // reconhece da pagina de download do mod.
-    private static String archName(int machine) {
+    static String archName(int machine) {
         switch (machine) {
-            case 3: return "computador de 32 bits";
+            case 3: return "x86 de 32 bits";
             case 40: return "celular ARM de 32 bits";
             case 62: return "computador de 64 bits (x86-64)";
+            case 8: return "MIPS";
             case 183: return "ARM de 64 bits";
             case 243: return "RISC-V";
             case 258: return "LoongArch";
