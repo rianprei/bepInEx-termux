@@ -1,0 +1,23 @@
+# tools/frida_il2cpp_bridge.lock — a ponte frida-il2cpp-bridge pinada.
+#
+# O tarball é conferido por SHA-256, calculado por nós sobre o download. O
+# campo "shasum" do registry do npm é SHA-1 e NÃO serve: 0.14.0 tem
+# shasum=b3fbdaf2c081255e72caaaa4b7b9766916a6ea97 (sha1) e
+# sha256=7329b73839edc1c7dadb407a4267d036fced4eff78ebf5a6840193111203731b.
+#
+# Fonte da versão e da licença: https://registry.npmjs.org/frida-il2cpp-bridge
+# (dist-tags.latest=0.14.0, license=MIT) e o próprio tarball.
+# Licença: MIT, Copyright (c) 2021-2026 vfsfitvnm, do próprio pacote.
+#
+# A ponte NÃO vem com o runtime do Frida desde a 17.0.0
+# (https://frida.re/docs/bridges/), então o script da comunidade precisa vir
+# empacotado — é o que o tools/bundle_frida_script.sh faz.
+VERSION=0.14.0
+URL=https://registry.npmjs.org/frida-il2cpp-bridge/-/frida-il2cpp-bridge-0.14.0.tgz
+SHA256=7329b73839edc1c7dadb407a4267d036fced4eff78ebf5a6840193111203731b
+LICENSE=MIT
+# Caminho dentro do tarball do bundle já pronto. Ele se autoinstala em
+# globalThis.Il2Cpp (o proprio arquivo termina em `globalThis.Il2Cpp = Il2Cpp;`),
+# que e o que faz o bundle final nao precisar de shim de CommonJS.
+ENTRY=package/dist/index.js
+LICENSE_ENTRY=package/LICENSE
