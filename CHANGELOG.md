@@ -52,10 +52,10 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
+- `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio
-- audit3-hardening — endurecimento da terceira rodada de auditoria
 
 ### Detalhe por área (prosa da seção anterior)
 
