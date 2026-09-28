@@ -53,6 +53,7 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
 - `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
+- `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio

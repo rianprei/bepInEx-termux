@@ -131,8 +131,12 @@ def main() -> int:
     # Nenhum arquivo de teste pode ficar de fora do manifesto. Este e o buraco
     # original: teste novo, linted, nunca executado, e ninguem percebe.
     for path in sorted(disk - set(seen)):
+        # `path` já é relativo à raiz ("test/x.sh"). Prefixar "test/" de novo
+        # produzia "test/test/x.sh": um caminho que não existe, e a mensagem
+        # punha o autor a procurar o arquivo errado. O nome tem que ser o
+        # caminho REAL, porque é nele que o autor vai olhar.
         errors.append(
-            f"test/{path}: arquivo de teste no disco sem linha em "
+            f"{path}: arquivo de teste no disco sem linha em "
             f"tools/gate_tests.list — ou ele roda (run/wired), ou vira excecao "
             f"escrita (skip com motivo). Sem isso o gate nao sabe o que ele prova."
         )
@@ -157,6 +161,34 @@ def main() -> int:
             if other != path and Path(path).name in body and other in seen_wired:
                 return True
         return False
+
+    # O manifesto tem que ser lido ANTES da primeira etapa do gate. Não é
+    # estética: a primeira linha do manifesto é o check da ligação, e o texto
+    # (deste arquivo, do manifesto e do bloco no verify_all.sh) promete que ele
+    # "roda antes de tudo". Prometer em comentário e fazer depois é a variante
+    # mais barata de mentira — e foi o que a revisão pegou: o bloco vivia na
+    # linha ~455, depois de dezenas de etapas. Aqui a promessa vira verificação.
+    if VERIFY_ALL.is_file():
+        gate_lines = VERIFY_ALL.read_text(encoding="utf-8").splitlines()
+        block_at = next(
+            (i for i, l in enumerate(gate_lines)
+             if "O manifesto de testes do gate" in l), -1)
+        first_step_at = next(
+            (i for i, l in enumerate(gate_lines)
+             if l.startswith("run_step \"") or l.startswith("run_ndk \"")), -1)
+        if block_at < 0:
+            errors.append(
+                "tools/verify_all.sh: o bloco do manifesto (\"O manifesto de "
+                "testes do gate\") nao existe; sem ele nenhum teste tem destino"
+            )
+        elif first_step_at >= 0 and block_at > first_step_at:
+            errors.append(
+                f"tools/verify_all.sh:{block_at + 1}: o manifesto e' lido "
+                f"DEPOIS da primeira etapa (linha {first_step_at + 1}); a "
+                f"primeira linha do manifesto e' o check da ligacao, entao o "
+                f"texto que promete 'antes de tudo' so e verdade com o bloco "
+                f"antes de qualquer run_step/run_ndk"
+            )
 
     wired_seen: set[str] = set()
     pending = [p for p, m, _r, _l in entries if m == "wired"]

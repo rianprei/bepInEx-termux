@@ -32,6 +32,7 @@
 # ── o check da ligação primeiro: ele julga o manifesto antes que o manifesto
 #    sirva a alguém ──
 test/gate_wiring_check.py	run
+test/gate_wiring_check_test.sh	run
 #
 # ── testes executados por aqui (antes por glob em test/*_test.sh) ──
 test/abi_packaging_test.sh	run
@@ -49,6 +50,16 @@ test/device/quoting-check.sh	run
 test/device/restore-sim.sh	run
 #
 # ── já executados por etapa nomeada do verify_all.sh ──
+#
+# ──Declarados com prova pela base, sem duplicar execução ──
+# Os quatro abaixo NÃO são executados por esta lista: cada um já roda, e o check
+# confere a prova (o nome precisa aparecer no verify_all.sh ou em outro teste
+# declarado). Declarar como `run` aqui rodaria o MESMO teste duas vezes por
+# execução do gate, que é o que esta lista existe para evitar.
+test/case_refs_test.py	wired
+test/release_notes_check.sh	wired
+test/fuzz/check_no_stale_counts.py	wired
+test/fuzz/stale_counts_vocab_test.py	wired
 test/arm32_hook_guard_check.py	wired
 test/device/thunk_exec/fix_tls_palign.py	wired
 test/device/thunk_exec/run_host.sh	wired
