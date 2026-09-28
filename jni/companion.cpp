@@ -36,6 +36,7 @@
 #include "bc_path_decide.h"  // bc_path_is_bc: o gate dos verbos BC (chamador É o jogo BC)
 #include "bc_push_io.h"  // transporte do push_mod: exatamente SIZE + EOF (testado no host)
 #include "bc_launch_check.h"  // root só executa arquivo regular, do root, sem escrita de app
+#include "bc_req_session.h"  // canal REQ como recurso limitado: gate na abertura + teto (P1)
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
 // Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
@@ -1458,21 +1459,76 @@ static void handle_mod_txt(int fd, const char *pkg, const char *name) {
 // resposta (linha de errno — a conexão segue útil), -1=fim (read <= 0). O
 // -1 é o que fecha: a versão WIP ignorava o retorno e o loop virava SPIN
 // de CPU 100% no EOF (read de socket fechado retorna 0 na hora, para sempre).
-static void *req_channel_thread(void *arg) {
-    int fd = (int)(intptr_t)arg;
-    static const struct bc_req_handlers root = {
-        handle_mod_fd,   // "SO"  -> FD do .so (SCM_RIGHTS)
-        handle_mod_txt,  // "TX"  -> conteúdo (conf/allowlist)
-        handle_mod_list, // "LS"  -> lista de .so da pasta do pacote
-        handle_bc_so,    // "BO"  -> FD do .so da árvore BC (gate: é o jogo BC)
-        handle_bc_list,  // "BL"  -> lista da árvore BC
-        handle_bc_conf,  // "BT"  -> conf da raiz, nome da LISTA FIXA
-    };
-    for (;;) {
-        if (bc_req_dispatch_one(fd, &root) < 0) break;
+static const struct bc_req_handlers req_root_handlers = {
+    handle_mod_fd,   // "SO"  -> FD do .so (SCM_RIGHTS)
+    handle_mod_txt,  // "TX"  -> conteúdo (conf/allowlist)
+    handle_mod_list, // "LS"  -> lista de .so da pasta do pacote
+    handle_bc_so,    // "BO"  -> FD do .so da árvore BC (gate: é o jogo BC)
+    handle_bc_list,  // "BL"  -> lista da árvore BC
+    handle_bc_conf,  // "BT"  -> conf da raiz, nome da LISTA FIXA
+};
+
+// ---- a ponta injetável da sessão REQ (bc_req_session.h) ---------------------
+//
+// P1 da pré-revisão (freebuff, ALTA — DoS por qualquer app): o ramo REQ
+// criava uma pthread por conexão sem teto e sem gate de abertura. A camada
+// pura (bc_req_session.h) decide TUDO — gate (peer servável + userId==0),
+// teto (global 16 / por-uid 4) e contagem em cada saída — e é a MESMA que
+// o teste de host exercita. Aqui só entram as pontas que precisam de root:
+// packages.list, stat da árvore root-only e o pthread de verdade.
+
+static int session_peer_uid(int fd, uid_t *out) {
+    struct ucred cred;
+    socklen_t len = sizeof(cred);
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 || len != sizeof(cred)) {
+        return -1;
     }
-    close(fd);
-    return nullptr;
+    *out = cred.uid;
+    return 0;
+}
+
+static int session_resolve_pkgs(int fd, uid_t uid,
+                                char pkgs[][BC_REQ_SESSION_PKG_CAP], int max) {
+    (void)uid;  // bc_peer_is_caller lê o uid do SO_PEERCRED do próprio fd
+    return bc_peer_is_caller(fd, (char (*)[BC_PEERCRED_PKG_CAP])pkgs, max);
+}
+
+static bool session_pkg_has_dir(const char *pkg) {
+    char path[512];
+    int n = snprintf(path, sizeof(path), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return false;
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool session_pkg_in_allowlist(const char *pkg) {
+    // Mesma leitura do handle_path_request: o root lê a allowlist da raiz
+    // root-only; o jogo nunca a abre por caminho.
+    FILE *f = fopen(BC_GENERIC_ALLOWLIST_FILE, "r");
+    if (f == nullptr) return false;
+    char buf[16384];
+    size_t got = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[got < sizeof(buf) - 1 ? got : sizeof(buf) - 1] = '\0';
+    return bc_generic_allowlist_contains_buf(buf, pkg);
+}
+
+static int session_spawn(void *(*body)(void *), void *arg) {
+    pthread_t t;
+    if (pthread_create(&t, nullptr, body, arg) != 0) return -1;
+    pthread_detach(t);
+    return 0;
+}
+
+static struct bc_req_slots g_req_slots;   // teto global — um por daemon
+
+static void session_init_once(void) {
+    static bool done = false;
+    if (!done) {
+        bc_req_slots_init(&g_req_slots);
+        done = true;
+    }
 }
 
 static void *termux_accept_loop(void *) {
@@ -1548,24 +1604,27 @@ static void *termux_accept_loop(void *) {
         if (fn <= 0) { close(client); continue; }
 
         if (bc_req_role_from_line(first, fn) == BC_ROLE_REQ) {
-            // Canal de pedidos do JOGO (mod_fd/mod_txt/mod_list). Qualquer app
-            // pode abrir o CANAL; os VERBOS de dentro são gateados por pacote
-            // (SO_PEERCRED real do app -> packages.list -> só os mods do
-            // próprio chamador — bc_peer_ok_for_pkg dentro de cada handler).
-            // Vida longa: sem timeout de recv/send (igual ao "stream"), senão
-            // o canal morreria na primeira idle > 3s e o jogo ficaria sem
-            // carregar mods até relançar.
+            // Canal de pedidos do JOGO — o ramo INTEIRO agora é a camada pura
+            // de sessão (bc_req_session.h): gate na abertura (peer servável +
+            // userId==0), teto global/por-uid ANTES do spawn e contagem em
+            // cada saída. Os VERBOS de dentro seguem gateados por pacote
+            // (bc_peer_ok_for_pkg) — defesa dupla: abrir o canal não garante
+            // nada além do canal. Sem timeout de idle: o canal legítimo pode
+            // ficar ocioso à vontade DENTRO do teto (era o trade-off do WIP,
+            // e é isso que o teto protege em vez do timeout cego).
+            static const struct bc_req_server_ops session_ops = {
+                session_peer_uid,
+                session_resolve_pkgs,
+                session_pkg_has_dir,
+                session_pkg_in_allowlist,
+                &req_root_handlers,
+                session_spawn,
+            };
+            session_init_once();
             struct timeval notimeo = { .tv_sec = 0, .tv_usec = 0 };
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &notimeo, sizeof(notimeo));
             setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &notimeo, sizeof(notimeo));
-            pthread_t t;
-            if (pthread_create(&t, nullptr, req_channel_thread,
-                               (void *)(intptr_t)client) == 0) {
-                pthread_detach(t);   // a thread fecha o fd no fim
-            } else {
-                LOGE("pthread_create(req_channel_thread) falhou: %s", strerror(errno));
-                close(client);
-            }
+            bc_req_serve_connection(client, first, fn, &session_ops, &g_req_slots);
             continue;
         }
 

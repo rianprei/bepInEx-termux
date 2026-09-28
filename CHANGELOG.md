@@ -4,7 +4,61 @@ Formato: `Added / Changed / Fixed / Known issues` por release.
 Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 `jni/main.cpp` e com o `módulo carregado — v0.3.0` visto ao vivo).
 
-## [Não lançado]
+## v0.5.0 — 2026-09-28
+
+Uma linha por merge que entrou na base desde o último sync do CHANGELOG
+(`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
+cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
+autor cita o PRIMEIRO commit da própria branch, que é estável e já existe
+antes de ele escrever a linha. O `release-notes-check` do gate confere que
+todo merge first-parent desde o sync tem linha, que nenhum item do
+Pendente já entrou na base e que toda linha de merge tem descrição.
+
+### Merges desta release
+
+- `02c501a` — uni/modtypes — detector de tipo de mod testado com corpus real e textos honestos
+- `672eed2` — uni/install-path — instalar mod funciona mesmo quando o seletor do sistema falha
+- `74ba919` — uni/device-run — relatório da rodada no aparelho (POCO C75, 2026-09-26)
+- `27d22d0` — pin frida-gadget 17.18.0 (17.19.0 quebra no construtor)
+- `49f2088` — rejeita traduções Harmony inseguras
+- `4c1b0c3` — uni/bpatch — extensão do mod declarativo .patch → .bpatch
+- `860adcc` — uni/guia — passo a passo do Mod Maker, com o que só a bpatch sabia
+- `5753585` — uni/docs-audit — estado real do Manager e do u_frida, com .bpatch
+- `a2665cc` — uni/review-fixes — escrita de texto com TemporaryTextFile + imports do gate
+- `30eb704` — uni/root-hardening — validação no Mod Maker + tabela de injeção com canário
+- `b1e8e2f` — uni/changelog-sync — itens [Não lançado] da onda 1 (modtypes, install-path, device-run, guia, tradutor .dll) + números corrigidos
+- `4cdfcc8` — uni/proc-routing — pacote canônico por processo (:sufixo), filtro child/app_zygote/isolado, nome longo recusado sem truncar
+- `37a4120` — uni/docs-honest — README matriz de suporte honesta, limite medido do tradutor .dll, Frida 17.18.0, run_host detecta hang em buga
+- `2a654c6` — uni/dll2patch2 — artefato .bpatch, detector por conteúdo, round-trip real tradutor JVM → parser C++ (Caso 80)
+- `6381ead` — uni/device-round2 — roteiro docs/DEVICE-ROUND-2.md + automação (field SA2, picker, Frida 17.18.0, :sufixo, soak 10 min) com testes host
+- `8eba793` — uni/il2cpp-wait — espera IL2CPP unificada (240s/200ms), matcher por sufixo /libil2cpp.so, log da rota __loader_dlopen vs fallback
+- `94dd077` — uni/caso-ids — IDs de caso como literais estáveis
+- `5581e2e` — uni/dll2patch2 — round-trip real tradutor JVM → parser C++ (Caso 80)
+- `f8a12fc` — uni/arm32 — ABI dupla no loader e mods, Dobby arm32 pinado+patchado com smoke qemu, hooks AArch64-only recusam 32-bit com log (gate estático), Manager escolhe o .so pela ABI do jogo
+- `139aceb` — uni/dll-coverage — cobertura do tradutor Harmony sobre 30 mods reais
+- `12d6087` — uni/ux-sort — ordenacao selecionavel e persistida da lista de jogos
+- `674e211` — uni/roadmap-status — tabela de status com hash por linha, refletindo a base 139aceb
+- `f2de406` — uni/wiring-fixes-56 — scanner ELF único em produção+teste e helpers só-teste removidos do u_dump
+- `11b85fd` — uni/ux-sort-2 — o array do spinner passa a ser verificado contra o enum
+- `de10699` — uni/mono-min — deteccao Mono/IL2CPP e resolucao atomica da API, sem chamar Mono
+- `87dea1c` — uni/ux-reference — UX dos apps de referência com âncora de código por citação
+- `75e208a` — uni/symbols — build-id reproduzível, símbolo guardado e emissor único de push_mod
+- `080b7f0` — uni/docs-hash-gate — hash declarado mesclado tem que existir e estar na base
+- `7028630` — uni/ux-errors — ABI x86/sem-nativo acionável, magic ELF testado, arm32 vence x86
+- `12f00b3` — uni/il2cpp-bridge — recusa tarballs com links
+- `03eac87` — uni/termux-client4 — contrato de saída do cliente
+- `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
+- `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
+- `c242d5f` — uni/mods-reloc — árvore de mods em /data/adb/bepinex (root-only), entrega de .so por descritor (SCM_RIGHTS + android_dlopen_ext), canal REQ com SO_PEERCRED por pacote e sessão limitada (gate de abertura: pacote servível + userId 0; teto global/por-uid), verbos BO/BL/BT para a árvore do Battle Cats, PATH pré-specialize pro loader decidir caminho, conf/allowlist por conteúdo, migração sem seguir symlink e sepolicy enxuta
+
+- `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
+### Pendente (não mergeado, sem hash de merge)
+
+- deploy-requer — python do Termux como requisito checado antes de qualquer envio
+- audit3-hardening — endurecimento da terceira rodada de auditoria
+
+### Detalhe por área (prosa da seção anterior)
+
 
 ### Para o usuário
 - [HOST] O Manager agora lista e identifica mais engines de jogos, explica em português o que cada tipo de jogo permite fazer e evita tratar qualquer app com bibliotecas nativas como jogo. O app compila e a detecção tem testes JVM; instalação e uso no celular ainda não foram verificados. (`59fe913`, `5ed8019`)

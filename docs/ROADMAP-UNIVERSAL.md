@@ -225,8 +225,8 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 ### F1c — SELinux Enforcing (obrigatório pra gente normal)
 Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso que o zygote lê `/data/local/tmp` e o jogo faz `dlopen` de lá (o logcat mostra `avc: denied ... permissive=1`). Num celular comum (Enforcing) nada disso carrega.
 - [x] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app. (`b510b1e` + etapa `sepolicy grammar` do gate; device: v0.4.0 com `setenforce 1`, SA2 + BC 4/4, zero `avc` do nosso caminho.)
-- [x] `module/post-fs-data.sh`: cria `/data/adb/bepinex/mods` e aplica `chcon` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
-- [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (Caso 62.)
+- [x] `module/post-fs-data.sh`: cria `/data/adb/bepinex/mods` (árvore root-only, ver `docs/DEVICE-ROUND-2.md` passo 7) e aplica `chcon` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
+- [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (**sem cobertura no host**: `bc_generic_allowlist_contains` é `#ifdef __ANDROID__` — `access`+`fopen` do arquivo, que o host não tem como exercitar. O Caso 62 cobre só o parser puro do buffer, `bc_generic_allowlist_contains_buf`; a leitura do arquivo em si é verificada no device.)
 - **Verifica:** `setenforce 1` no device de teste → SA2 carrega os mods e o u_patch aplica; `dmesg`/logcat sem `avc: denied` do nosso caminho → `setenforce 0` de volta.
 
 ### F2 — SDK de mod + kit
@@ -270,7 +270,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)
-- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
+- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/adb/bepinex/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
 - [~] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar). (host OK: README e `module/*.sh` citam os três; device: pendente — só Magisk foi exercitado, e nem isso desde o formato novo.)
 - **Verifica:** zip instalado pelo app Magisk → reboot → Manager no launcher → SA2 com mod funciona.
 

@@ -11,7 +11,7 @@
 // Nada de offset fixo: classe, método e campos saem da API il2cpp exportada
 // pela libil2cpp.so.
 //
-// Carregado pelo caminho genérico do loader (/data/local/tmp/mods/<pkg>/).
+// Carregado pelo caminho genérico do loader (/data/adb/bepinex/mods/<pkg>/).
 //
 // Log: mod_common (C1). Antes ia só pro logcat (que o roadmap já chamava de
 // buraco negro); agora a mesma linha vai pro logcat E para

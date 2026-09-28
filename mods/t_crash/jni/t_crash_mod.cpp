@@ -2,7 +2,8 @@
 // carregar, para provar a garantia G1: 2 mortes seguidas < 60s ⇒ o loader para
 // de carregar mods daquele jogo. NÃO instale isso num jogo que você usa.
 //
-// Uso: cp libs/arm64-v8a/libt_crash.so /data/local/tmp/mods/<pkg>/ e abre o
+// Uso: coloque libt_crash.so em /data/adb/bepinex/mods/<pkg>/ (via su; a árvore
+// é root-only — o t_crash/README tem o passo a passo com o trânsito) e abre o
 // jogo. 1ª e 2ª aberturas: morre 2s depois. 3ª: sobe limpo, sem mod, com o
 // aviso "mods desativados: o jogo fechou 2x logo depois de carregar" no log.
 // Reativar: rm /data/data/<pkg>/files/bepinex/crashguard
