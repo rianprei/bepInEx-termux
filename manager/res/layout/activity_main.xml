@@ -90,6 +90,13 @@
         android:checked="true"
         android:layout_marginBottom="8dp" />
 
+    <Spinner
+        android:id="@+id/sp_game_sort"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:contentDescription="@string/sort_games_label" />
+
     <!-- Barra de progresso para carregamento -->
     <ProgressBar
         android:id="@+id/progress_loading"
