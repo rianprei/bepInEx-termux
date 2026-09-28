@@ -145,6 +145,11 @@ public final class BmodInstaller {
 
     // Instala o .bmod no diretorio /data/local/tmp/mods/<targetPkg>/
     public static InstallResult install(File bmodFile, String targetPkg, String detectedEngine) {
+        return install(bmodFile, targetPkg, detectedEngine, null);
+    }
+
+    public static InstallResult install(File bmodFile, String targetPkg, String detectedEngine,
+                                        String gameAbi) {
         ModManifest manifest;
         try {
             manifest = inspect(bmodFile);
@@ -176,6 +181,17 @@ public final class BmodInstaller {
             // device (e o parcial ja foi apagado dentro do extractBmod).
             File payloadFile = extractBmod(bmodFile, manifest, tmpDir);
             File jsonFile = new File(tmpDir, manifest.id + ".json");
+            if ("native".equals(manifest.type)) {
+                ModContentDetector.Detection payload = ModContentDetector.detect(
+                        LooseModInstaller.probe(payloadFile), true);
+                String payloadAbi = NativeAbiDetector.abiForKind(payload.kind);
+                if (!payload.installable || payloadAbi == null) {
+                    throw new IOException("O payload nativo do .bmod não é uma biblioteca ARM Android válida.");
+                }
+                if (!payloadAbi.equals(gameAbi)) {
+                    throw new IOException(NativeAbiDetector.incompatibilityMessage(payloadAbi, gameAbi));
+                }
+            }
 
             // 3. Gerar arquivo .conf com os valores padrao se houver opcoes
             File confFile = null;

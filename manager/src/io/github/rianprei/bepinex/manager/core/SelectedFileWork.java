@@ -64,7 +64,12 @@ public final class SelectedFileWork {
 
     public static void install(Executor executor, File file, String packageName, String engine,
                                Callback<LooseModInstaller.Result> callback) {
-        submit(executor, () -> LooseModInstaller.installFromFile(file, packageName, engine), callback);
+        install(executor, file, packageName, engine, null, callback);
+    }
+
+    public static void install(Executor executor, File file, String packageName, String engine,
+                               String gameAbi, Callback<LooseModInstaller.Result> callback) {
+        submit(executor, () -> LooseModInstaller.installFromFile(file, packageName, engine, gameAbi), callback);
     }
 
     private static <T> void submit(Executor executor, Operation<T> operation, Callback<T> callback) {

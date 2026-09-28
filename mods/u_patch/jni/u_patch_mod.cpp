@@ -786,6 +786,11 @@ static void *up_worker(void *) {
 }
 
 __attribute__((constructor)) static void u_patch_init() {
+#if !defined(__aarch64__)
+    mod_log(UP_TAG, "não suportado em 32-bit: o emissor C4 gera instruções AArch64; "
+                    "nenhuma regra foi aplicada");
+    return;
+#endif
     // Best-effort no constructor: com env do loader resolve aqui (antes do
     // pthread_create); sem env, o worker re-tenta cmdline até sair de zygote*.
     up_read_pkg();

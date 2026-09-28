@@ -57,6 +57,10 @@ public final class LooseModInstaller {
     private LooseModInstaller() {}
 
     public static Result installFromFile(File src, String pkg, String engine) {
+        return installFromFile(src, pkg, engine, null);
+    }
+
+    public static Result installFromFile(File src, String pkg, String engine, String gameAbi) {
         if (src == null || !src.exists()) {
             return new Result(false, "Arquivo não encontrado.", null, null);
         }
@@ -76,7 +80,7 @@ public final class LooseModInstaller {
 
         // .bmod tem o proprio caminho de instalacao (C2): manifest + payload.
         if (det.kind == ModContentDetector.Kind.BMOD) {
-            BmodInstaller.InstallResult r = BmodInstaller.install(src, pkg, engine);
+            BmodInstaller.InstallResult r = BmodInstaller.install(src, pkg, engine, gameAbi);
             return new Result(r.success, r.message, det.kind, null);
         }
 
@@ -86,11 +90,21 @@ public final class LooseModInstaller {
         // caminho certo: frida-gadget.bin (SEM .so) + frida-gadget.config em
         // modo script-directory apontando para a propria pasta de mods.
         if (det.kind == ModContentDetector.Kind.FRIDA_GADGET) {
+            String gadgetAbi = NativeAbiDetector.abiFromElfHeader(sample.head);
+            if (!java.util.Objects.equals(gadgetAbi, gameAbi)) {
+                return new Result(false,
+                        NativeAbiDetector.incompatibilityMessage(gadgetAbi, gameAbi), det.kind, null);
+            }
             return installGadget(src, pkg);
         }
 
         if (!det.installable) {
             return new Result(false, det.reason, det.kind, null);
+        }
+        String payloadAbi = NativeAbiDetector.abiForKind(det.kind);
+        if (payloadAbi != null && !payloadAbi.equals(gameAbi)) {
+            return new Result(false, NativeAbiDetector.incompatibilityMessage(payloadAbi, gameAbi),
+                    det.kind, null);
         }
         if (!SuHelper.isRootAvailable()) {
             return new Result(false, "Permissão root não disponível. Impossível instalar o mod.",
@@ -160,6 +174,7 @@ public final class LooseModInstaller {
     private static String posInstallHint(ModContentDetector.Detection det) {
         switch (det.kind) {
             case ELF_ARM64:
+            case ELF_ARM32:
                 return "Abra o jogo para o mod carregar. Se o jogo fechar 2 vezes seguidas na hora "
                         + "de abrir, a proteção desliga os mods: volte aqui e toque em 'Reativar'.";
             case PATCH:

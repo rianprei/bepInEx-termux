@@ -1,14 +1,19 @@
 #!/bin/bash
-# pack_bmod.sh <id> — gera mods/<id>/<id>.bmod, o zip distribuível (C2):
+# pack_bmod.sh <id> [arm64-v8a|armeabi-v7a] — gera mods/<id>/<id>.bmod (C2).
 # manifest.json + mod.so (type=native) ou mod.bpatch (type=patch).
 # Valida o manifest antes de fechar o zip (format 1, id, engine, type, game).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-[ $# -eq 1 ] || { echo "uso: $0 <id>" >&2; exit 2; }
+[ $# -ge 1 ] && [ $# -le 2 ] || { echo "uso: $0 <id> [arm64-v8a|armeabi-v7a]" >&2; exit 2; }
 id=$1
+abi=${2:-}
 [[ "$id" =~ ^[a-z0-9-]{3,48}$ ]] || { echo "id inválido: '$id' ([a-z0-9-]{3,48})" >&2; exit 2; }
+if [ -n "$abi" ] && [ "$abi" != arm64-v8a ] && [ "$abi" != armeabi-v7a ]; then
+    echo "ABI inválida: '$abi' (use arm64-v8a ou armeabi-v7a)" >&2
+    exit 2
+fi
 dir="mods/$id"
 [ -f "$dir/manifest.json" ] || { echo "$dir/manifest.json ausente" >&2; exit 1; }
 
@@ -18,19 +23,20 @@ dir="mods/$id"
 # símbolo aí seria Gift-Wrapping the ELF. symbols_ship também confere que o
 # build-id sobreviveu ao strip — é o que liga um crash do device aos símbolos
 # guardados em symbols/.
+# REGRA DE ORDEM: a validação ELF/ABI vem ANTES do strip. Com o stub de 20
+# bytes do test/abi_packaging_test.sh, o strip falharia primeiro ("invalid
+# buffer: the size (20) is smaller than an ELF header (64)") em vez da
+# mensagem amigável de validação.
 # shellcheck source=tools/symbols.sh
 # shellcheck disable=SC1091
 . "$ROOT/tools/symbols.sh"
 stage="$dir/.bmod-stage"
 rm -rf "$stage"; mkdir -p "$stage"
-if [ -f "$dir/libs/arm64-v8a/lib$id.so" ]; then
-    symbols_ship "$dir/libs/arm64-v8a/lib$id.so" "$stage/mod.so" || exit 1
-fi
 
-python3 - "$dir/manifest.json" "$id" "$dir" "$stage" <<'PY'
+python3 - "$dir/manifest.json" "$id" "$dir" "$abi" "$stage" <<'PY'
 import json, os, sys, zipfile
 
-man_path, mod_id, mod_dir, stage = sys.argv[1:5]
+man_path, mod_id, mod_dir, abi, stage = sys.argv[1:6]
 
 def die(msg):
     print(f"manifest inválido: {msg}", file=sys.stderr)
@@ -51,8 +57,23 @@ if man.get("type") not in ("native", "patch"): die("type inválido (native|patch
 if not man.get("game"): die("game ausente")
 
 if man["type"] == "native":
-    # Já stripado pelo symbols_ship acima.
-    src, arc = f"{stage}/mod.so", "mod.so"
+    if abi not in ("arm64-v8a", "armeabi-v7a"):
+        die("mod nativo exige ABI explícita: passe arm64-v8a ou armeabi-v7a")
+    src, arc = f"{mod_dir}/libs/{abi}/lib{mod_id}.so", "mod.so"
+    try:
+        with open(src, "rb") as so:
+            header = so.read(20)
+    except OSError as e:
+        die(str(e))
+    expected = (2, 183) if abi == "arm64-v8a" else (1, 40)
+    machine = int.from_bytes(header[18:20], "little") if len(header) >= 20 else -1
+    if (len(header) < 20 or header[:4] != b"\x7fELF"
+            or header[4] != expected[0] or header[5] != 1 or machine != expected[1]):
+        die(f"{src} não é um ELF da ABI selecionada ({abi})")
+    # Strip DEPOIS da validação: o .so do ndk-build sai não-stripado
+    # (repro.mk) e o .bmod é o arquivo que o usuário baixa.
+    symbols_ship "$src" "$stage/mod.so" or sys.exit(1)
+    src = f"{stage}/mod.so"
 else:
     src, arc = f"{mod_dir}/{mod_id}.bpatch", "mod.bpatch"
 if not os.path.isfile(src): die(f"artefato ausente: {src} (build primeiro)")

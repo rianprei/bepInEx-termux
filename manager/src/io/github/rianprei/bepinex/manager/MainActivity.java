@@ -35,6 +35,7 @@ import io.github.rianprei.bepinex.manager.core.SelectedFileFlow;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.UiLiveness;
 import io.github.rianprei.bepinex.manager.core.EngineDetector;
+import io.github.rianprei.bepinex.manager.core.NativeAbiDetector;
 import io.github.rianprei.bepinex.manager.core.SelectedFileStager;
 import io.github.rianprei.bepinex.manager.core.SelectedFileRouter;
 import io.github.rianprei.bepinex.manager.core.StatusChecker;
@@ -100,6 +101,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
             intent.putExtra("pkg", game.packageName);
             intent.putExtra("name", game.appName);
             intent.putExtra("engine", game.engine);
+            intent.putExtra("abi", game.nativeAbi);
             startActivity(intent);
         });
 
@@ -252,6 +254,7 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
                 info.packageName = ai.packageName;
                 info.appName = ai.loadLabel(pm).toString();
                 info.engine = engine;
+                info.nativeAbi = NativeAbiDetector.detect(nativeDir, apks);
                 info.isGame = isGame;
                 info.installedModsCount = totalMods;
                 info.activeModsCount = activeMods;
@@ -447,10 +450,12 @@ public class MainActivity extends Activity implements UiLiveness.ActivityLike {
     }
 
     private void installSelectedFile(File file, String packageName, String engine) {
+        GameInfo selectedGame = findGame(packageName);
+        String abi = selectedGame != null ? selectedGame.nativeAbi : null;
         // A flag vive no ESTADO da tela (SelectedFileFlow.of): cada toque
         // chama a mesma API e o segundo é recusado enquanto o primeiro roda.
         boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
-                () -> LooseModInstaller.installFromFile(file, packageName, engine),
+                () -> LooseModInstaller.installFromFile(file, packageName, engine, abi),
                 (result, error) -> {
                     if (!UiLiveness.alive(this)) {
                         // Morreu com o install em voo: se instalou, o staged

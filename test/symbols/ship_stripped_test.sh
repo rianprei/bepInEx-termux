@@ -78,7 +78,7 @@ SRC_BID=$(symbols_build_id "$SRC")
 # --- 1. .bmod: o arquivo que o usuario baixa e compartilha ------------------
 echo "ship-stripped: (1) .bmod (pack_bmod.sh)"
 [ -f "$ROOT/mods/$TARGET/manifest.json" ] || die "mods/$TARGET/manifest.json ausente"
-( cd "$ROOT" && tools/pack_bmod.sh "$TARGET" ) >"$WORK/pack.log" 2>&1 ||
+( cd "$ROOT" && tools/pack_bmod.sh "$TARGET" arm64-v8a ) >"$WORK/pack.log" 2>&1 ||
     { cat "$WORK/pack.log" >&2; die "pack_bmod.sh falhou"; }
 cat "$WORK/pack.log" | tail -1
 BMOD=$(tail -1 "$WORK/pack.log")

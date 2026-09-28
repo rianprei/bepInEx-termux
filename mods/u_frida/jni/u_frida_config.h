@@ -17,6 +17,15 @@
 #define UF_CONFIG_FILE "frida-gadget.config"
 #define UF_CONFIG_MAX 4096  // config maior que isso = recusado (não lê pela metade)
 
+static inline bool uf_elf_matches_abi(const unsigned char *header, size_t size,
+                                      unsigned char elf_class, unsigned short machine) {
+    if (!header || size < 20 || header[0] != 0x7f || header[1] != 'E' ||
+        header[2] != 'L' || header[3] != 'F' || header[5] != 1 ||
+        header[4] != elf_class) return false;
+    unsigned short got = (unsigned short)header[18] | ((unsigned short)header[19] << 8);
+    return got == machine;
+}
+
 // É mod .js? *.js, menos oculto/subpasta. *.js.off não termina em .js,
 // então já cai fora pela regra abaixo (igual C1 dos .so/.bpatch).
 static inline bool uf_is_js_mod(const char *name) {

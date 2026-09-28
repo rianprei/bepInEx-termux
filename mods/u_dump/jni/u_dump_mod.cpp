@@ -129,8 +129,8 @@ static const char *full_class_name(void *klass, char *out, size_t cap) {
 // get_unityVersion via runtime_invoke. Seguro fora da main thread: thread
 // anexada (il2cpp_boot) + getter estático folha, o mesmo mecanismo das
 // calls do sa2content (Apply/Deserialize na worker). Qualquer falha =
-// string vazia (comportamento anterior). String il2cpp é UTF-16 em
-// +0x14/len +0x10, mesmo layout do il2cpp_str_eq (il2cpp_min.h).
+// string vazia (comportamento anterior). String il2cpp usa o layout
+// dependente do tamanho de ponteiro definido em il2cpp_min.h.
 static bool unity_version_str(char *out, size_t cap) {
     out[0] = '\0';
     void *app = il.find_class("UnityEngine", "Application");
@@ -138,8 +138,9 @@ static bool unity_version_str(char *out, size_t cap) {
     bool ok = false;
     void *s = il.call_static(app, "get_unityVersion", nullptr, 0, &ok);
     if (!ok || !s || cap < 8) return false;
-    int32_t len = *(const int32_t *)((const uint8_t *)s + 0x10);
-    const uint16_t *c = (const uint16_t *)((const uint8_t *)s + 0x14);
+    Il2CppStringLayout layout = il2cpp_string_layout();
+    int32_t len = *(const int32_t *)((const uint8_t *)s + layout.length_offset);
+    const uint16_t *c = (const uint16_t *)((const uint8_t *)s + layout.chars_offset);
     if (len <= 0 || len >= (int32_t)cap) return false;
     for (int32_t i = 0; i < len; i++) {
         if (c[i] > 0x7E) return false;  // versão é ASCII ("2022.3.21f1")

@@ -9,7 +9,7 @@ APP_LDFLAGS := -llog -Wl,-z,relro,-z,now -Wl,--as-needed
 # zygote tem namespace com acesso à APEX i18n; zygiskd64 não tem).
 # --as-needed garante que nenhuma NEEDED morta volte a aparecer no futuro.
 APP_PLATFORM := android-23
-APP_ABI := arm64-v8a
+APP_ABI := arm64-v8a armeabi-v7a
 
 # Build reproduzível + símbolos preservados. Ver jni/repro.mk: sem isto o
 # build-id muda com o diretório de build e o .so de release sai sem nome de

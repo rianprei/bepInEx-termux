@@ -7,6 +7,10 @@ binário depois de aguardar até 10s pelo boot IL2CPP completo. O gadget carrega
 mesmo se não houver runtime; scripts que usam `Il2Cpp.*` podem não funcionar
 nesse caso. Sem frida-server, sem patch de APK.
 
+O gadget pinado 17.18.0 é somente ARM64. O módulo compara o cabeçalho ELF
+com a ABI do processo antes do `dlopen`; num jogo ARM32 recusa o gadget e
+registra o motivo, sem tentar carregar código de arquitetura incompatível.
+
 **Quem instala hoje:** o Manager já instala o Frida pelo celular — o
 `LooseModInstaller` detecta o gadget e coloca `frida-gadget.bin` +
 `frida-gadget.config` (modo script) na pasta de mods, e o `.js` vai junto.

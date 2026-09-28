@@ -33,8 +33,8 @@ SELinux) e os scripts `tools/` fazem a instalação.
 
 - Celular **rooteado** com **Magisk** (Zygisk ligado) ou **KernelSU +
   ZygiskNext**. Sem root não existe caminho (veja o FAQ).
-- **Android 8+** e processador **arm64** (praticamente todo celular de 2018
-  pra cá). arm32 não é suportado.
+- **Android 8+** e processador **ARM**. O módulo inclui loader ARM64 e ARM32;
+  cada mod nativo precisa corresponder à ABI instalada do jogo.
 - O jogo tem que ser de um engine suportado e você precisa de um **mod
   compatível** (ver "Que mods rodam").
 
@@ -71,6 +71,36 @@ tools/deploy_mod.sh <id-do-mod> <pacote-do-jogo>
 # exemplo real (Swamp Attack 2):
 tools/deploy_mod.sh sa2ammo com.hyperdotstudios.swampattack2
 ```
+
+O deploy identifica `primaryCpuAbi` do pacote instalado. Para gerar um
+`.bmod` nativo, passe explicitamente a ABI do jogo:
+`tools/pack_bmod.sh <id> arm64-v8a` ou
+`tools/pack_bmod.sh <id> armeabi-v7a`.
+
+### Suporte por arquitetura (estado do código)
+
+| Componente | ARM64 (`arm64-v8a`) | ARM32 (`armeabi-v7a`) |
+|---|---|---|
+| Loader e instalação `.so`/`.bmod` | disponível | disponível; seleciona pelo ABI do jogo |
+| `u_dump` (Unity IL2CPP) | disponível | disponível; layout de `System.String` usa ponteiros de 32 bits |
+| `sa2ammo`, `sa2content` | build existente | compilados, mas registram “não suportado em 32-bit (hook não validado em aparelho)” e saem **sem instalar nenhum hook** — o hook Dobby delas só foi validado em AArch64, então em 32-bit eles não hookam em vez de hookar às cegas |
+| `u_patch`, `u_noads` | disponíveis | compilados, mas registram “não suportado em 32-bit” e saem sem aplicar hooks AArch64 |
+| guarda de arquitetura dos hooks | `test/arm32_hook_guard_check.py` (passo do gate) | exige que todo mod com `DobbyHook` recuse **antes** de alcançar o hook, e que o caminho 32-bit tenha `return` |
+| Hook genérico do loader / Battle Cats | implementado | deliberadamente desativado; ainda não portado/validado |
+| `u_frida` | gadget 17.18.0 disponível | recusa gadget incompatível; ainda não há gadget ARM32 pinado |
+
+O prebuilt Dobby ARM64 permanece intacto. A biblioteca ARM32 é separada,
+construída de Dobby `e9fe7fb` por `tools/build_dobby_arm32.sh`; o hook simples
+foi exercitado em `qemu-arm`. Isso não substitui teste em aparelho ARM32.
+
+**Warning de terceiro no build do Dobby ARM32.** O build do pin upstream emite
+compiler warnings, entre eles um `snprintf` truncado. Isso é código **de
+terceiro** (pinado e com SHA em `tools/deps.lock`), não nosso: a política de zero
+warning deste repo vale para as nossas fontes, e divergir do pin para calar o
+warning trocaria uma dependência revisada por uma edição local não revisada.
+O build não falha por causa disso, e o warning **não é silenciado** —
+`test/arm32_dobby_qemu_smoke.sh` guarda o log, conta os warnings e os imprime
+rotulados como de terceiro, para não sumirem num scrollback que ninguém lê.
 
 - **`<pacote-do-jogo>`** é o identificador do jogo, tipo
   `com.hyperdotstudios.swampattack2`. Ele aparece no link da Play Store
@@ -666,8 +696,9 @@ mas também não é assinatura de release.
 ```bash
 # estrutura exigida pelo Zygisk:
 #   module.prop
-#   zygisk/arm64-v8a.so   ← nome fixo por ABI, não é o nome do seu .so
-zip -r seu-modulo.zip module.prop zygisk/arm64-v8a.so
+#   zygisk/arm64-v8a.so
+#   zygisk/armeabi-v7a.so
+zip -r seu-modulo.zip module.prop zygisk/arm64-v8a.so zygisk/armeabi-v7a.so
 ```
 
 Instalar via Magisk (Módulos → Instalar do armazenamento) e **reiniciar** —
@@ -739,9 +770,11 @@ hipotéticos — reproduzidos ao vivo antes do fix):
 - `INTEGRATION_CHECK.md` — verificação de integração build main+companion.
 - `COMPANION_TERMUX_ARCHITECTURE.md` — arquitetura completa da ponte
   companion↔Termux, incluindo o modelo de autenticação por `SO_PEERCRED`.
-- `context/` — notas técnicas de hardening, comportamento de config, e
+- `context/` — notas técnicas de comportamento de config, e
   comparação de design contra o BepInEx (o que ele resolve que este projeto
   ainda não precisa, e vice-versa).
+- `docs/DLL-COVERAGE.md` — relatório de cobertura do tradutor Harmony
+  (0/378 patches traduzíveis sem o assembly do jogo; u_dump como solução).
 
 ## Créditos
 
