@@ -12,6 +12,11 @@ TIMEOUT_TEST=${TIMEOUT_TEST:-120}
 # dos outros agentes: o timeout aqui existe para pegar TRAVA (deadlock, hook
 # esperando pra sempre), NÃO lentidão — por isso é bem maior que TIMEOUT_TEST.
 TIMEOUT_DEVICE_SIM=${TIMEOUT_DEVICE_SIM:-300}
+# Timeout dos testes ligados pelo manifesto (tools/gate_tests.list). Folgado de
+# propósito: o alvo é pegar TRAVA, não lentidão, e um teste de empacotamento
+# que dá timeout numa máquina carregada é vermelho sem motivo — o mesmo
+# critério de TIMEOUT_DEVICE_SIM.
+TIMEOUT_GATE_TESTS=${TIMEOUT_GATE_TESTS:-600}
 
 declare -a LABELS=()
 declare -a STATUSES=()
@@ -425,20 +430,49 @@ else
     echo "ShellCheck could not be downloaded or verified" >&2
 fi
 
-while IFS= read -r test_script; do
-    run_step "shell test ${test_script#"$ROOT"/}" "$TIMEOUT_TEST" bash "$test_script"
-done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
-
-for device_script in restore-sim.sh quoting-check.sh device-round2-host-test.sh; do
-    path="$ROOT/test/device/$device_script"
-    if [ -f "$path" ]; then
-        # TIMEOUT_DEVICE_SIM (não TIMEOUT_TEST): pega TRAVA, não lentidão —
+# --- O manifesto de testes do gate --------------------------------------------
+# A regra "o que o gate executa" mora em tools/gate_tests.list, e não num
+# padrão de nome de arquivo dentro deste script. Os dois laços que existiam
+# aqui (test/*_test.sh e a lista nomeada de device) deixavam a regra implícita:
+# quem acrescentasse um teste tinha que acertar o padrão sem saber que ele
+# existia, e teste que ninguém executa é opinião sobre o código que envelhece
+# calada. O manifesto é lido linha a linha e a ordem das linhas é a ordem de
+# execução — a primeira delas é o check da ligação, que reprova qualquer
+# arquivo de teste no disco sem destino declarado.
+#
+# FAIL é FAIL: teste ligado que quebra conserta o teste (ou o código), nunca
+# sai da lista. Desligar é decisão escrita em skip, com motivo, e o check
+# imprime a lista de exceções a cada execução.
+GATE_LIST="$ROOT/tools/gate_tests.list"
+if [ -f "$GATE_LIST" ]; then
+    # O terceiro campo (motivo) é lido e descartado aqui de propósito: quem
+    # julga o motivo é o check da ligação, e ele roda antes desta linha.
+    while IFS=$'\t' read -r gate_path gate_mode _gate_reason; do
+        case "${gate_path:-}" in
+            ""|\#*) continue ;;
+        esac
+        [ "${gate_mode:-run}" = "run" ] || continue
+        gate_file="$ROOT/$gate_path"
+        if [ ! -f "$gate_file" ]; then
+            record "manifesto: $gate_path (ausente)" FAIL 0 1
+            echo "tools/gate_tests.list cita $gate_path, que nao existe no disco" >&2
+            continue
+        fi
+        # TIMEOUT_DEVICE_SIM (não o dos testes): pega TRAVA, não lentidão —
         # ver o comentário na definição da variável.
-        run_step "device test test/device/$device_script" "$TIMEOUT_DEVICE_SIM" bash "$path"
-    else
-        record "device test test/device/$device_script (not present)" SKIP 0 0
-    fi
-done
+        case "$gate_path" in
+            test/device/*) gate_timeout=$TIMEOUT_DEVICE_SIM ;;
+            *)              gate_timeout=$TIMEOUT_GATE_TESTS ;;
+        esac
+        case "$gate_file" in
+            *.py) run_step "teste $gate_path" "$gate_timeout" python3 "$gate_file" "$ROOT" ;;
+            *)    run_step "teste $gate_path" "$gate_timeout" bash "$gate_file" ;;
+        esac
+    done < "$GATE_LIST"
+else
+    record "manifesto de testes do gate" FAIL 0 1
+    echo "tools/gate_tests.list ausente: nenhum teste pode ser ligado sem ele" >&2
+fi
 
 if [ -f "$ROOT/manager/build.sh" ]; then
     if [ -x "$ROOT/manager/run_tests.sh" ]; then
