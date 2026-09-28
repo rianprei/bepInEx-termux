@@ -13,7 +13,10 @@
 #define UP_SLOT_LOCK 24   // spinlock (reentrância vira chamada direta, sem travar)
 #define UP_SLOT_SIZE 32
 
-// Opcodes fixos (codificação conferida contra llvm-objdump do NDK — Caso 57).
+// Opcodes fixos (codificação conferida contra llvm-objdump do NDK — Caso 70
+// do upatch_harness.cpp, o único que decodifica adrp/add com `decode_pair`).
+// O número anterior apontava para o caso de dump_core/IL2CPP, que nunca
+// conferiu opcode nenhum.
 #define UP_RET 0xD65F03C0           // ret
 #define UP_BLR_X16 0xD63F0200       // blr x16
 #define UP_BR_X16 0xD61F0200        // br x16 (tail call — NÃO toca x30)

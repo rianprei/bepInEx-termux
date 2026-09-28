@@ -586,7 +586,9 @@ static bool up_apply_field(const Il2Cpp &il, void *klass, const up_rule_t *r, co
 
 // Corpo de UMA linha do .bpatch (chamado por up_foreach_line, que garante o
 // avanço — o loop infinito em linha vazia do review não tem mais onde
-// nascer, e o Caso 70 do harness conta as linhas visitadas).
+// nascer, e o Caso 74 do harness — up_foreach_line — conta as linhas
+// visitadas; o número anterior apontava para o caso dos emissores arm64, que
+// não conta linha nenhuma).
 struct up_line_ctx {
     const Il2Cpp *il;
     const char *id;
@@ -689,8 +691,8 @@ static int up_scan_apply(const Il2Cpp &il) {
                    "desse byte NAO foram lidas", name, UP_FILE_MAX, UP_FILE_MAX);
         }
         // Itera linhas com up_foreach_line: o avanço mora na função pura e o
-        // harness conta as linhas (Caso 70) — o loop infinito em linha vazia
-        // não tem mais onde nascer.
+        // harness conta as linhas (Caso 74, up_foreach_line) — o loop infinito
+        // em linha vazia não tem mais onde nascer.
         up_line_ctx ctx = {&il, id, cbuf, 0};
         up_foreach_line(pbuf, up_line_apply, &ctx, 0);
         applied += ctx.applied;
