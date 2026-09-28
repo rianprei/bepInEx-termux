@@ -718,6 +718,28 @@ int main() {
               && strcmp(cname, "Inner") != 0);
     }
 
+    printf("\n[Caso 93] decode do imm16 do MOVZ/MOVK: bits [20:5], não os 16 baixos\n");
+    {
+        // Prova fixa da fórmula que o fuzz_upatch_encoder usa para
+        // reconstruir o valor: imm16 = (insn>>5) & 0xFFFF. A leitura errada
+        // `insn & 0xFFFF` misturava os 5 bits de Rd e quebrava para qualquer
+        // valor com bit >= 11 setado (achado do review do fuzz).
+        uint32_t w[8];
+        int n = up_emit_return_int(w, 0x12345u);
+        uint32_t lo = (w[0] >> 5) & 0xFFFFu;
+        uint32_t hi = (n == 3) ? ((w[1] >> 5) & 0xFFFFu) : 0;
+        check("0x12345: n == 3 e (w[0]>>5)&0xFFFF == 0x2345",
+              n == 3 && lo == 0x2345u);
+        check("0x12345: (w[1]>>5)&0xFFFF == 0x0001 e reconstruído == 0x12345",
+              hi == 0x0001u && (lo | (hi << 16)) == 0x12345u);
+        check("0x12345: leitura errada (w[0]&0xFFFF) NÃO bate",
+              (w[0] & 0xFFFFu) != 0x2345u);
+        n = up_emit_return_int(w, 0x42u);
+        lo = (w[0] >> 5) & 0xFFFFu;
+        check("0x42: n == 2 e reconstruído == 0x42",
+              n == 2 && lo == 0x42u && w[1] == UP_RET);
+    }
+
     printf("== Resultado: %s (%d falhas) ==\n", g_fail == 0 ? "TODOS PASSARAM" : "HOUVE FALHAS", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

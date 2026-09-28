@@ -73,5 +73,7 @@ adb shell /data/local/tmp/thunk_exec bugb     # exit != 0  ← aqui o bugb REAL 
 - **Evidência de disassembly**: 21 palavras emitidas → `.inst` em `.s` →
   `clang --target=aarch64-linux-android23 -c` → `llvm-objdump -d`. Texto
   completo no commit. Os alvos de `adrp/add` são validados semanticamente
-  pelo Caso 57 do harness (decodificação de campo + `decode_pair`).
+  pelo Caso 70 do upatch_harness (decodificação de campo + `decode_pair`, o
+  lambda em `upatch_harness.cpp:230`). O número anterior apontava para o caso
+  de dump_core/IL2CPP, que não decodifica `adrp/add`.
 - **qemu**: `qemu-aarch64 11.1.1` (TCG, MTTCG). Threads reais via host threads.
