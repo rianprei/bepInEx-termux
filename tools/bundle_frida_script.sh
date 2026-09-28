@@ -53,8 +53,33 @@ if [ "$got" != "$SHA" ]; then
      novo vem de recalcular sobre o download conferido no registry."
 fi
 
-tar xzf "$WORK/pkg.tgz" -C "$WORK" || die "tarball invalido"
-[ -f "$WORK/$ENTRY" ] || die "entrada ausente no tarball: $ENTRY (pacote empacotado diferente do pinado?)"
+# O QUE ENTRA NO TARBALL, ANTES DE EXTRAIR. Um link simbolico no pacote faz
+# o `cat` do passo seguinte embutir no .js um arquivo do DISCO de quem roda a
+# ferramenta — o sha256 pinado garante que o pacote e o que foi publicado, mas
+# nao que ele nao traga um link apontando para fora. O type field do `tar tv`
+# diz o que cada entrada e, e a extracao so aceita o que um pacote deve ter.
+listing="$(tar tvzf "$WORK/pkg.tgz")" || die "nao consegui listar o tarball: $WORK/pkg.tgz"
+bad_entries="$(printf '%s\n' "$listing" | awk '
+    substr($1,1,1) == "-" || substr($1,1,1) == "d" { next }
+    { print }
+')"
+if [ -n "$bad_entries" ]; then
+    echo "bundle_frida_script: o tarball tem entrada que nao e arquivo regular nem diretorio," >&2
+    echo "  e um link ou dispositivo no pacote vaza o disco de quem roda a ferramenta" >&2
+    echo "  para dentro do .js que o jogo carrega. Entradas recusadas:" >&2
+    printf '  %s\n' "$bad_entries" | head -n 5 >&2
+    printf '  (total: %s)\n' "$(printf '%s\n' "$bad_entries" | wc -l | tr -d ' ')" >&2
+    exit 1
+fi
+
+# --no-same-owner e --no-same-permissions: o pacote nao decide uid nem modo do
+# que ele escreve no nosso disco, e um link dentro dele ja foi recusado acima.
+tar xzf "$WORK/pkg.tgz" -C "$WORK" --no-same-owner --no-same-permissions ||
+    die "tarball invalido"
+
+# Defense in depth na entrada: -L antes de -f, porque -f segue link.
+[ -L "$WORK/$ENTRY" ] && die "a entrada do pacote e um link simbolico: $ENTRY"
+[ -f "$WORK/$ENTRY" ] || die "entrada ausente ou nao regular no tarball: $ENTRY (pacote empacotado diferente do pinado?)"
 
 mkdir -p "$(dirname "$OUT")"
 {
