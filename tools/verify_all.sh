@@ -669,6 +669,20 @@ else
     echo "test/arm32_hook_guard_check.py ausente: um hook pode rodar em 32-bit sem validacao"
 fi
 
+# O cliente do REPL do Termux (achado A4 do wiring-audit): 11 dos 12 verbos do
+# companion tm como UNICO sender esse cliente, e o console apontava para um
+# arquivo que NINGUEM instalava. O teste sobe um abstract socket (como o
+# companion) e fala com ele pelo cliente REAL, verbo por verbo — incluindo o
+# multi-linha de list_mods e o keep-alive de stream, que sao os dois jeitos
+# classicos de o cliente quebrar.
+if [ -f "$ROOT/test/termux_client_test.py" ]; then
+    run_step "cliente do REPL do Termux (12 verbos)" "$TIMEOUT_TEST" \
+        python3 "$ROOT/test/termux_client_test.py"
+else
+    record "cliente do REPL do Termux (teste ausente)" FAIL 0 1
+    echo "test/termux_client_test.py ausente: o lado que envia o protocolo nao e testado"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"
