@@ -254,7 +254,7 @@ for doc_name in files:
             if start < 1 or end < start or end > len(target_lines):
                 errors.append(f"{doc_name}:{line_no}: linha fora do arquivo: {name}:{start}-{end}")
                 continue
-            targets.append((target, target_lines))
+            targets.append((target, target_lines, start, end))
             checked += 1
         literals = [
             span for span in re.findall(r"`([^`\n]+)`", line)
@@ -263,8 +263,12 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if targets and not any(literal in "\n".join(lines) for _, lines in targets):
-                errors.append(f"{doc_name}:{line_no}: literal nao encontrado: {literal!r}")
+            if doc_name == "docs/UX-REFERENCE.md":
+                evidence = [lines[start - 1:end] for _, lines, start, end in targets]
+            else:
+                evidence = [lines for _, lines, _, _ in targets]
+            if targets and not any(literal in "\n".join(lines) for lines in evidence):
+                errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
 if errors:
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)

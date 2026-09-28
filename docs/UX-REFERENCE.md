@@ -17,7 +17,7 @@ below.
    including activated, partially activated, not installed, needs update,
    crashed, and mount failed, and exposes framework/device details. For a
    regular user, a specific state is more useful than an unexplained on/off
-   indicator. **Our equivalent:** `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:267-283`
+   indicator. **Our equivalent:** `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:267-283` (`"Módulo: OK"`)
    displays root, module, and Zygisk status plus app version; it does not yet
    offer a similarly detailed diagnostic state per failure. **Cost: medium**
    to add actionable diagnostic detail without crowding the overview.
@@ -27,7 +27,7 @@ below.
    module enablement and a distinct target-app scope flow, including
    recommended and categorized targets. This makes the effect of a module
    easier to reason about and narrows accidental impact. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-506`
+   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-506` (`swEnabled.setChecked(mod.isEnabled);`)
    has per-mod enable switches and options, but no comparable app-scope
    selection; mods are managed within a selected game's detail screen.
    **Cost: large**, because scope must be represented and enforced consistently
@@ -38,7 +38,7 @@ below.
    for system apps, games, modules, and denylisted apps, plus sorting by name,
    package, install time, or update time. People can narrow a long list using
    terms they recognize instead of scrolling blindly. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:300-322`
+   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:300-322` (`mFilteredGames.add(g);`)
    supports name/package search and a games-only filter, but not sorting or
    additional categories. **Cost: small** for sorting and another filter
    control. [LSPosed Manager strings](https://github.com/LSPosed/LSPosed/blob/master/app/src/main/res/values/strings.xml);
@@ -48,9 +48,9 @@ below.
    module backup/restore and log save/clear/reload, and communicates when a
    reboot is required. These affordances help users recover or share useful
    information instead of guessing what to do after a change. **Our
-   equivalent:** `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:143-147`
+   equivalent:** `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:143-147` (`LogViewerActivity.class`)
    links to per-game logs, and
-   `manager/src/io/github/rianprei/bepinex/manager/LogViewerActivity.java:31-55`
+   `manager/src/io/github/rianprei/bepinex/manager/LogViewerActivity.java:31-55` (`"Falha ao limpar o log."`)
    provides refresh/clear; no mod backup/restore action is present in those
    surfaces. **Cost: medium** for backup/restore with validation and clear
    feedback. [LSPosed Manager strings](https://github.com/LSPosed/LSPosed/blob/master/app/src/main/res/values/strings.xml);
@@ -76,7 +76,7 @@ not prove the precise layout of the app's screens.
    and notes this is best suited to simple scripts or material for later
    editing. For ordinary users, capture can reduce repetitive entry while
    still setting expectations that review is needed. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:132-155`
+   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:132-155` (`mBtnSaveInstall.setOnClickListener(v -> saveAndInstallMod());`)
    has no interaction recorder. This is inspiration for a future guided
    authoring flow, not a recommendation to record arbitrary game actions.
    **Cost: large** for reliable recording and safe review. [Official simple-script guide](https://docs.gameguardian.net/simple_script.html)
@@ -85,7 +85,7 @@ not prove the precise layout of the app's screens.
    instructs users to save a script, run it, and check correctness as distinct
    actions. Separating these concepts makes it clearer what has merely been
    prepared versus what has taken effect. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:632-635`
+   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:632-635` (`foi salvo e ativado para`)
    reports a saved-and-activated mod in one result; there is no separate
    validation result here. **Cost: medium** to provide explicit validation
    feedback, provided a safe host-side check is available. [Official simple-script guide](https://docs.gameguardian.net/simple_script.html)
@@ -96,9 +96,9 @@ not prove the precise layout of the app's screens.
    API evidence, not proof of a particular visible screen. The neutral UX
    lesson is to show which target is in scope and its useful identifying
    details before an operation. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:270-282`
+   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:288-295` (`"Falha ao instalar o arquivo: "`)
    reports install success/failure, while
-   `manager/res/layout/activity_game_detail.xml:12-54` provides a game header
+   `manager/res/layout/activity_game_detail.xml:12-54` (`@+id/detail_tv_pkg`) provides a game header
    with package and engine identity. **Cost: small** to keep target identity
    visible in confirmation and result messages. [Official `gg` API reference](https://docs.gameguardian.net/classgg.html)
 
@@ -123,9 +123,9 @@ documents the interactions below.
    directly from the current pane to the other, without a separate paste
    action. For ordinary file tasks, this makes source and destination visible
    together and removes an intermediate step. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:121-125`
+   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:121-125` (`Intent.ACTION_OPEN_DOCUMENT`)
    opens the system document picker and
-   `manager/src/io/github/rianprei/bepinex/manager/DownloadFileDialog.java:20-49`
+   `manager/src/io/github/rianprei/bepinex/manager/DownloadFileDialog.java:20-49` (`"Escolher da pasta Download"`)
    provides a Download fallback; there is no paired source/destination view.
    **Cost: large** and likely not justified for the current single-file
    installation workflow. [Official quick-start guide](https://mt.cc/guide/)
@@ -143,7 +143,7 @@ documents the interactions below.
    documents swipe-to-select, contiguous-range selection, select-all,
    invert-selection, and select-by-type. This helps users act on many similar
    files without repeating the same gesture. **Our equivalent:**
-   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:458-523`
+   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:458-523` (`getString(R.string.confirm_delete_mod, mod.name)`)
    renders each mod with individual controls; no multi-mod selection or batch
    action is present. **Cost: medium** for batch enable/disable with clear
    result reporting. [Official quick-start guide](https://mt.cc/guide/)
@@ -177,23 +177,23 @@ These are adaptations for this Manager, not a ranking of the reference apps.
 1. **Add sort choices to the existing game search/filter.** The filter is
    already present, so sorting by app name/package can improve navigation at
    low cost. **Cost: small.** Current surface:
-   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:300-322`.
+   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:300-322` (`mFilteredGames.add(g);`).
 2. **Make status failures more actionable.** Keep the existing concise status
    overview, but let a user distinguish a missing component from a disabled
    one and see the next safe action. **Cost: medium.** Current surface:
-   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:267-283`.
+   `manager/src/io/github/rianprei/bepinex/manager/MainActivity.java:267-283` (`"Módulo: OK"`).
 3. **Add validated mod backup/restore.** Export/import should identify the
    target game, validate content before applying, and report partial or failed
    restoration explicitly. **Cost: medium.** Existing mod controls:
-   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-523`.
+   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-523` (`swEnabled.setOnCheckedChangeListener((buttonView, isChecked) -> {`).
 4. **Add batch enable/disable for a game's mod list.** Select multiple mods,
    show the count and intended action, then summarize outcomes. This adapts
    MT Manager's batch-selection pattern without copying its file-pane UI.
    **Cost: medium.** Current per-mod controls:
-   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-493`.
+   `manager/src/io/github/rianprei/bepinex/manager/GameDetailActivity.java:480-493` (`if (mod.hasOptions || mod.hasConf) {`).
 5. **Separate mod preparation from validation feedback.** Where a meaningful
    safe check exists, show what will be installed and its target before
    applying it; distinguish successful installation from a validated runtime
    result. Do not imply a mod is safe or compatible merely because it was
    packaged. **Cost: medium.** Current authoring flow:
-   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:132-155`.
+   `manager/src/io/github/rianprei/bepinex/manager/ModMakerActivity.java:132-155` (`mBtnSaveInstall.setOnClickListener(v -> saveAndInstallMod());`).
