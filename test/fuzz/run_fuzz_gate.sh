@@ -2,7 +2,7 @@
 # test/fuzz/run_fuzz_gate.sh — etapa CURTA e DETERMINÍSTICA de fuzzing com
 # sanitizers, para o tools/verify_all.sh.
 #
-# O que ela é: os 4 harnesses de test/fuzz/ compilados com
+# O que ela é: os harnesses de test/fuzz/ (ver TARGETS abaixo) compilados com
 # -fsanitize=fuzzer,address,undefined, rodando sobre o corpus versionado
 # (test/fuzz/corpus/<alvo>/) com seed fixa e contagem de execs fixa. Nenhuma
 # dependência de tempo, de rede ou de artefato de build.
@@ -18,7 +18,7 @@
 # Contrato de falha (qualquer um destes = exit != 0, com a causa no stderr):
 #   - clang++ ausente, ou sem -fsanitize=fuzzer/address/undefined (UBSan exige
 #     instrumentação de toda a TUnit, o que o GCC não faz em modo fuzzing)
-#   - o corpus versionado de um alvo sumiu ou ficou vazio
+#   - o corpus versionado de algum alvo sumiu ou ficou vazio
 #   - crash / heap-buffer-overflow / OOB / leak / UB em qualquer exec
 #   - regressão de crash (ver test/fuzz/fixtures/<alvo>/) que não reproduz
 set -euo pipefail
@@ -26,32 +26,75 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 FUZZ_DIR="$ROOT/test/fuzz"
 CORPUS="$FUZZ_DIR/corpus"
+
+# Nenhuma contagem literal de alvo no texto de fuzz, e ela roda AQUI, antes de
+# compilar qualquer coisa: um texto desatualizado é barato de achar e caro de
+# descobrir depois. Como o gate chama este script, a regra entra no verify_all
+# sem um passo novo lá. FAIL, nunca SKIP — se o check sumir, o gate inteiro
+# perde a regra em silêncio.
+# A mensagem sai direto (o die() do script ainda não existe nesta altura).
+python3 "$FUZZ_DIR/check_no_stale_counts.py" "$ROOT" || {
+    echo "fuzz-gate: contagem literal de alvo no texto de fuzz; a lista cresce e o texto nao" >&2
+    exit 1
+}
+
+# O vocabulário do check acima é uma lista só, no próprio código, e ninguém
+# confere se a documentação dela acompanha. Este teste é quem confere: falha se
+# um item da lista não estiver escrito no docstring do check e na seção
+# '## Limites' do README, e falha também se um item escrito não disparar o que
+# promete — para o item que a lista declara fora de escopo, o silêncio é o
+# resultado esperado. Sem ele, acrescentar quantificador novo é um número de
+# linha de código que só o behaviour conhece, e a documentação envelhece calada.
+python3 "$FUZZ_DIR/stale_counts_vocab_test.py" || {
+    echo "fuzz-gate: vocabulario do check de contagem fora de sincronia com a documentacao" >&2
+    exit 1
+}
+
 # Semente fixa: as mutações do libFuzzer saem sempre da mesma sequência, então
 # um "funciona no meu host" e um "funciona no gate" são a mesma coisa.
 FUZZ_SEED=${FUZZ_FUZZ_SEED:-20260926}
 TIMEOUT_TARGET=${FUZZ_FUZZ_TIMEOUT:-60}
 
-TARGETS=(c4_line elf_preflight frida_config selmix)
+TARGETS=(c4_line elf_preflight frida_config selmix upatch_encoder)
 
 # Execs POR ALVO, não um número único: os alvos não custam o mesmo por exec.
 # O selmix é ~20x mais lento que o frida_config (le arquivo em disco e monta
-# 512 entradas de watch por exec), então um número igual para os quatro faria
-# o gate passar de 30s por causa de um alvo só. Calibrado para os quatro
-# somarem ~15s de fuzzer, mais ~7s de build dos 4 binários em paralelo.
+# 512 entradas de watch por exec), então um número igual para todos faria o
+# gate passar de 30s por causa do alvo mais caro e o resto ia pro ar. As
+# execs de cada alvo estão em RUNS_DEFAULT, abaixo; o tempo total não é uma
+# meta, e sim consequência dessa tabela.
 declare -A RUNS_DEFAULT=(
     [c4_line]=40000
     [elf_preflight]=40000
     [frida_config]=40000
     [selmix]=8000
+    [upatch_encoder]=40000
 )
 
 die() { echo "fuzz-gate: $*" >&2; exit 1; }
+
+# Pertencência em lista, sem pipe. `printf ... | grep -qx` sob `set -o pipefail`
+# é uma corrida: o grep sai no instante em que casa, o printf leva SIGPIPE na
+# escrita seguinte, e o status do pipeline vira 141 mesmo com o elemento
+# presente — o gate então morre em cima de uma lista que está certa. Numa
+# máquina carregada (o ndk-build do verify_all ocupa tudo antes desta etapa) a
+# janela é larga: reproduzido aqui 2 vezes em 4000 voltas, o que transformou um
+# gate anterior em FAIL verde-para-vermelho por motivo nenhum do código. Shell
+# puro não tem processo para matar, então some a corrida com a comparação.
+in_list() {
+    local needle=$1 item
+    shift
+    for item in "$@"; do
+        [ "$item" = "$needle" ] && return 0
+    done
+    return 1
+}
 
 PROBE=$(mktemp)
 BIN=$(mktemp -d)
 trap 'rm -rf "$BIN" "$PROBE"' EXIT
 
-# --- 0. o compilador tem que existir E ter os três sanitizers ---------------
+# --- 0. o compilador tem que existir E ter os sanitizers --------------------
 CXX=${FUZZ_CXX:-clang++}
 command -v "$CXX" >/dev/null 2>&1 ||
     die "$CXX ausente: o gate de fuzz exige clang com libFuzzer+ASan+UBSan (instale o clang, ou aponte FUZZ_CXX=)"
@@ -61,13 +104,30 @@ if ! printf 'extern "C" int LLVMFuzzerTestOneInput(const unsigned char*d,unsigne
 fi
 
 # --- 1. o corpus versionado tem que existir e estar cheio -------------------
-# Sem isso, um alvo "esvaziado" por engano passaria a etapa sem exercitar
+# Sem isso, o corpus de algum alvo "esvaziado" por engano passaria a etapa sem exercitar
 # parser nenhum — o mesmo buraco do SKIP, só menor.
 for t in "${TARGETS[@]}"; do
     dir="$CORPUS/$t"
     [ -d "$dir" ] || die "corpus do alvo '$t' ausente: $dir"
     n=$(find "$dir" -type f | wc -l)
     [ "$n" -gt 0 ] || die "corpus do alvo '$t' vazio: $dir"
+done
+
+# --- 1b. README lista exatamente estes alvos ---------------------------------
+# test/fuzz/README.md documenta os alvos na tabela ## Alvos; se a doc e o
+# TARGETS divergirem, alguém adicionou alvo sem documentar (ou apagou da
+# doc sem tirar do gate) — FAIL.
+readme_targets=$(sed -n '/^## Alvos/,/^## /p' "$FUZZ_DIR/README.md" \
+    | grep -oE '^\| `[a-z0-9_]+' | tr -d '| `' || true)
+[ -n "$readme_targets" ] || die "tabela ## Alvos vazia em test/fuzz/README.md"
+readarray -t readme_rows <<<"$readme_targets"
+for t in "${TARGETS[@]}"; do
+    in_list "$t" "${readme_rows[@]}" \
+        || die "alvo '$t' do TARGETS ausente na tabela ## Alvos de test/fuzz/README.md"
+done
+for t in "${readme_rows[@]}"; do
+    in_list "$t" "${TARGETS[@]}" \
+        || die "test/fuzz/README.md lista '$t', fora do TARGETS"
 done
 
 # ASan/UBSan decides: crash, leitura fora do limite e leak são todos FAIL.
@@ -77,7 +137,7 @@ export ASAN_OPTIONS="detect_leaks=1:allocator_may_return_null=1:detect_stack_use
 export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1:exitcode=1"
 export LSAN_OPTIONS="exitcode=1"
 
-# --- 2. compila os 4 alvos em paralelo --------------------------------------
+# --- 2. compila os alvos em paralelo (ver TARGETS) ---------------------------
 build_pids=()
 for t in "${TARGETS[@]}"; do
     "$CXX" -std=c++17 -g -O1 -Wall -Wextra -Werror \
@@ -103,7 +163,7 @@ fi
 failed=0
 for t in "${TARGETS[@]}"; do
     log="$BIN/$t.run.log"
-    # Roda sobre uma CÓPIA do corpus, dentro do tmp, por dois motivos:
+    # Roda sobre uma CÓPIA do corpus, dentro do tmp, por um motivo que manda:
     #   1. o libFuzzer grava as unidades novas que ELE Descobre no diretório de
     #      corpus. Se fosse o do repo, a 2a execução do gate começaria de onde
     #      a 1a parou — o gate deixaria de ser determinístico E sujaria a
