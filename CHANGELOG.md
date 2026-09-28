@@ -49,10 +49,14 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `03eac87` — uni/termux-client4 — contrato de saída do cliente
 - `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
 - `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
+- `ccd8a11` — uni/config-leak — fixture do hash-gate com git config preso ao repo temporário (-C) + check que falha se o config local do repo mudar (linha cita o 1º commit da branch)
+- `2b0dd51` — merge da base atual (c233647, audit3-hardening) na branch config-leak
+- `2ff69a1` — merge da base 72e0dd1 (gate-wiring: manifesto tools/gate_tests.list) na branch config-leak
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
 - `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
+- `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio
