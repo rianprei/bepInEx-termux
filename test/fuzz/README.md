@@ -63,3 +63,45 @@ chamador real (`jni/main.cpp`, `mods/u_dump`) faz
 tamanho do buffer, e o parser tem de caber dentro dele. Passar cap maior que
 o buffer seria erro do harness, e o ASan acusaria o harness, não o produto.
 O fuzzer varia o cap **dimensionando o buffer pelo cap**, nunca o contrário.
+
+## Limites
+
+O gate recusa contagem literal de alvo no texto de fuzz
+(`test/fuzz/check_no_stale_counts.py`, chamado pelo `run_fuzz_gate.sh` antes de
+compilar qualquer coisa). O vocabulário dele é fechado e vive numa lista só, no
+código: os padrões de casamento são montados a partir dessa lista, e o
+`test/fuzz/stale_counts_vocab_test.py` falha se um item da lista não estiver
+escrito no docstring do check e nesta seção — e também se um item escrito não se
+comportar como a lista promete.
+
+**Cobre, e nada mais:**
+
+- dígito colado no substantivo (`\d+`);
+- número por extenso, em português: zero, um, uma, dois, duas, três, quatro,
+  cinco, seis, sete, oito, nove, dez, onze, doze, treze, quatorze, catorze,
+  quinze, dezesseis, dezessete, dezoito, dezenove, vinte, trinta, quarenta,
+  cinquenta, sessenta, setenta, oitenta, noventa, cem;
+- número por extenso, em inglês: zero, one, two, three, four, five, six, seven,
+  eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen,
+  seventeen, eighteen, nineteen, twenty, thirty, forty, fifty, sixty, seventy,
+  eighty, ninety, hundred;
+- quantificadores: dúzia, dezenas, dozens, par de, pair of, couple of, meia
+  dúzia, half a dozen;
+- marcador de quantidade, que transforma artigo em contagem: só, sozinho,
+  apenas, only, just, single, único;
+- artigo antes de substantivo no plural — é a troca de substantivo que carrega
+  a contagem junto, e ela falha mesmo sem marcador por perto.
+
+O número pode vir separado do substantivo por espaço, hífen ou travessão, e
+aceita a grafia sem acento (`três` e `tres`, `dúzia` e `duzia`).
+
+**Fora de escopo, por decisão escrita:**
+
+- `vários`, `alguns`, `some` e `several`: dizem que há mais de um sem dizer
+  quantos, e por isso não envelhecem quando a lista cresce;
+- `integrado`, `done` e `landed`: sinônimos de merge, e quem confere merge é o
+  gate de hash do `CHANGELOG.md`, não este.
+
+Acrescentar palavra é decisão documentada: entra na lista do check primeiro, e
+este parágrafo é obrigado a acompanhar. E contagem de execs, de segundos, de
+entradas de watch e de linhas não é contagem de alvo — é calibração medida.

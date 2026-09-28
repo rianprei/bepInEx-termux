@@ -38,6 +38,18 @@ python3 "$FUZZ_DIR/check_no_stale_counts.py" "$ROOT" || {
     exit 1
 }
 
+# O vocabulário do check acima é uma lista só, no próprio código, e ninguém
+# confere se a documentação dela acompanha. Este teste é quem confere: falha se
+# um item da lista não estiver escrito no docstring do check e na seção
+# '## Limites' do README, e falha também se um item escrito não disparar o que
+# promete — para o item que a lista declara fora de escopo, o silêncio é o
+# resultado esperado. Sem ele, acrescentar quantificador novo é um número de
+# linha de código que só o behaviour conhece, e a documentação envelhece calada.
+python3 "$FUZZ_DIR/stale_counts_vocab_test.py" || {
+    echo "fuzz-gate: vocabulario do check de contagem fora de sincronia com a documentacao" >&2
+    exit 1
+}
+
 # Semente fixa: as mutações do libFuzzer saem sempre da mesma sequência, então
 # um "funciona no meu host" e um "funciona no gate" são a mesma coisa.
 FUZZ_SEED=${FUZZ_FUZZ_SEED:-20260926}
@@ -60,6 +72,23 @@ declare -A RUNS_DEFAULT=(
 )
 
 die() { echo "fuzz-gate: $*" >&2; exit 1; }
+
+# Pertencência em lista, sem pipe. `printf ... | grep -qx` sob `set -o pipefail`
+# é uma corrida: o grep sai no instante em que casa, o printf leva SIGPIPE na
+# escrita seguinte, e o status do pipeline vira 141 mesmo com o elemento
+# presente — o gate então morre em cima de uma lista que está certa. Numa
+# máquina carregada (o ndk-build do verify_all ocupa tudo antes desta etapa) a
+# janela é larga: reproduzido aqui 2 vezes em 4000 voltas, o que transformou um
+# gate anterior em FAIL verde-para-vermelho por motivo nenhum do código. Shell
+# puro não tem processo para matar, então some a corrida com a comparação.
+in_list() {
+    local needle=$1 item
+    shift
+    for item in "$@"; do
+        [ "$item" = "$needle" ] && return 0
+    done
+    return 1
+}
 
 PROBE=$(mktemp)
 BIN=$(mktemp -d)
@@ -91,12 +120,13 @@ done
 readme_targets=$(sed -n '/^## Alvos/,/^## /p' "$FUZZ_DIR/README.md" \
     | grep -oE '^\| `[a-z0-9_]+' | tr -d '| `' || true)
 [ -n "$readme_targets" ] || die "tabela ## Alvos vazia em test/fuzz/README.md"
+readarray -t readme_rows <<<"$readme_targets"
 for t in "${TARGETS[@]}"; do
-    printf '%s\n' "$readme_targets" | grep -qx "$t" \
+    in_list "$t" "${readme_rows[@]}" \
         || die "alvo '$t' do TARGETS ausente na tabela ## Alvos de test/fuzz/README.md"
 done
-for t in $readme_targets; do
-    printf '%s\n' "${TARGETS[@]}" | grep -qx "$t" \
+for t in "${readme_rows[@]}"; do
+    in_list "$t" "${TARGETS[@]}" \
         || die "test/fuzz/README.md lista '$t', fora do TARGETS"
 done
 
