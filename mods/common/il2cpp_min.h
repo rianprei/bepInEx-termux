@@ -142,13 +142,18 @@ static inline Il2CppStringLayout il2cpp_string_layout() {
 
 // System.String: object header is two pointers; chars follow the 32-bit length.
 static inline bool il2cpp_str_eq(const void *s, const char *ascii) {
-    if (!s) return false;
+    if (!s || !ascii) return false;
     Il2CppStringLayout layout = il2cpp_string_layout();
     int32_t len = *(const int32_t *)((const uint8_t *)s + layout.length_offset);
+    // len vem da memória do jogo: negativo ou diferente do tamanho esperado
+    // = não igual, SEM iterar. Iterar sem teto lia além do objeto (OOB no
+    // buffer do jogo) e len negativo lia ascii[-1].
+    size_t want = strlen(ascii);
+    if (len < 0 || (uint64_t)(uint32_t)len != (uint64_t)want) return false;
     const uint16_t *c = (const uint16_t *)((const uint8_t *)s + layout.chars_offset);
-    for (int32_t i = 0; i < len; i++)
-        if (!ascii[i] || c[i] != (uint8_t)ascii[i]) return false;
-    return ascii[len] == '\0';
+    for (size_t i = 0; i < want; i++)
+        if (c[i] != (uint8_t)ascii[i]) return false;
+    return true;
 }
 
 static int il2cpp_find_base(struct dl_phdr_info *info, size_t, void *out) {
