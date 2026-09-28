@@ -51,17 +51,28 @@ void check(const char *name, bool ok) {
 // arquivo guarda 10123 — logo o perfil 0 e o perfil 10 caem na MESMA linha.
 const char *const LIST =
     "package:com.google.android.gms 1000 /data/system\n"  // token solto
-    "package:com.android.systemui system=1000\n"
-    "package:com.hyperdotstudios.swampattack2 system=10123 codePath=/data/app/x\n"
-    "package:com.termux system=10231 codePath=/data/app/termux\n"
-    "package:com.brave.browser system=10255 codePath=/data/app/brave\n"
-    "package:com.outro.jogo system=10888 codePath=/data/app/outro\n"
-    "package:com.qualquer.fwdk appId=10000 userId=0\n"
-    "package:com.qualquer.fwdk appId=1010000 userId=10\n";
+    "package:com.android.systemui 1000 /data/system\n"
+    "package:com.hyperdotstudios.swampattack2 10123 /data/app/x\n"
+    "package:com.termux 10231 /data/app/termux\n"
+    "package:com.brave.browser 10255 /data/app/brave\n"
+    "package:com.outro.jogo 10888 /data/app/outro\n"
+    // grupo sharedUserId: DOIS pacotes no MESMO appId (10000). Ambos tem que
+    // ser servidos — e so eles.
+    "package:com.shared.primario 10000 /data/app/prim\n"
+    "package:com.shared.secundario 10000 /data/app/sec\n"
+    "package:com.shared.terceiro 10001 /data/app/ter\n";
 
-// resolve uid -> pacote, com o caminho de codigo de erro
-bool resolve(int uid, char *out, size_t cap) {
-    return bc_peercred_lookup(LIST, strlen(LIST), uid, out, cap);
+// resolve uid -> lista de pacotes do appId
+int resolve(int uid, char (*out)[BC_PEERCRED_PKG_CAP], int max) {
+    return bc_peercred_packages(LIST, strlen(LIST), uid, out, max);
+}
+bool resolve_one(int uid, char *out, size_t cap) {
+    char (*pk)[BC_PEERCRED_PKG_CAP];
+    pk = (char (*)[BC_PEERCRED_PKG_CAP])__builtin_alloca(sizeof(*pk) * 4);
+    int n = resolve(uid, pk, 4);
+    if (n <= 0) return false;
+    snprintf(out, cap, "%s", pk[0]);
+    return true;
 }
 
 }  // namespace
@@ -75,51 +86,79 @@ int main() {
         // uid 1010123 = app do perfil 10, mas o appId e 10123; o packages.list
         // tem o appId do perfil 0 tambem. E o appId que compara.
         check("uid 1010123 (perfil 10) mapeia para swampattack2",
-              resolve(1010123, pkg, sizeof(pkg)) &&
+              resolve_one(1010123, pkg, sizeof(pkg)) &&
               strcmp(pkg, "com.hyperdotstudios.swampattack2") == 0);
-        check("uid 10231 (termux) mapeia", resolve(10231, pkg, sizeof(pkg)) &&
+        check("uid 10231 (termux) mapeia", resolve_one(10231, pkg, sizeof(pkg)) &&
               strcmp(pkg, "com.termux") == 0);
-        check("uid 10255 (brave) mapeia", resolve(10255, pkg, sizeof(pkg)) &&
+        check("uid 10255 (brave) mapeia", resolve_one(10255, pkg, sizeof(pkg)) &&
               strcmp(pkg, "com.brave.browser") == 0);
         // 1000 e o system: dois pacotes com o MESMO uid. O primeiro vence, e
         // isso e o comportamento documentado: uid de system nao e uid de app.
         check("uid 1000 (system) mapeia para algum pacote (primeiro do grupo)",
-              resolve(1000, pkg, sizeof(pkg)) && pkg[0] != '\0');
-        check("uid inexistente NAO mapeia (fail-closed)", !resolve(999999, pkg, sizeof(pkg)));
-        check("uid negativo NAO mapeia", !resolve(-1, pkg, sizeof(pkg)));
+              resolve_one(1000, pkg, sizeof(pkg)) && pkg[0] != '\0');
+        check("uid inexistente NAO mapeia (fail-closed)", !resolve_one(999999, pkg, sizeof(pkg)));
+        check("uid negativo NAO mapeia", !resolve_one(-1, pkg, sizeof(pkg)));
     }
 
     // --- 2. o caso do ACHADO: jogo A pede os mods do jogo B ----------------
     {
         char caller[BC_PEERCRED_PKG_CAP];
-        resolve(10231, caller, sizeof(caller));   // termux
+        resolve_one(10231, caller, sizeof(caller));   // termux
 
         check("jogo A pedindo os mods do jogo B: RECUSA",
-              !bc_peercred_pkg_matches(caller, "com.hyperdotstudios.swampattack2"));
+              !bc_peercred_pkg_matches(&caller, 1, "com.hyperdotstudios.swampattack2"));
         check("jogo A pedindo os mods de outro: RECUSA",
-              !bc_peercred_pkg_matches(caller, "com.brave.browser"));
+              !bc_peercred_pkg_matches(&caller, 1, "com.brave.browser"));
         check("jogo A pedindo os SEUS mods: ACEITA",
-              bc_peercred_pkg_matches(caller, "com.termux"));
+              bc_peercred_pkg_matches(&caller, 1, "com.termux"));
         // casos de borda que nao podem virar "aceita"
-        check("caller vazio RECUSA", !bc_peercred_pkg_matches("", "com.termux"));
-        check("pkg pedido vazio RECUSA", !bc_peercred_pkg_matches(caller, ""));
-        check("pkg pedido nulo RECUSA", !bc_peercred_pkg_matches(caller, nullptr));
+        check("caller vazio RECUSA", !bc_peercred_pkg_matches(&caller, 0, "com.termux"));
+        check("pkg pedido vazio RECUSA", !bc_peercred_pkg_matches(&caller, 1, ""));
+        check("pkg pedido nulo RECUSA", !bc_peercred_pkg_matches(&caller, 1, nullptr));
         check("prefixo NAO vale: 'com.termux.mal' RECUSA",
-              !bc_peercred_pkg_matches(caller, "com.termux.mal"));
+              !bc_peercred_pkg_matches(&caller, 1, "com.termux.mal"));
+    }
+
+    // --- 2b. sharedUserId: DOIS pacotes no MESMO appId -------------------
+    {
+        char (*shared)[BC_PEERCRED_PKG_CAP];
+        shared = (char (*)[BC_PEERCRED_PKG_CAP])__builtin_alloca(
+            sizeof(*shared) * BC_PEERCRED_PKG_MAX);
+        int n = resolve(10000, shared, BC_PEERCRED_PKG_MAX);
+        char nome[128];
+        snprintf(nome, sizeof(nome), "appId 10000 devolve %d pacote(s)", n);
+        check(nome, n >= 2);
+        // o primario E o secundario, ambos do grupo
+        check("sharedUserId: o pacote PRIMARIO e servido",
+              bc_peercred_pkg_matches(shared, n, "com.shared.primario"));
+        check("sharedUserId: o pacote SECUNDARIO tambem e servido",
+              bc_peercred_pkg_matches(shared, n, "com.shared.secundario"));
+        // e o de OUTRO appId nao
+        check("sharedUserId: pacote de OUTRO appId e recusado",
+              !bc_peercred_pkg_matches(shared, n, "com.shared.terceiro"));
+        // nem um nome que so parece o do grupo
+        check("sharedUserId: 'com.shared.primario.falso' e recusado",
+              !bc_peercred_pkg_matches(shared, n, "com.shared.primario.falso"));
     }
 
     // --- 3. fail-closed quando o packages.list nao da conta ---------------
     {
-        char pkg[BC_PEERCRED_PKG_CAP];
+        char (*pk)[BC_PEERCRED_PKG_CAP];
+        pk = (char (*)[BC_PEERCRED_PKG_CAP])__builtin_alloca(sizeof(*pk) * 4);
         check("lista vazia NAO mapeia (fail-closed)",
-              !bc_peercred_lookup("", 0, 10231, pkg, sizeof(pkg)));
-        const char *sem = "package:com.outro.jogo system=10888\n";
+              bc_peercred_packages("", 0, 10231, pk, 4) == 0);
+        const char *sem = "package:com.outro.jogo 10888 /data/app/o\n";
         check("lista sem o meu pacote NAO mapeia (fail-closed)",
-              !bc_peercred_lookup(sem, strlen(sem), 10231, pkg, sizeof(pkg)));
-        const char *liso = "package:com.termux system=10231\n"
-                           "package:com.brave.browser system=10255\n";
+              bc_peercred_packages(sem, strlen(sem), 10231, pk, 4) == 0);
+        const char *liso = "package:com.termux 10231 /data/app/t\n"
+                           "package:com.brave.browser 10255 /data/app/b\n";
         check("lista sem \\n final ainda mapeia",
-              bc_peercred_lookup(liso, strlen(liso), 10231, pkg, sizeof(pkg)));
+              bc_peercred_packages(liso, strlen(liso), 10231, pk, 4) == 1);
+        // "system=<n>" foi REMOVIDO por falta de fonte AOSP: um formato nao
+        // confirmado tem que dar RECUSA, nao um mapeamento meio certo.
+        const char *sysf = "package:com.termux system=10231\n";
+        check("formato system=<n> (sem fonte AOSP) NAO mapeia — fail-closed",
+              bc_peercred_packages(sysf, strlen(sysf), 10231, pk, 4) == 0);
     }
 
     // --- 4. o companion chama o peer nos TRES verbos ----------------------

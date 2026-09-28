@@ -38,6 +38,9 @@
 #include <string.h>
 
 #define BC_PEERCRED_PKG_CAP 160
+// Quantos pacotes de UM appId o companion guarda. sharedUserId tem limites
+// (o proprio Android limita), e 16 folga com sobra.
+#define BC_PEERCRED_PKG_MAX 16
 // "package:com.foo.bar system" -> 32 + 1 + 160 + 1 + 6
 #define BC_PEERCRED_LINE_MAX (BC_PEERCRED_PKG_CAP + 64)
 
@@ -46,68 +49,72 @@ static inline int bc_peercred_app_id(int uid) {
     return uid % 100000;
 }
 
-// appId -> pacote, a partir do texto de /data/system/packages.list.
+// ============================================================================
+// appId -> PACOTES (plural), a partir de /data/system/packages.list
+// ============================================================================
+// PLURAL E O PONTO: varios pacotes podem compartilhar o MESMO appId (sharedUserId
+// / android:sharedUserId). A versao anterior devolvia o PRIMEIRO do appId e
+// recusava o resto — entao o segundo pacote de um grupo legitimo nao conseguia
+// nem pedir os mods DELE MESMO. A regra certa e: o pedido e servido se o pacote
+// pedido for QUALQUER pacote daquele appId, e so esses.
 //
-// O formato da linha e "package:<nome> system=<uid> ...". A coluna do uid ali
-// e o APPID, entao comparar com uid % 100000 e o que funciona em multiusuario.
-static inline bool bc_peercred_lookup(const char *list, size_t len, int uid,
-                                     char *out, size_t outcap) {
-    if (out == NULL || outcap == 0) return false;
-    out[0] = '\0';
+// FORMATO. O writer do /data/system/packages.list nao foi localizado em nenhum
+// espelho do AOSP que eu alcancei (PackageManagerService em master e em
+// android14-release nao citam o arquivo; libpackagelistparser nao existe no
+// espelho). Entao o parser aceita SO o formato classico — "<nome> <uid> ...",
+// com o uid como token solto logo depois do nome — e qualquer outra forma
+// resulta em "nao mapeia", que e RECUSA (fail-closed).
+//
+// A variante "system=<n>" que eu tinha aceitado foi REMOVIDA: nao achei fonte
+// AOSP arquivo:linha que a produzisse, e um parser que aceita um formato que
+// ninguem confirmou e pior do que um que recusa.
+//
+// appId e uid %% 100000: a coluna do uid no arquivo e o appid, entao e assim que
+// o app do perfil 10 cai na mesma linha do perfil 0.
+
+// appId -> ate `max_out` pacotes. Devolve quantos preencheu (0 = nao mapeia).
+static inline int bc_peercred_packages(const char *list, size_t len, int uid,
+                                       char (*out)[BC_PEERCRED_PKG_CAP], int max_out) {
+    if (list == NULL || out == NULL || max_out <= 0) return 0;
     const int want = bc_peercred_app_id(uid);
-    if (want < 0 || list == NULL) return false;
+    if (want < 0) return 0;
+    int n = 0;
     size_t pos = 0;
     while (pos < len) {
         size_t fim = pos;
         while (fim < len && list[fim] != '\n') fim++;
-        size_t l = fim - pos;
-        if (l > 12 && memcmp(list + pos, "package:", 8) == 0) {
-            const char *p = list + pos + 8;
-            const char *q = p;
-            while ((size_t)(q - p) < l && *q != ' ') q++;
-            const size_t nl = (size_t)(q - p);
-            if (nl == 0) { pos = fim + 1; continue; }
-            const size_t rest = l - (size_t)(q - pos);
-            // O FORMATO do /data/system/packages.list mudou entre versoes do
-            // Android: o uid aparece como "system=<n>" em umas e como token
-            // solto ("com.foo 1000 /data/...") em outras. supporting os dois
-            // e mais barato que descobrir a versao do aparelho, e o UID que
-            // importa e o appId nos dois casos.
-            int v = -1;
-            for (size_t k = 0; k + 7 <= rest; k++) {
-                if (memcmp(q + k, "system=", 7) == 0) {
-                    size_t r = k + 7;
-                    v = 0;
-                    while (r < rest && q[r] >= '0' && q[r] <= '9') { v = v * 10 + (q[r] - '0'); r++; }
-                    break;
-                }
-            }
-            if (v < 0) {
-                // token solto: "<uid> <dataDir> ..." logo depois do nome
-                const char *t = q;
-                size_t k = 0;
-                if (k < rest && t[k] >= '0' && t[k] <= '9') {
-                    v = 0;
-                    while (k < rest && t[k] >= '0' && t[k] <= '9') { v = v * 10 + (t[k] - '0'); k++; }
-                }
-            }
-            if (v == want) {
-                if (nl >= outcap) return false;
-                memcpy(out, p, nl);
-                out[nl] = '\0';
-                return true;
-            }
+        const size_t l = fim - pos;
+        // "package:" opcional (algunsversoes prefixam), depois <nome> <uid> ...
+        const char *p = list + pos;
+        size_t rest = l;
+        if (rest > 8 && memcmp(p, "package:", 8) == 0) { p += 8; rest -= 8; }
+        size_t nl = 0;
+        while (nl < rest && p[nl] != ' ') nl++;
+        if (nl == 0) { pos = fim + 1; continue; }
+        size_t k = nl;
+        while (k < rest && p[k] == ' ') k++;
+        if (k >= rest || p[k] < '0' || p[k] > '9') { pos = fim + 1; continue; }
+        int v = 0;
+        while (k < rest && p[k] >= '0' && p[k] <= '9') { v = v * 10 + (p[k] - '0'); k++; }
+        if (v == want && n < max_out && nl < BC_PEERCRED_PKG_CAP) {
+            memcpy(out[n], p, nl);
+            out[n][nl] = '\0';
+            n++;
         }
         pos = fim + 1;
     }
-    return false;
+    return n;
 }
 
-// O pedido e deste peer. Devolve true quando pode servir.
-static inline bool bc_peercred_pkg_matches(const char *caller_pkg, const char *want_pkg) {
-    if (caller_pkg == NULL || want_pkg == NULL) return false;
-    if (caller_pkg[0] == '\0' || want_pkg[0] == '\0') return false;
-    return strcmp(caller_pkg, want_pkg) == 0;
+// O pedido e de um dos pacotes daquele appId, e so deles.
+static inline bool bc_peercred_pkg_matches(char (*caller_pkgs)[BC_PEERCRED_PKG_CAP],
+                                          int n, const char *want_pkg) {
+    if (caller_pkgs == NULL || want_pkg == NULL) return false;
+    if (want_pkg[0] == '\0') return false;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(caller_pkgs[i], want_pkg) == 0) return true;
+    }
+    return false;
 }
 
 #endif // BC_PEERCRED_H

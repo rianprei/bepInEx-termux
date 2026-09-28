@@ -1039,53 +1039,63 @@ static void bc_fd_deny(int fd, const char *what) {
 // FAIL-CLOSED: packages.list ilegivel = pedido RECUSADO. Aceitar na duvida
 // seria devolver a arvore de mods de qualquer jogo a qualquer processo, que e
 // o oposto do que a mudanca de arvore root-only fez.
-static bool bc_peer_is_caller(int client_fd, char *pkg_out, size_t pkg_cap) {
-    if (pkg_out == NULL || pkg_cap == 0) return false;
-    pkg_out[0] = '\0';
+// Preenche a lista de PACOTES do appId do chamador. Plural porque varios
+// pacotes compartilham o mesmo appId (sharedUserId): aceitar so o primeiro
+// recusava o segundo ate os mods DELE MESMO.
+static int bc_peer_is_caller(int client_fd,
+                             char (*pkgs)[BC_PEERCRED_PKG_CAP], int max_pkgs) {
+    if (pkgs == NULL || max_pkgs <= 0) return 0;
+    for (int i = 0; i < max_pkgs; i++) pkgs[i][0] = '\0';
     struct ucred cred;
     socklen_t clen = sizeof(cred);
     memset(&cred, 0, sizeof(cred));
     if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &clen) != 0 ||
         clen != sizeof(cred)) {
-        LOGE("peer: SO_PEERCRED falhou: %s", strerror(errno));
-        return false;
+        LOGE("peer: SO_PEERCRED falhou: %s (fail-closed)", strerror(errno));
+        return 0;
     }
     int fd = open("/data/system/packages.list", O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         LOGE("peer: packages.list ilegivel: %s (fail-closed)", strerror(errno));
-        return false;
+        return 0;
     }
     char list[16384];
     ssize_t n = read(fd, list, sizeof(list) - 1);
     close(fd);
     if (n <= 0) {
         LOGE("peer: packages.list vazio (fail-closed)");
-        return false;
+        return 0;
     }
     list[n] = '\0';
-    if (!bc_peercred_lookup(list, (size_t)n, (int)cred.uid, pkg_out, pkg_cap)) {
-        LOGE("peer: uid %d nao mapeia para pacote (fail-closed)", (int)cred.uid);
+    int got = bc_peercred_packages(list, (size_t)n, (int)cred.uid, pkgs, max_pkgs);
+    if (got <= 0) {
+        LOGE("peer: uid %d nao mapeia para pacote (formato desconhecido ou "
+             "pacote ausente — fail-closed)", (int)cred.uid);
+        return 0;
+    }
+    return got;
+}
+
+// O pedido (pkg, nome) so e servido se o pkg for um DOS pacotes do appId do
+// chamador, e so eles.
+static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *what) {
+    char (*caller)[BC_PEERCRED_PKG_CAP] =
+        (char (*)[BC_PEERCRED_PKG_CAP])alloca(sizeof(*caller) * BC_PEERCRED_PKG_MAX);
+    int n = bc_peer_is_caller(client_fd, caller, BC_PEERCRED_PKG_MAX);
+    if (n <= 0) {
+        bc_fd_deny(client_fd, "peer nao identificavel");
+        LOGE("%s: recusado — nao deu para identificar o chamador", what);
+        return false;
+    }
+    if (!bc_peercred_pkg_matches(caller, n, want_pkg)) {
+        bc_fd_deny(client_fd, "pkg nao e do chamador");
+        LOGE("%s: recusado — o chamador (appId %s) pediu %s", what,
+             caller[0], want_pkg ? want_pkg : "(nulo)");
         return false;
     }
     return true;
 }
 
-// O pedido (pkg, nome) so e servido se o pkg for o do chamador.
-static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *what) {
-    char caller[BC_PEERCRED_PKG_CAP];
-    if (!bc_peer_is_caller(client_fd, caller, sizeof(caller))) {
-        bc_fd_deny(client_fd, "peer nao identificavel");
-        LOGE("%s: recusado — nao deu para identificar o chamador", what);
-        return false;
-    }
-    if (!bc_peercred_pkg_matches(caller, want_pkg)) {
-        bc_fd_deny(client_fd, "pkg nao e do chamador");
-        LOGE("%s: recusado — chamador e %s, pediu %s", what, caller,
-             want_pkg ? want_pkg : "(nulo)");
-        return false;
-    }
-    return true;
-}
 
 
 // A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
