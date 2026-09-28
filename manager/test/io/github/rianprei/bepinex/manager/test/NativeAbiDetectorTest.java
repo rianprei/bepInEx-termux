@@ -128,6 +128,13 @@ public final class NativeAbiDetectorTest {
                     !gadgetMismatch.success && gadgetMismatch.message.equals(
                             "ABI incompatível: o jogo usa armeabi-v7a, mas o mod usa arm64-v8a. "
                                     + "Baixe a versão armeabi-v7a do mod."));
+
+            String invalidGadgetAbi = NativeAbiDetector.abiFromElfHeader(header(2, 999));
+            String invalidGadgetError = LooseModInstaller.gadgetAbiError(
+                    invalidGadgetAbi, null);
+            check("gadget sem ABI ELF é recusado mesmo com ABI do jogo desconhecida",
+                    invalidGadgetError != null
+                            && invalidGadgetError.contains("não é uma biblioteca ELF válida"));
         } finally {
             deleteTree(tmp);
         }
