@@ -79,3 +79,4 @@ test/termux_client_test.py	wired
 test/arm32_dobby_qemu_smoke.sh	skip	exige zig, qemu-arm e cmake no host e baixa o Dobby da rede por curl; o gate nao tem rede, e FAIL aqui seria vermelho por falta de ferramenta de outra maquina, nao por defeito do codigo
 test/fuzz/sabotage_check.sh	skip	verificacao de verificacao: injeta OOB de proposito em cada parser para provar que o sanitizer pega, entao o script nao pode passar; e verificacao pontual, nao passo de gate (o proprio cabecalho do arquivo diz isso)
 test/fuzz/seed_corpus.py	skip	gerador de corpus para as rodadas longas de 10 min que o README de test/fuzz manda rodar a mao; nao e teste e nao tem o que pasar
+test/merge_subject_check_test.sh	run
