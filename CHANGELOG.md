@@ -45,14 +45,14 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `75e208a` — uni/symbols — build-id reproduzível, símbolo guardado e emissor único de push_mod
 - `080b7f0` — uni/docs-hash-gate — hash declarado mesclado tem que existir e estar na base
 - `7028630` — uni/ux-errors — ABI x86/sem-nativo acionável, magic ELF testado, arm32 vence x86
+- `12f00b3` — uni/il2cpp-bridge — recusa tarballs com links
+- `03eac87` — uni/termux-client4 — contrato de saída do cliente
 
 ### Pendente (não mergeado, sem hash de merge)
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
-- termux-client — cliente Termux do protocolo do companion
 - caso-refs — citação de caso aponta para caso que existe, com gate no verify_all
 - fuzz-upatch — alvo de fuzz do emissor de thunk arm64, com Caso 93
-- il2cpp-bridge — empacotador do script Frida com a ponte IL2CPP pinada por sha256
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio
 - audit3-hardening — endurecimento da terceira rodada de auditoria
 
