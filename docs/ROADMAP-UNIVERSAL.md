@@ -270,7 +270,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)
-- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
+- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/adb/bepinex/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
 - [~] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar). (host OK: README e `module/*.sh` citam os três; device: pendente — só Magisk foi exercitado, e nem isso desde o formato novo.)
 - **Verifica:** zip instalado pelo app Magisk → reboot → Manager no launcher → SA2 com mod funciona.
 

@@ -1522,7 +1522,7 @@ static void load_dynamic_mods() {
         }
         if (probe.result == BC_ELF_FILE_NO_SYMBOL) {
             LOGW("mod loader: %s — sem bc_mod_register: nao e mod do Battle Cats, "
-                 "descartado sem abrir; mods autonomos vao em /data/local/tmp/mods/<pacote>/",
+                 "descartado sem abrir; mods autonomos vao em /data/adb/bepinex/mods/<pacote>/",
                  names[i]);
             close(mfd);
             failed++;
@@ -2266,7 +2266,7 @@ public:
         }
 #endif
         if (!be_bc) {
-            // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
+            // F1 (zero-config): a pasta /data/adb/bepinex/mods/<pkg>/ basta pra
             // entrar no caminho de mods autônomos — nada de allowlist, nada de
             // varredura de engine. A allowlist sobrou só pro experimento
             // Cocos2d-x legado (pacote na lista E sem pasta), e mesmo aí

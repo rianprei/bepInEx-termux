@@ -50,6 +50,7 @@
 #include <stdlib.h> // atoi
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -123,7 +124,18 @@ typedef struct bc_fd_ops {
 static inline int bc_fd_open_ro(const char *path) {
     // O_NOFOLLOW e o que impede o root de abrir um link de dentro da arvore
     // para fora dela. O_CLOEXEC para o FD não vazar em fork/exec do jogo.
-    return open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return fd;
+    // O1 (pre-revisão freebuff): um DIRETÓRIO abre com O_RDONLY de boa — e
+    // um "so" que é pasta mandado ao jogo é dlopen de coisa errada. Só
+    // arquivo REGULAR serve; qualquer outra coisa fecha e vira erro.
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        if (errno == 0) errno = EISDIR;   // fstat ok, mas não é regular
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 static inline ssize_t bc_fd_send(int sock, int fd, const void *data, size_t len) {
@@ -155,13 +167,10 @@ static inline ssize_t bc_fd_recv_fd(int sock, void *data, size_t cap, int *out_f
     struct iovec iov;
     union {
         struct cmsghdr align;
-        char buf[CMSG_SPACE(sizeof(int))];
+        char buf[CMSG_SPACE(sizeof(int)) * 8];
     } cmsgu;
-    char name[CMSG_SPACE(sizeof(int))];
-    struct cmsghdr *cmsg;
     memset(&msg, 0, sizeof(msg));
     memset(&cmsgu, 0, sizeof(cmsgu));
-    memset(name, 0, sizeof(name));
     *out_fd = -1;
     iov.iov_base = data;
     iov.iov_len = cap;
@@ -171,13 +180,29 @@ static inline ssize_t bc_fd_recv_fd(int sock, void *data, size_t cap, int *out_f
     msg.msg_controllen = sizeof(cmsgu.buf);
     ssize_t r = recvmsg(sock, &msg, MSG_CMSG_CLOEXEC);
     if (r <= 0) return r;
-    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
-            cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
-            memcpy(out_fd, CMSG_DATA(cmsg), sizeof(int));
+    // O2 (pre-revisão freebuff): o kernel JÁ colocou cada FD do SCM_RIGHTS
+    // na nossa tabela — ignorar cmsg extra é VAZAMENTO na hora. Varre TODOS
+    // os cmsgs; 1 FD no total = o pedido; 2+ = fecha TUDO e devolve erro
+    // (o canal não fala "qual FD quer" — 2+ é protocolo quebrado, nunca
+    // "pega o último").
+    int got[8];
+    int nfd = 0;
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) continue;
+        size_t bytes = cmsg->cmsg_len - CMSG_LEN(0);
+        for (size_t off = 0; off + sizeof(int) <= bytes && nfd < 8; off += sizeof(int)) {
+            memcpy(&got[nfd], (char *)CMSG_DATA(cmsg) + off, sizeof(int));
+            nfd++;
         }
     }
-    return r;
+    if (nfd == 1) {
+        *out_fd = got[0];
+        return r;
+    }
+    for (int i = 0; i < nfd; i++) close(got[i]);   // nenhum vaza
+    errno = EPROTO;
+    return -1;
 }
 
 // Envio simples, sem FD: o que o protocolo TXT usa (conf/allowlist, que
@@ -218,9 +243,33 @@ static inline ssize_t bc_fd_read_line(int fd, char *buf, size_t cap) {
     while (used + 1 < cap) {
         ssize_t n = read(fd, buf + used, 1);
         if (n < 0) { if (errno == EINTR) continue; return -1; }
-        if (n == 0) break;
+        if (n == 0) {
+            // EOF no MEIO da linha: linha truncada NÃO é linha. Erro — quem
+            // chamou decide fechar; devolver a metade como válida é o meio
+            // de um comando ser executado pela metade.
+            if (used == 0) return 0;   // EOF limpo no início de linha
+            errno = EPROTO;
+            return -1;
+        }
         if (buf[used] == '\n') break;
         used++;
+    }
+    if (used + 1 >= cap) {
+        // O3 (pre-revisão freebuff): encheu o buffer SEM '\n' — a linha é
+        // maior que o protocolo aceita. Descarta ATÉ o '\n' (para a
+        // PRÓXIMA linha começar limpa) e devolve ERRO: a versão antiga
+        // devolvia a metade como válida, e quem executava era um comando
+        // truncado.
+        char sink;
+        for (;;) {
+            ssize_t n = read(fd, &sink, 1);
+            if (n < 0) { if (errno == EINTR) continue; return -1; }
+            if (n == 0) { errno = EPROTO; return -1; }   // EOF: linha perdida
+            if (sink == '\n') break;
+        }
+        buf[0] = '\0';
+        errno = EMSGSIZE;
+        return -1;
     }
     buf[used] = '\0';
     return (ssize_t)(used > 0 ? used : (buf[0] == '\0' ? 0 : 1));

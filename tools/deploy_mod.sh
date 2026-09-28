@@ -3,7 +3,8 @@
 # ndk-build → adb push (staging em /data/local/tmp) → su cp/chmod/chcon →
 # force-stop (o loader carrega o mod no próximo boot do processo).
 #
-# Contratos: C1 (/data/local/tmp/mods/<pkg>/, dir 755, arquivo 644, escrito
+# Contratos: C1 (/data/adb/bepinex/mods/<pkg>/ — árvore root-only, o trânsito
+# por /data/local/tmp é só trampolim do adb; dir 755, arquivo 644, escrito
 # via su) e F1c/SELinux — arquivo copiado DEPOIS do boot não ganha o rótulo
 # bepinex_mod_file sozinho; sem o chcon, em Enforcing o jogo não lê.
 # Só o .so: .conf/.json são com o Manager (F5). Nada toca arquivos do jogo.
