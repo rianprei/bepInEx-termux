@@ -31,10 +31,17 @@ import sys
 # THROUGH (que exigiria outras garantias de permissao).
 #
 # O default continua sendo o do companion, entao em producao nada muda.
-import os as _os
+import os
 
-_override = _os.environ.get("BEPINEX_COMPANION_SOCKET")
+_override = os.environ.get('BEPINEX_COMPANION_SOCKET')
 SOCKET_NAME = ('\0' + _override) if _override else '\0bc_companion'
+
+# Envio de arquivo: o companion le <tamanho> bytes, entao o cliente precisa de
+# tempo suficiente para um arquivo grande e nao pode segurar a conexao aberta
+# para sempre. PUSH_TIMEOUT e menor que o timeout de comando: um push que
+# travou e pior do que um comando que travou, porque nao tem resposta util.
+PUSH_TIMEOUT = 20.0
+PUSH_CHUNK = 8192
 
 # Cores ANSI por nível de log — fonte real: BepInEx/BepInEx,
 # Console/Unix/TtyHandler.cs L101-104 (ansiColorMapping[], indexado por
@@ -107,6 +114,68 @@ def send_command(cmd):
     finally:
         sock.close()
 
+def push_mod(path):
+    """Envia um arquivo .so para o companion instalar.
+
+    ACHADO DO HERMES (bug real): a versao anterior mandava SO o cabecalho
+    "push_mod <nome> <tamanho>\n" e nenhum payload. O companion
+    (jni/companion.cpp, handle_push_mod) le EXATAMENTE <tamanho> bytes depois do
+    cabecalho, entao ficava esperando payload que nunca chegava: timeout, e o
+    arquivo nunca aparecia em BC_MODS_DIR.
+
+    O tamanho declarado e o que foi REALMENTE LIDO do arquivo, e nao o que o
+    stat falava. Se o arquivo encolher (ou for truncado) entre o stat e a
+    leitura, declarar o stat seria mandar um cabecalho que o companion nunca
+    satisfaz — o mesmo timeout, com uma causa diferente. Ler primeiro e
+    declarar o que saiu e o que mantem os dois lados de acordo.
+    """
+    if not os.path.isfile(path):
+        return "error: arquivo ausente: %s" % path
+    try:
+        with open(path, "rb") as f:
+            payload = f.read()
+    except OSError as e:
+        return "error: falha ao ler %s (%s)" % (path, e)
+    if not payload:
+        # size <= 0 e recusado pelo companion com "invalid size"; melhor dizer
+        # isso aqui do que mandar cabecalho com 0 e esperar timeout.
+        return "error: arquivo vazio: %s" % path
+    name = os.path.basename(path)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(PUSH_TIMEOUT)
+    try:
+        sock.connect(SOCKET_NAME)
+        # cabecalho e payload NA MESMA conexao: o companion le os bytes do
+        # payload no mesmo fd, logo que recv a linha.
+        sock.sendall(("push_mod %s %d\n" % (name, len(payload))).encode())
+        # payload em pedacos, para nao passar do limite de um send() e para
+        # nao travar com arquivo grande esperando o buffer inteiro.
+        for offset in range(0, len(payload), PUSH_CHUNK):
+            sock.sendall(payload[offset:offset + PUSH_CHUNK])
+        chunks = []
+        while True:
+            data = sock.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+        resp = b"".join(chunks).decode()
+        if not resp:
+            return "error: resposta vazia ao enviar %s" % name
+        return resp
+    except socket.timeout:
+        return "error: timeout ao enviar %s" % name
+    except ConnectionRefusedError:
+        return "error: connection refused (companion not running?)"
+    except FileNotFoundError:
+        return "error: socket not found (companion not running?)"
+    except (ConnectionResetError, BrokenPipeError):
+        return "error: conexao resetada durante o envio de %s" % name
+    except OSError as e:
+        return "error: falha de conexao durante o envio (%s)" % e
+    finally:
+        sock.close()
+
+
 def stream():
     """Abre conexão keep-alive e imprime cada linha de evento de hook
     (tail -f do LogOutput.log do BepInEx) até o usuário interromper
@@ -142,12 +211,18 @@ def stream():
 def main():
     if len(sys.argv) < 2:
         print("Usage: python3 termux_client.py <command> [arg]")
-        print("Commands: ping | status | stream | list_mods | toggle_mod <name> | reload_config | hook_overhead")
+        print("Commands: ping | status | stream | list_mods | toggle_mod <name> | set_mod <name> <valor> | push_mod <arquivo.so> | unpatch_mod <name> | repatch_mod <name> | list_patches | hook_overhead | reload_config")
         sys.exit(1)
 
     cmd = sys.argv[1]
     if cmd == "stream":
         stream()
+        return
+    if cmd == "push_mod":
+        if len(sys.argv) < 3:
+            print("Usage: push_mod <caminho/do/mod.so>")
+            sys.exit(1)
+        print(push_mod(sys.argv[2]))
         return
     if cmd == "toggle_mod":
         if len(sys.argv) < 3:

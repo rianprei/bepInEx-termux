@@ -73,16 +73,28 @@ LIST_PATCHES = "patches 0"
 # push_mod <nome> <tamanho> -> "ok: <n> bytes written"
 # (companion.cpp, handle_push_mod)
 HOOK_OVERHEAD_PREFIX = "avg_dispatcher_overhead_us="
+# o que o "companion" recebeu no push_mod, por nome de arquivo
+PUSH_RECEIVED = {}
+# o que o servidor viu: (nome, declarado, recebido)
+PUSH_VISTO = []
+# o que o servidor REALMENTE recebeu na rede, por nome
+PUSH_RECEBEU = {}
 
 
 def despachante(sock):
     """Um pedido por conexao, como o companion (que fecha apos responder)."""
+    # le ate a quebra de linha, GUARDANDO o resto: o companion (read_command)
+    # le byte a byte so ate o "\n" e deixa o payload seguinte no socket. Um
+    # recv(4096) que engole cabecalho+payload junto e descarta o resto faz o
+    # cliente parecer quebrado quando ele esta certo.
     buf = b""
     while b"\n" not in buf:
-        r = sock.recv(4096)
+        r = sock.recv(1)
         if not r:
             return
         buf += r
+    at = buf.index(b"\n")
+    resto = buf[at + 1:]
     linha = buf.split(b"\n", 1)[0].decode(errors="replace").strip()
 
     if linha == "stream":
@@ -100,8 +112,33 @@ def despachante(sock):
             sock.sendall((l + "\n").encode())
     elif linha == "list_patches":
         sock.sendall((LIST_PATCHES + "\n").encode())
-    elif linha == "push_mod mod.so 12":
-        sock.sendall(b"ok: 12 bytes written\n")
+    elif linha.startswith("push_mod "):
+        # O SERVIDOR LE EXATAMENTE <tamanho> BYTES, como o handle_push_mod
+        # (jni/companion.cpp). A versao anterior deste teste respondia "ok"
+        # sem ler NADA — que e como o bug passou: o cliente mandava so o
+        # cabecalho e o teste dizia que tinha dado certo.
+        _rest = linha.split(" ")
+        _name = _rest[1] if len(_rest) > 1 else "?"
+        _size = int(_rest[2]) if len(_rest) > 2 else -1
+        _got = b""
+        if len(resto) >= _size:
+            _got = resto[:_size]
+        else:
+            _got = resto
+            while len(_got) < _size:
+                _c = sock.recv(min(65536, _size - len(_got)))
+                if not _c:
+                    break
+                _got += _c
+        if len(_got) == _size and PUSH_RECEIVED.get(_name) == _got:
+            sock.sendall(("ok: %d bytes written\n" % _size).encode())
+        elif len(_got) < _size:
+            # o servidor viu que o cliente nao entregou tudo: e o bug do hermes
+            sock.sendall(b"error: transfer incomplete\n")
+        else:
+            sock.sendall(b"error: payload divergente\n")
+        PUSH_VISTO.append((_name, _size, len(_got)))
+        PUSH_RECEBEU[_name] = _got
     elif linha == "hook_overhead":
         sock.sendall((HOOK_OVERHEAD_PREFIX + "7\n").encode())
     else:
@@ -277,8 +314,66 @@ def main():
           HOOK_OVERHEAD_PREFIX in out)
 
     # --- 3. verbo que o companion nao tem -------------------------------
-    out, err_txt, rc = rodar_cliente(cli_path, ["push_mod", "mod.so", "12"], cli_env)
-    check("push_mod -> 'ok: 12 bytes written'", "ok: 12 bytes written" in out)
+    # --- push_mod com PAYLOAD de verdade (achado do hermes) --------------
+    # O servidor le exatamente <tamanho> bytes e compara com o esperado. O
+    # cliente precisa mandar cabecalho E payload, com o tamanho declarado igual
+    # aos bytes realmente lidos do arquivo.
+    import hashlib
+
+    def sha(b):
+        return hashlib.sha256(b).hexdigest()[:12]
+
+    def tentar_push(nome, conteudo, timeout=30):
+        caminho = os.path.join(root, nome)
+        with open(caminho, "wb") as f:
+            f.write(conteudo)
+        PUSH_RECEIVED[nome] = conteudo
+        PUSH_RECEBEU.pop(nome, None)
+        PUSH_VISTO[:] = []
+        o, e, _r = rodar_cliente(cli_path, ["push_mod", caminho], cli_env,
+                                 timeout=timeout)
+        return o, e
+
+    # (a) arquivo pequeno
+    P1 = os.urandom(12)
+    out, _e = tentar_push("pequeno.so", P1)
+    check("push_mod: arquivo pequeno chega byte a byte ('ok: 12 bytes written')",
+          "ok: 12 bytes written" in out)
+    check("push_mod: o servidor leu o payload inteiro (12 de 12)",
+          any(n == "pequeno.so" and decl == 12 and rec == 12
+              for (n, decl, rec) in PUSH_VISTO))
+
+    # (b) arquivo GRANDE, maior que o buffer do servidor e que um send unico
+    GR = 200 * 1024
+    P2 = os.urandom(GR)
+    out, _e = tentar_push("grande.so", P2, timeout=60)
+    check("push_mod: arquivo de %d KB chega inteiro (varias leituras)" % (GR // 1024),
+          ("ok: %d bytes written" % GR) in out)
+    check("push_mod: o servidor leu os %d bytes declarados" % GR,
+          any(n == "grande.so" and decl == GR and rec == GR
+              for (n, decl, rec) in PUSH_VISTO))
+    check("push_mod: grande, os BYTES QUE CHEGARAM na rede batem com o arquivo",
+          sha(PUSH_RECEBEU.get("grande.so", b"")) == sha(P2))
+    check("push_mod: pequeno, os BYTES QUE CHEGARAM na rede batem com o arquivo",
+          sha(PUSH_RECEBEU.get("pequeno.so", b"")) == sha(P1))
+
+    # (c) arquivo VAZIO: erro limpo, sem cabecalho com 0 e sem timeout
+    out, _e = tentar_push("vazio.so", b"")
+    check("push_mod: arquivo vazio da erro limpo (sem timeout)",
+          out.startswith("error:") and "timeout" not in out)
+
+    # (d) arquivo que SOME: erro limpo
+    out, _e = tentar_push("sumiu.so", b"x" * 8)
+    os.unlink(os.path.join(root, "sumiu.so"))
+    out, _e, _rc = rodar_cliente(cli_path,
+                                 ["push_mod", os.path.join(root, "sumiu.so")],
+                                 cli_env, timeout=20)
+    check("push_mod: arquivo que sumiu da erro limpo (sem timeout)",
+          out.startswith("error:") and "timeout" not in out)
+
+    # (e) o tamanho declarado bate com os bytes lidos, e NAO com um stat
+    check("push_mod: declarado == recebido em todos os envios",
+          all(decl == rec for (_n, decl, rec) in PUSH_VISTO if rec > 0))
 
     out, err_txt, rc = rodar_cliente(cli_path, ["verbo_que_nao_existe"], cli_env)
     check("verbo desconhecido -> unknown_command", "unknown_command" in out)
