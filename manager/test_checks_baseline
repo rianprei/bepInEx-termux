@@ -1,0 +1,8 @@
+# manager/test_checks_baseline — quantos checks a suíte JVM completa executa.
+#
+# Única fonte do número: manager/run_tests.sh compara o resumo real do
+# TestRunner com este arquivo e FALHA se divergir. Assim o baseline não
+# apodrece em silêncio: quem acrescenta ou remove um check tem que atualizar
+# este arquivo no MESMO commit do teste, e o gate cobra.
+#
+# 1813

@@ -49,9 +49,19 @@ fi
 SUMMARY="$(grep -E '^RUNNER: checks=[0-9]+ falhas=[0-9]+$' "${RUNNER_LOG}")"
 CHECKS="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=([0-9]+) falhas=[0-9]+$/\1/')"
 FAILURES="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=[0-9]+ falhas=([0-9]+)$/\1/')"
-# Baseline captured from the complete suite; this guards against silently
-# dropping test classes while keeping the runner's process status green.
-MIN_CHECKS=1813
+# Baseline vem de manager/test_checks_baseline, nao de um numero escrito aqui:
+# a comparacao e por IGUALDADE, entao suite que cresce ou encolhe sem
+# atualizar o arquivo no mesmo commit quebra o gate em vez de passar calada.
+BASELINE_FILE="${SCRIPT_DIR}/test_checks_baseline"
+if [ ! -f "${BASELINE_FILE}" ]; then
+    echo "ERRO: ${BASELINE_FILE} ausente: sem baseline nao ha como validar a suite" >&2
+    exit 1
+fi
+MIN_CHECKS="$(grep -Eo '[0-9]+' "${BASELINE_FILE}" | head -1)"
+if [ -z "${MIN_CHECKS}" ]; then
+    echo "ERRO: ${BASELINE_FILE} sem numero de checks" >&2
+    exit 1
+fi
 
 if grep -Fq '[RUNNER FAIL]' "${RUNNER_LOG}"; then
     echo "ERRO: TestRunner registrou falha por teste" >&2
@@ -61,8 +71,8 @@ if [ "${FAILURES}" -ne 0 ]; then
     echo "ERRO: TestRunner reportou ${FAILURES} falha(s)" >&2
     exit 1
 fi
-if [ "${CHECKS}" -lt "${MIN_CHECKS}" ]; then
-    echo "ERRO: TestRunner executou ${CHECKS} checks; mínimo ${MIN_CHECKS}" >&2
+if [ "${CHECKS}" -ne "${MIN_CHECKS}" ]; then
+    echo "ERRO: TestRunner executou ${CHECKS} checks; baseline ${MIN_CHECKS}. Atualize manager/test_checks_baseline no MESMO commit do teste novo (ou do teste removido)." >&2
     exit 1
 fi
 if [ "${RUNNER_STATUS}" -ne 0 ]; then

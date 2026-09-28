@@ -68,6 +68,15 @@ public class TestRunner {
         runTest("ShellExecTest", ShellExecTest::run);
         runTest("Dll2PatchTest", Dll2PatchTest::run);
 
+        // Fixture do gate: com BEPINEX_TEST_FAILING_FIXTURE=1 o runner executa
+        // um teste que falha de proposito, para test/manager_runner_real_fail_test.sh
+        // conferir o contrato de accumulo (status != 0, [RUNNER FAIL] com a
+        // contagem, resumo com falhas=1) no runner de verdade. Sem a variavel,
+        // o runner se comporta como sempre.
+        if ("1".equals(System.getenv("BEPINEX_TEST_FAILING_FIXTURE"))) {
+            runTest("FixtureFailingTest", FixtureFailingTest::run);
+        }
+
         System.out.println("RUNNER: checks=" + checksRun + " falhas=" + failures.size());
         if (failures.isEmpty()) {
             System.out.println("=== TODOS OS TESTES PASSARAM (0 FALHAS) ===");
