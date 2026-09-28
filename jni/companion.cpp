@@ -34,6 +34,8 @@
 #include "bc_loader.h"
 #include "bc_generic_allowlist.h"  // PATH <pkg>: a allowlist mora na árvore root-only, quem lê é o root
 #include "bc_path_decide.h"  // bc_path_is_bc: o gate dos verbos BC (chamador É o jogo BC)
+#include "bc_push_io.h"  // transporte do push_mod: exatamente SIZE + EOF (testado no host)
+#include "bc_launch_check.h"  // root só executa arquivo regular, do root, sem escrita de app
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
 // Contador de seq dos sinais: o jogo (app domain) não tem permissão_set, então
@@ -698,40 +700,22 @@ static void handle_push_mod(int fd, const char *name, long size) {
         return;
     }
 
-    char chunk[8192];
-    long remaining = size;
-    bool ok = true;
-    while (remaining > 0) {
-        size_t want = remaining < (long)sizeof(chunk) ? (size_t)remaining : sizeof(chunk);
-        ssize_t got = read(fd, chunk, want);
-        if (got < 0 && errno == EINTR) {
-            // BUG REAL achado por revisão (kilo): sinal (comum no Android,
-            // não é erro de transferência) fazia read() retornar -1/EINTR e
-            // o loop tratava como falha fatal — abortava e apagava o .so
-            // parcial no meio de uma transferência válida. EINTR nunca é
-            // erro real, só precisa repetir a MESMA leitura.
-            continue;
-        }
-        if (got <= 0) {
-            LOGE("push_mod: read failed at %ld bytes remaining: %s",
-                 remaining, got == 0 ? "EOF" : strerror(errno));
-            ok = false;
-            break;
-        }
-        ssize_t w = write(out, chunk, (size_t)got);
-        if (w != got) {
-            LOGE("push_mod: write(%s) failed: %s", path, strerror(errno));
-            ok = false;
-            break;
-        }
-        remaining -= got;
-    }
+    // O transporte (EXATAMENTE size bytes + EOF do half-close do emissor) é
+    // bc_push_recv_exact — o mesmo código que o teste de host exercita no
+    // socketpair. Antes: o laço inline lia size bytes e calava sobre o
+    // resto — bytes a mais ficavam no socket e envenenavam o próximo
+    // comando, e o "ok" confirmava uma transferência que o protocolo não
+    // garantia completa.
+    char twhy[192] = {0};
+    bool ok = bc_push_recv_exact(fd, out, size, twhy, sizeof(twhy)) == 0;
     close(out);
 
     if (!ok) {
+        LOGE("push_mod: recusado (%s)", twhy);
         unlink(path);  // arquivo parcial não deve ficar meio-carregado no diretório de mods
-        const char *e = "error: transfer incomplete\n";
-        write_all(fd, e, strlen(e));
+        char e[256];
+        int en = snprintf(e, sizeof(e), "error: %s\n", twhy);
+        if (en > 0) write_all(fd, e, (size_t)en);
         return;
     }
 
@@ -1682,14 +1666,40 @@ static void daemonize_termux_server(int game_fd) {
 // Requer allow-external-apps=true em ~/.termux/termux.properties
 // (documentado no README) — sem isso o RunCommandService recusa
 // silenciosamente, o companion segue normal.
+// O console mora NO MÓDULO (id=bc-poc, o mesmo do build_module.sh:114-118 —
+// trocar o id do módulo troca este caminho junto): empacotado pelo build,
+// reproduzível de um clone, root:root. O caminho ANTIGO apontava para dentro
+// do dado de outro app (/data/data/com.termux/files/home/battlecats-mods/...)
+// — irrecuperável de um clone e arquivo gravável por app, que é escalada
+// quando o root executa.
+#define BC_CONSOLE_PATH "/data/adb/modules/bc-poc/termux-console/bepin-console"
+
 static void launch_termux_console() {
-    const char *cmd =
+    // Barreira ANTES de executar: o companion é ROOT, e root só executa o
+    // que o root controla (arquivo regular, dono root, nada gravável por
+    // grupo/outros). bc_root_script_ok é o MESMO código que o teste de host
+    // exercita — se a checagem divergir, o teste cai.
+    struct stat st;
+    char why[192] = {0};
+    if (lstat(BC_CONSOLE_PATH, &st) != 0) {
+        LOGW("launch_termux_console: %s ausente (modulo antigo?) — console não sobe",
+             BC_CONSOLE_PATH);
+        return;
+    }
+    if (bc_root_script_ok(&st, why, sizeof(why)) != 0) {
+        LOGW("launch_termux_console: recusado (%s): %s — root não executa", why,
+             BC_CONSOLE_PATH);
+        return;
+    }
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
         "am start -n com.termux/com.termux.app.TermuxActivity >/dev/null 2>&1; "
         "am startservice -n com.termux/com.termux.app.RunCommandService "
         "-a com.termux.RUN_COMMAND "
         "--es com.termux.RUN_COMMAND_PATH "
-        "'/data/data/com.termux/files/home/battlecats-mods/zygisk-bc-poc/termux-console/bepin-console' "
-        "--ez com.termux.RUN_COMMAND_BACKGROUND false >/dev/null 2>&1 &";
+        "'%s' "
+        "--ez com.termux.RUN_COMMAND_BACKGROUND false >/dev/null 2>&1 &",
+        BC_CONSOLE_PATH);
     int rc = system(cmd);
     if (rc != 0) {
         LOGW("launch_termux_console: system() rc=%d (Termux/RUN_COMMAND instalado e habilitado?)", rc);

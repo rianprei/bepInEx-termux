@@ -46,6 +46,20 @@ while len(received) < size:
     if not chunk:
         break
     received += chunk
+# CONTRATO DO TRANSPORTE (companion-followups #1): depois do payload o
+# emissor FECHA o lado de escrita — o EOF e a prova de que nao sobrou
+# byte. O mock exige igual ao companion real (bc_push_recv_exact):
+# excesso = recusa; sem half-close = recusa em 0.5s, nunca espera mudo.
+conn.settimeout(0.5)
+tail = b"SEM_EOF"
+try:
+    tail = conn.recv(256)
+except socket.timeout:
+    pass
+if received and len(received) == size and tail not in (b"",):
+    received = received + b"__EXCESSO__"  # o sha vai divergir: recusa
+if received and len(received) == size and tail == b"":
+    pass  # exato + half-close: transferencia integra
 with open(out_dir + "/got_name", "w") as fh:
     fh.write(name)
 with open(out_dir + "/got_size", "w") as fh:
