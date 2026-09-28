@@ -4,6 +4,7 @@
 
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef void *(*bc_mono_get_root_domain_fn)(void);
@@ -127,15 +128,56 @@ static inline bc_managed_runtime bc_mono_runtime_from_maps_file(const char *maps
     FILE *maps = fopen(maps_path, "r");
     if (!maps) return BC_MANAGED_RUNTIME_NONE;
 
-    char line[4096];
+    // Linha INTEIRA, não fatia de 4096: um nome de lib cortado na
+    // fronteira do fgets sumia e o runtime virava NONE falso. Acumula em
+    // blocos com teto (linha hostil gigante não aloca sem limite); o que
+    // passar do teto é ignorado para o match, nunca executado.
+    static const size_t max_line = 1024 * 1024;
+    char chunk[4096];
+    char *line = nullptr;
+    size_t len = 0;
+    size_t cap = 0;
     bool mono = false;
     bool il2cpp = false;
-    while (fgets(line, sizeof(line), maps)) {
-        mono = mono || bc_mono_maps_has_library(line, "libmonobdwgc-2.0.so")
-                || bc_mono_maps_has_library(line, "libmono.so");
-        il2cpp = il2cpp || bc_mono_maps_has_library(line, "libil2cpp.so");
-        if (mono && il2cpp) break;
+    bool truncated = false;
+    while (fgets(chunk, sizeof(chunk), maps)) {
+        size_t n = strlen(chunk);
+        bool complete = n > 0 && chunk[n - 1] == '\n';
+        if (!truncated) {
+            if (len + n + 1 > cap) {
+                size_t want = len + n + 1;
+                if (want > max_line) {
+                    truncated = true;
+                } else {
+                    size_t grown = cap ? cap : 4096;
+                    while (grown < want) grown *= 2;
+                    if (grown > max_line) grown = max_line;
+                    char *bigger = (char *)realloc(line, grown);
+                    if (!bigger) {
+                        free(line);
+                        fclose(maps);
+                        return BC_MANAGED_RUNTIME_NONE;
+                    }
+                    line = bigger;
+                    cap = grown;
+                }
+            }
+            if (!truncated) {
+                memcpy(line + len, chunk, n + 1);
+                len += n;
+            }
+        }
+        if (!complete) continue;
+        if (!truncated && len > 0) {
+            mono = mono || bc_mono_maps_has_library(line, "libmonobdwgc-2.0.so")
+                    || bc_mono_maps_has_library(line, "libmono.so");
+            il2cpp = il2cpp || bc_mono_maps_has_library(line, "libil2cpp.so");
+            if (mono && il2cpp) break;
+        }
+        len = 0;
+        truncated = false;
     }
+    free(line);
     fclose(maps);
     if (mono && il2cpp) return BC_MANAGED_RUNTIME_AMBIGUOUS;
     if (mono) return BC_MANAGED_RUNTIME_MONO;
