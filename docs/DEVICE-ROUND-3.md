@@ -234,7 +234,7 @@ jogo uma vez e procure as recusas literais:
 
 - `não suportado em 32-bit: o hook Dobby é AArch64 e não foi validado em aparelho 32-bit; nenhum hook foi instalado` — `mods/sa2ammo/jni/sa2ammo_mod.cpp:67-68` (anchor: `"não suportado em 32-bit: o hook Dobby é AArch64`).
 - A mesma recusa para `sa2content` — `mods/sa2content/jni/sa2content_mod.cpp:205-206` (anchor: `"não suportado em 32-bit: o hook Dobby é AArch64`).
-- `não suportado em 32-bit: o emissor C4 gera instruções AArch64; nenhuma regra foi aplicada` — `mods/u_patch/jni/u_patch_mod.cpp:790-791` (anchor: `"não suportado em 32-bit: o emissor C4 gera instruções AArch64;`).
+- `não suportado em 32-bit: o emissor C4 gera instruções AArch64; nenhuma regra foi aplicada` — `mods/u_patch/jni/u_patch_mod.cpp:792-793` (anchor: `"não suportado em 32-bit: o emissor C4 gera instruções AArch64;`).
 - `não suportado em 32-bit: a guarda de prólogo e o hook são AArch64; nenhum hook foi instalado` — `mods/u_noads/jni/u_noads_mod.cpp:169-170` (anchor: `"não suportado em 32-bit: a guarda de prólogo e o hook são AArch64;`).
 - O log do detector genérico não pertence ao teste dos quatro mods acima.
   Para testá-lo separadamente, use apenas um app ARM32 já instalado sem pasta
