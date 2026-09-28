@@ -10,3 +10,12 @@ APP_LDFLAGS := -llog -Wl,-z,relro,-z,now -Wl,--as-needed
 # --as-needed garante que nenhuma NEEDED morta volte a aparecer no futuro.
 APP_PLATFORM := android-23
 APP_ABI := arm64-v8a armeabi-v7a
+
+# Build reproduzível + símbolos preservados. Ver jni/repro.mk: sem isto o
+# build-id muda com o diretório de build e o .so de release sai sem nome de
+# função, então um crash do device não é simbolizável.
+# O root do loader É o diretório do projeto: o ndk-build é chamado da raiz do
+# repo (verify_all, build_module.sh e a documentação). Se alguém chamar de
+# outro lugar, o repro.mk reclama com o caminho que procurou.
+BEPINEX_REPRO_ROOT := $(CURDIR)
+include $(BEPINEX_REPRO_ROOT)/jni/repro.mk

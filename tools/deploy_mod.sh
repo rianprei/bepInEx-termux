@@ -9,6 +9,7 @@
 # Só o .so: .conf/.json são com o Manager (F5). Nada toca arquivos do jogo.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$PWD"
 
 [ $# -eq 2 ] || { echo "uso: $0 <id> <pkg>" >&2; exit 2; }
 id=$1
@@ -21,6 +22,14 @@ NDK_BUILD=${NDK_BUILD:-$HOME/Android/Sdk/ndk/23.2.8568313/ndk-build}
 "$NDK_BUILD" -C "mods/$id" NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=jni/Android.mk \
     NDK_APPLICATION_MK=jni/Application.mk -B -j4
 
+# O .so que vai pro DEVICE tem que ser STRIPPED. O ndk-build agora sai
+# não-stripado (jni/repro.mk) para o release ter símbolo de crash, e 1,8 MB de
+# DWARF atravessando adb push é puro atraso. symbols_ship confere que o
+# build-id sobreviveu ao strip, que é o que faz o tombstone do aparelho cruzar
+# com os símbolos guardados.
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "$ROOT/tools/symbols.sh"
 adb wait-for-device
 adb shell su -c true || { echo "su indisponível no device" >&2; exit 1; }
 game_abi=$(adb shell dumpsys package "$pkg" | tr -d '\r' | tools/parse_primary_abi.sh)
@@ -30,6 +39,15 @@ case "$game_abi" in
 esac
 so="mods/$id/libs/$game_abi/lib$id.so"
 [ -f "$so" ] || { echo "build não gerou $so" >&2; exit 1; }
+
+# O .so que vai pro DEVICE tem que ser STRIPPED. O ndk-build agora sai
+# não-stripado (jni/repro.mk) para o release ter símbolo de crash, e 1,8 MB de
+# DWARF atravessando adb push é puro atraso. symbols_ship confere que o
+# build-id sobreviveu ao strip, que é o que faz o tombstone do aparelho cruzar
+# com os símbolos guardados.
+so_ship="$(mktemp -d)/mod.so"
+symbols_ship "$so" "$so_ship"
+so="$so_ship"
 
 mods=/data/local/tmp/mods
 stage=/data/local/tmp/.deploy.$id.$$

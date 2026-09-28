@@ -40,6 +40,17 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | T1 kit de device | merged, sem device | `1224346` cria o kit com backup verificado; `c3da4cc` adiciona relógio falso; `2b3d8c6` corrige stdin herdado; `05b7138` valida SHA-256 de cada arquivo restaurado; tudo isso foi testado em simulação de host |
 | docs de referência no gate | merged, sem device | `73e45b5` estende a checagem para validar linha/faixa e texto literal citado; o gate atual verifica 26 referências; `docs/DEVICE-ROUND.md` é o roteiro da rodada |
 | guarda do gadget no loader | merged, sem device | `e92b13f` rejeita `.so` com `DT_SONAME` de gadget (Caso 63) — é barreira de host, ainda não testada com o gadget real num celular |
+| README honesto | merged, sem device | `37a4120`: matriz de suporte honesta, limite medido do tradutor, Frida pinado; sem device |
+| roteiro device-round-2 | merged, sem device | `6381ead`: roteiro em `docs/DEVICE-ROUND-2.md` + automação com testes host; a rodada no aparelho é pré-requisito de publicação |
+| espera IL2CPP unificada | merged, sem device | `8eba793`: 240s com poll de 200ms, matcher por sufixo, log da rota de abertura; host; sem aparelho |
+| IDs de caso únicos no harness | merged, sem device | `94dd077`: casos renumerados + gate detecta duplicados; host; sem aparelho |
+| tradutor `.dll`→`.bpatch` (JVM→C++) | merged, sem device | `5581e2e`: round-trip real tradutor→parser C++ (Caso 80); testes JVM e harness C++; sem aparelho |
+| ABI dupla arm32 + recusa de hook 32-bit | merged, sem device | `f8a12fc`: loader e mods em arm64-v8a e armeabi-v7a, Dobby arm32 pinado com smoke qemu, hooks recusam 32-bit com log, Manager escolhe o `.so` pela ABI; host e qemu, sem aparelho |
+| limite medido do tradutor | merged, sem device | `139aceb`: 0 de 378 patches em 30 mods convertem (375 sem o tipo-alvo na DLL, 3 por classe aninhada); `docs/DLL-COVERAGE.md` + checagem no gate; sem aparelho |
+| árvore root-only + entrega por FD (mods-reloc) | em revisão, fora da base | `uni/mods-reloc`: mods em diretório root-only com entrega por descritor, kit separa trânsito e árvore; sem hash de merge |
+| companion serve só quem conectou (peercred) | em revisão, fora da base | `uni/peercred`: companion monta a partir de pacote e nome, sem aceitar caminho; sem hash de merge |
+| símbolos e symbolize (symbols) | em revisão, fora da base | `uni/symbols`: build-id reproduzível, símbolos guardados, tombstone vira função e linha; sem hash de merge |
+| fuzz do emissor arm64 (fuzz-upatch) | em revisão, fora da base | `uni/fuzz-upatch`: alvo de fuzz do emissor de thunk com ASan e UBSan; sem hash de merge |
 
 ## Diferença honesta pro Lucky Patcher
 
@@ -270,7 +281,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 
 ### F9 — Pesquisa: bloqueio de anúncio genérico + UX de referência
 - [~] Ponto de hook comum de AdMob/AppLovin/ironSource/Unity Ads (Java via JNI vs wrapper C#). Go/no-go de um `u_noads`. (host OK: `f08164b` — `mods/u_noads` hooka os `Show` de 6 SDKs (15 hooks) e dispara o fechamento pelo callback de cada SDK, com "nunca suprimir sem fechar"; Caso 64 + `test_targets.cpp`/`test_closers.cpp`; device: pendente — precisa rodar no SA2 com o `sa2content` desligado, senão os dois mods brigam pelo mesmo banner.)
-- [ ] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Lista de padrões pra copiar no Manager. (Falta: existe `docs/ROADMAP-COMPETITORS.md` (pesquisa de concorrentes por fonte primária, 3 agentes), mas a lista de padrões de UX para copiar no Manager não foi escrita.)
+- [x] Referência de UX: LSPosed Manager, GameGuardian, Lucky Patcher, MT Manager. Padrões verificados, equivalentes no Manager, custos e top 5 em `docs/UX-REFERENCE.md`. Lucky Patcher sem padrões verificáveis: site oficial retornou HTTP 403. (`3307976d94b5347a7a9c8ea1cb497810ee9436f6`.)
 
 ### F11 — Scripts Frida como mod (runtime, sem PC)
 - [x] Mod `mods/u_frida` (existe, branch): com `*.js` na pasta do jogo, confere `frida-gadget.bin` + `frida-gadget.config` ao lado e dá `dlopen` no gadget. Só no modo script: `uf_config_is_script_mode()` exige JSON válido (≤4KB) com `interaction.type` `script`/`script-directory` — `{}`, `listen`, `connect` ou inválido recusa (o default do gadget é `listen` + `on_load: wait`, que congela o jogo). Selftest Caso 61.
@@ -288,7 +299,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - Limite real: só roda `.dll` feito pra versão **IL2CPP** do jogo. Mod de PC Mono não entra aqui.
 
 ### F13 — Mods `.dll` Mono em jogo Unity Mono
-- [ ] `mono_min.h` + carregar assembly (`mono_domain_assembly_open`) + HarmonyX (roda nativo em Mono). (Falta tudo: não existe `mono_min.h` no repo, e sem jogo-alvo Unity Mono real não dá para validar.)
+- [~] `mono_min.h`: detecção Mono/IL2CPP por mapas e resolução atômica dos 7 símbolos Mono (host verificado). (Falta: integrar o runtime ao loader; abrir assembly real com `mono_domain_assembly_open`; HarmonyX; validação em device com jogo Unity Mono.)
 - [ ] Compat BepInEx 5 mínima (`BaseUnityPlugin`, `Logger`, `Config`) pra mod de PC do mesmo jogo carregar sem recompilar, quando o jogo Android também é Mono. (Depende do item acima.)
 - Precisa de jogo-alvo Unity Mono real pra validar.
 

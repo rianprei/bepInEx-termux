@@ -76,17 +76,16 @@ static inline bool bc_elf_filter_jni_prefix(const char *name, size_t name_len) {
            strncmp(name, BC_JNI_PREFIX, BC_JNI_PREFIX_LEN) == 0;
 }
 
-// Núcleo puro genérico: itera `symtab[0..sym_count)`, filtra STB_GLOBAL/WEAK
-// + STT_FUNC + `filter(name)`, chama `cb` por cada um. Retorna quantos
-// símbolos passaram no filtro (0 é resultado válido — símbolo pode não
-// existir, não é erro). Bounds-safe: nunca lê symtab[i] se i >= sym_count,
-// nunca lê strtab além de strtab_size a partir de st_name (nome inválido é
-// pulado, não crasha).
-static inline int bc_elf_symtab_scan_filtered_ex(const bc_elf64_sym *symtab, size_t sym_count,
-                                               const char *strtab, size_t strtab_size,
-                                               bc_elf_symtab_name_filter filter,
-                                               bc_elf_symtab_cb cb, void *user,
-                                               bool require_defined) {
+// Laço único do scanner. Produção chega por scan_filtered_ex; os testes host
+// chamam este mesmo núcleo com tabelas sintéticas e o filtro correspondente.
+// Retorna quantos símbolos passaram no filtro (0 é resultado válido — símbolo
+// pode não existir, não é erro). Bounds-safe: nunca lê symtab[i] se i >=
+// sym_count, nem strtab além de strtab_size a partir de st_name.
+static inline int bc_elf_symtab_scan(const bc_elf64_sym *symtab, size_t sym_count,
+                                      const char *strtab, size_t strtab_size,
+                                      bc_elf_symtab_name_filter filter,
+                                      bc_elf_symtab_cb cb, void *user,
+                                      bool require_defined) {
     if (symtab == nullptr || strtab == nullptr || cb == nullptr || filter == nullptr) return 0;
     int found = 0;
     // índice 0 é sempre o símbolo nulo reservado (ELF spec) — pula.
@@ -111,20 +110,23 @@ static inline int bc_elf_symtab_scan_filtered_ex(const bc_elf64_sym *symtab, siz
     return found;
 }
 
+// Entrada de produção para filtros customizados e para o preflight
+// bc_mod_register; mantém um único laço compartilhado com o núcleo host.
+static inline int bc_elf_symtab_scan_filtered_ex(const bc_elf64_sym *symtab, size_t sym_count,
+                                                  const char *strtab, size_t strtab_size,
+                                                  bc_elf_symtab_name_filter filter,
+                                                  bc_elf_symtab_cb cb, void *user,
+                                                  bool require_defined) {
+    return bc_elf_symtab_scan(symtab, sym_count, strtab, strtab_size,
+                              filter, cb, user, require_defined);
+}
+
 static inline int bc_elf_symtab_scan_filtered(const bc_elf64_sym *symtab, size_t sym_count,
                                                const char *strtab, size_t strtab_size,
                                                bc_elf_symtab_name_filter filter,
                                                bc_elf_symtab_cb cb, void *user) {
     return bc_elf_symtab_scan_filtered_ex(symtab, sym_count, strtab, strtab_size,
                                            filter, cb, user, false);
-}
-
-// Atalho: mesmo núcleo, filtro fixo em prefixo "Java_" (convenção JNI).
-static inline int bc_elf_symtab_scan(const bc_elf64_sym *symtab, size_t sym_count,
-                                      const char *strtab, size_t strtab_size,
-                                      bc_elf_symtab_cb cb, void *user) {
-    return bc_elf_symtab_scan_filtered(symtab, sym_count, strtab, strtab_size,
-                                        bc_elf_filter_jni_prefix, cb, user);
 }
 
 #ifdef __cplusplus
