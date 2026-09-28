@@ -208,10 +208,20 @@ def main():
     check("symlink no meio do caminho: a recusa diz que e symlink",
           "symlink" in (r2.stderr or "").lower())
 
-    # e o DEST final, que e o outro caso
+    # e o DEST final, que e o outro caso.
+    #
+    # A SENTINELA E O QUE FAZ ESTE TESTE VALER. A versao anterior apontava o
+    # symlink para um alvo INEXISTENTE, e ai o teste passava pelo motivo errado:
+    # um cp para link pendente nao criava o alvo, entao "nada foi escrito" era
+    # verdade mesmo SEM a protecao. Com o alvo JA EXISTINDO e conteudo sentinela,
+    # sobrescrever deixaria a sentinela trocada — entao o check mede a
+    # sobrescrita de verdade, e nao a ausencia de um arquivo.
+    SENTINELA = b"ARQUIVO-QUE-NAO-E-O-CLIENTE-E-NAO-PODE-SER-SOBRESCRITO\n"
     root_fin = tempfile.mkdtemp(prefix="bepin-termux-sym2-")
     fora2 = tempfile.mkdtemp(prefix="bepin-fora2-")
-    destino2 = os.path.join(fora2, "termux_client.py")
+    destino2 = os.path.join(fora2, "arquivo_vitima.py")
+    with open(destino2, "wb") as f:          # EXISTE, fora da arvore de destino
+        f.write(SENTINELA)
     os.makedirs(os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc"))
     os.symlink(destino2,
                os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc",
@@ -219,8 +229,10 @@ def main():
     r3 = subprocess.run(["bash", INSTALLER, root_fin], capture_output=True, text=True)
     check("symlink no DESTINO final: o instalador RECUSA (rc != 0)",
           r3.returncode != 0)
-    check("symlink no destino final: nada foi escrito no alvo do link",
-          not os.path.exists(destino2))
+    check("symlink no destino final: a SENTINELA ficou byte a byte intacta",
+          open(destino2, "rb").read() == SENTINELA)
+    check("symlink no destino final: a recusa diz que e symlink",
+          "symlink" in (r3.stderr or "").lower())
 
     srv, err = subir_despachante()
     if srv is None:
