@@ -1,9 +1,10 @@
 // u_patch_resolve.h — resolução de tipo do campo, COM CHECK em cada elo.
 //
-// Núcleo puro, sem Android: o teste host (test/fuzz/../ufield_nresolve.cpp e
-// o Caso 78 do selftest) monta um Il2Cpp FALSO que devolve nullptr em cada
-// ponto da cadeia e exige que nenhum caso crasse — e que cada um diga POR
-// QUE recusou.
+// Núcleo puro, sem Android: o teste host
+// (mods/u_patch/jni/u_field_nresolve_test.cpp, Caso 84) monta um Il2Cpp FALSO
+// que devolve nullptr em cada ponto da cadeia e exige que nenhum elo crasse —
+// e que cada um diga POR QUE recusou. Antes este cabeçalho citava o caso do
+// scan do loader e um caminho de teste que não existe.
 //
 // ACHADO REAL (device POCO C75, SA2, 2026-09-27): a regra
 // `field WeaponInfo unlimitedAmmo bool true` derrubou o jogo.
@@ -87,7 +88,9 @@ static inline up_resolve_status up_resolve_field_type(const Il2Cpp *il, void *fi
     // il2cpp_type_get_name aloca com o ALOCADOR DO RUNTIME, e quem devolve é
     // il2cpp_free. Sem ele, o nome é uma ponteira que NINGUÉM pode soltar com
     // segurança: o `free()` da libc seria liberar memória do il2cpp, que
-    // destrói o heap do jogo (achado no teste host, ver Caso 4). E como não dá
+    // destrói o heap do jogo (achado no teste host, ver Caso 87 — "free
+    // ausente: recusa em vez de free() da libc"; o número anterior apontava
+    // para o caso de wildcard do pattern scan). E como não dá
     // pra copiar sem devolver, a recusa é a resposta honesta — o chamador
     // logou e pula a regra. Um il2cpp sem il2cpp_free é de uma versão
     // onde isto não existia; melhor uma regra a menos do que heap.

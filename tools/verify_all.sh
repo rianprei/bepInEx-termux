@@ -211,6 +211,72 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     fi
 ' bash "$ROOT"
 
+# Citação de caso tem que apontar para um caso que EXISTE. Os rótulos [Caso N]
+# vivem nos harnesses; um README, header ou script que aponta para um número
+# inexistente manda o leitor procurar uma prova que não existe — foi assim que
+# dois arquivos continuaram citando o caso de dump_core para assunto de
+# opcode arm64 (achado da revisão de uni/wiring-fixes-56).
+#
+# O QUE ESTA ETAPA PROVA: a existência do número. Se o caso existe mas cobre
+# outro assunto, quem pega é quem lê o rótulo — automatizar isso exigiria
+# descrever o assunto de cada caso em máquina, e um resumo errado seria pior que
+# nenhum. Por isso a varredura de conteúdo é do revisor, e esta é de integridade.
+#
+# O QUE NÃO É: renumerar. Os IDs são fixos, ninguém renumera por causa de um
+# gate. Um número no meio de um buraco da sequência também é FAIL — se alguém
+# cita um número que nunca foi definido, o problema é da citação, não da
+# sequência.
+run_step "citacoes de caso apontam para caso existente" "$TIMEOUT_TEST" bash -c '
+    python3 - "$1" <<"PY"
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+SCAN = (".md", ".h", ".cpp", ".c", ".py", ".sh", ".java")
+define_re = re.compile(r"\[Caso (\d+)\]")
+cite_re = re.compile(r"Caso (\d+)")
+
+tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
+scannable = [item for item in tracked if item.endswith(SCAN)]
+
+# Harness = o arquivo que DEFINE rotulos. Ele nao e conferido como citador: o
+# proprio rotulo e a definicao. A lista se monta sozinha, entao um harness novo
+# entra aqui sem ninguem lembrar de atualizar nada.
+defined = set()
+harnesses = set()
+for item in scannable:
+    found = define_re.findall((root / item).read_text(encoding="utf-8", errors="replace"))
+    if found:
+        harnesses.add(item)
+        defined.update(int(n) for n in found)
+if not defined:
+    print("nenhum [Caso N] definido: a varredura de citacoes nao tem contra o que comparar",
+          file=sys.stderr)
+    raise SystemExit(1)
+
+errors = []
+cited = 0
+for item in scannable:
+    if item in harnesses:
+        continue
+    body = (root / item).read_text(encoding="utf-8", errors="replace")
+    for line_no, line in enumerate(body.splitlines(), 1):
+        for match in cite_re.finditer(line):
+            cited += 1
+            if int(match.group(1)) not in defined:
+                errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
+if errors:
+    print(f"casos definidos ({len(defined)}) vivem em: " + ", ".join(sorted(harnesses)),
+          file=sys.stderr)
+    print("\n".join(errors), file=sys.stderr)
+    raise SystemExit(1)
+print(f"caso-refs: {cited} citacoes conferidas contra {len(defined)} casos "
+      f"definidos em {len(harnesses)} harness(es)")
+PY
+' bash "$ROOT"
+
 DOC_REF_COUNT="$TMP/docs-reference-count"
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"

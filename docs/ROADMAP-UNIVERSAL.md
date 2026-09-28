@@ -226,7 +226,7 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso que o zygote lê `/data/local/tmp` e o jogo faz `dlopen` de lá (o logcat mostra `avc: denied ... permissive=1`). Num celular comum (Enforcing) nada disso carrega.
 - [x] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app. (`b510b1e` + etapa `sepolicy grammar` do gate; device: v0.4.0 com `setenforce 1`, SA2 + BC 4/4, zero `avc` do nosso caminho.)
 - [x] `module/post-fs-data.sh`: cria `/data/local/tmp/mods` e aplica `chcon -R` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
-- [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (Caso 62.)
+- [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (**sem cobertura no host**: `bc_generic_allowlist_contains` é `#ifdef __ANDROID__` — `access`+`fopen` do arquivo, que o host não tem como exercitar. O Caso 62 cobre só o parser puro do buffer, `bc_generic_allowlist_contains_buf`; a leitura do arquivo em si é verificada no device.)
 - **Verifica:** `setenforce 1` no device de teste → SA2 carrega os mods e o u_patch aplica; `dmesg`/logcat sem `avc: denied` do nosso caminho → `setenforce 0` de volta.
 
 ### F2 — SDK de mod + kit
