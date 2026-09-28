@@ -15,11 +15,42 @@ from pathlib import Path
 import struct, sys
 
 root = Path(sys.argv[1])
+
+def minimal_elf64(machine):
+    # EHDR(64) + 1 PHDR(56) + 80 bytes de enchimento: ELF valido que o
+    # llvm-strip aceita (um stub de 20 bytes nao e um ELF completo e o
+    # strip falha com "smaller than an ELF header"). Os 20 primeiros bytes
+    # seguem o layout que o check_payload confere abaixo.
+    e = bytearray(200)
+    e[:7] = b"\x7fELF" + bytes((2, 1, 1))
+    struct.pack_into("<H", e, 16, 3)
+    struct.pack_into("<H", e, 18, machine)
+    struct.pack_into("<I", e, 20, 1)
+    struct.pack_into("<Q", e, 32, 64)
+    struct.pack_into("<H", e, 52, 64)
+    struct.pack_into("<H", e, 54, 56)
+    struct.pack_into("<H", e, 56, 1)
+    struct.pack_into("<H", e, 58, 64)
+    struct.pack_into("<I", e, 64, 1)
+    return e
+
+def minimal_elf32(machine):
+    e = bytearray(164)
+    e[:7] = b"\x7fELF" + bytes((1, 1, 1))
+    struct.pack_into("<H", e, 16, 3)
+    struct.pack_into("<H", e, 18, machine)
+    struct.pack_into("<I", e, 20, 1)
+    struct.pack_into("<I", e, 28, 52)
+    struct.pack_into("<H", e, 40, 52)
+    struct.pack_into("<H", e, 42, 32)
+    struct.pack_into("<H", e, 44, 1)
+    struct.pack_into("<H", e, 46, 40)
+    struct.pack_into("<I", e, 52, 1)
+    return e
+
 for abi, elf_class, machine in (("arm64-v8a", 2, 183), ("armeabi-v7a", 1, 40)):
-    header = bytearray(20)
-    header[:7] = b"\x7fELF" + bytes((elf_class, 1, 1))
-    struct.pack_into("<H", header, 18, machine)
-    (root / "libs" / abi / f"lib{root.name}.so").write_bytes(header)
+    blob = minimal_elf64(machine) if elf_class == 2 else minimal_elf32(machine)
+    (root / "libs" / abi / f"lib{root.name}.so").write_bytes(blob)
 PY
 
 check_payload() {
@@ -47,6 +78,52 @@ if "$ROOT/tools/pack_bmod.sh" "$ID" > /dev/null 2>&1; then
     exit 1
 fi
 echo "pack_bmod sem ABI: recusado"
+
+# .so inválido tem que morrer na validação com mensagem amigável, nunca no
+# strip (que diria "invalid buffer" sem explicar o que está errado).
+check_rejeitado() {
+    local motivo=$1
+    local so_out
+    if so_out=$("$ROOT/tools/pack_bmod.sh" "$ID" arm64-v8a 2>&1); then
+        echo "pack_bmod aceitou $motivo" >&2
+        exit 1
+    fi
+    printf '%s\n' "$so_out" | grep -Fq "não é um ELF da ABI selecionada" || {
+        echo "sem mensagem amigável para $motivo" >&2
+        printf '%s\n' "$so_out" >&2
+        exit 1
+    }
+    if printf '%s\n' "$so_out" | grep -Fq "invalid buffer"; then
+        echo "strip rodou antes da validação ($motivo)" >&2
+        exit 1
+    fi
+    echo "$motivo: recusado com mensagem amigável"
+}
+
+# Caso 20 bytes não-ELF.
+head -c 20 /dev/zero > "$MOD_DIR/libs/arm64-v8a/lib$ID.so"
+check_rejeitado "20 bytes não-ELF"
+
+# Caso ELF de ABI errada (ELF32/ARM onde se pediu arm64-v8a).
+python3 - "$MOD_DIR" <<'PY'
+from pathlib import Path
+import struct, sys
+
+root = Path(sys.argv[1])
+e32 = bytearray(164)
+e32[:7] = b"\x7fELF" + bytes((1, 1, 1))
+struct.pack_into("<H", e32, 16, 3)
+struct.pack_into("<H", e32, 18, 40)
+struct.pack_into("<I", e32, 20, 1)
+struct.pack_into("<I", e32, 28, 52)
+struct.pack_into("<H", e32, 40, 52)
+struct.pack_into("<H", e32, 42, 32)
+struct.pack_into("<H", e32, 44, 1)
+struct.pack_into("<H", e32, 46, 40)
+struct.pack_into("<I", e32, 52, 1)
+(root / "libs" / "arm64-v8a" / f"lib{root.name}.so").write_bytes(e32)
+PY
+check_rejeitado "ELF de ABI errada"
 
 abi=$(printf 'primaryCpuAbi=armeabi-v7a secondaryCpuAbi=arm64-v8a\n' \
     | "$ROOT/tools/parse_primary_abi.sh")

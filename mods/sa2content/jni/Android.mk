@@ -2,7 +2,9 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := dobby
-LOCAL_SRC_FILES := ../../../jni/lib/$(TARGET_ARCH_ABI)/libdobby.a
+# Sem o DWARF do prebuilt (ver jni/repro.mk): o release nao leva o
+# caminho home de quem compilou o Dobby. O .text nao muda.
+LOCAL_SRC_FILES := $(call bepinex_prebuilt,jni/lib/$(TARGET_ARCH_ABI)/libdobby.a)
 include $(PREBUILT_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)

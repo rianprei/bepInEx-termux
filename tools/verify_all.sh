@@ -487,6 +487,72 @@ else
     echo "test/fuzz/run_fuzz_gate.sh ausente: os parsers de dado do usuario ficam sem cobertura no gate"
 fi
 
+# Build-id reproduzível: o MESMO commit tem que dar o MESMO build-id em
+# diretórios diferentes, senão o build-id de um tombstone não identifica nada
+# e um crash de usuário não vira função:linha. Foi o que travou o crash do SA2
+# (tombstone_07): o build-id 041d9b51... não batia com nenhum build local.
+# A etapa compila em DOIS diretórios temporários de profundidades diferentes e
+# exige build-id e .so byte a byte iguais. Diferente = FAIL, nunca SKIP.
+if [ -f "$ROOT/test/symbols/build_id_repro_test.sh" ]; then
+    run_step "build-id reproduzivel (2 diretorios)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/build_id_repro_test.sh"
+else
+    record "build-id reproduzivel (test ausente)" FAIL 0 1
+    echo "test/symbols/build_id_repro_test.sh ausente: o build-id volta a depender do diretorio"
+fi
+
+# Nada que sai da máquina pode carregar símbolo. Com APP_STRIP_MODE := none
+# (jni/repro.mk) o .so de build tem ~1,8 MB de DWARF, e TODO consumidor de
+# mods/*/libs/arm64-v8a/*.so passa a ter esse binário na mão: o .bmod que o
+# usuário baixa, o .so do adb push e o u_dump.so nos assets do APK. A etapa
+# gera um mod de verdade (new_mod.sh), empacota em .bmod e confere que o .so
+# entregue está stripped e com o build-id preservado. Diferente = FAIL.
+if [ -f "$ROOT/test/symbols/ship_stripped_test.sh" ]; then
+    run_step "nada entregue leva simbolo" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ship_stripped_test.sh"
+else
+    record "nada entregue leva simbolo (teste ausente)" FAIL 0 1
+    echo "test/symbols/ship_stripped_test.sh ausente: o .so nao-stripado vaza para o .bmod/APK/device"
+fi
+
+# Nenhuma rota (doc ou script) entrega .so de libs/ ou obj/ sem strip.
+# O teste acima prova o artefato; este prova as ROTAS: adb push / cp pra
+# /data com origem no diretório de build, direto ou via variável sem
+# symbols_ship no mesmo arquivo.
+if [ -f "$ROOT/test/symbols/ship_routes_check.sh" ]; then
+    run_step "rotas entregam só .so stripado" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/ship_routes_check.sh"
+else
+    record "rotas entregam só .so stripado (check ausente)" FAIL 0 1
+    echo "test/symbols/ship_routes_check.sh ausente: doc/script pode empurrar .so nao-stripado"
+fi
+
+# O build não pode depender de ONDE o NDK está. A raiz do NDK era descoberta por
+# um glob em "$HOME/Android/Sdk/ndk/*", que funciona nesta máquina e só nesta:
+# com o NDK em /opt, em ANDROID_NDK_HOME, num CI ou no home de outro usuário o
+# glob não acha, o prefix-map da raiz do NDK some, e o caminho de máquina volta
+# a vazar com o build-id mudando — exatamente o item 3.
+# A etapa compila a mesma árvore com o NDK no $HOME e com o NDK apontado para um
+# caminho FORA do $HOME, e exige sha256 idêntico do símbolo e do .so entregue.
+if [ -f "$ROOT/test/symbols/ndk_path_test.sh" ]; then
+    run_step "build independe do caminho do NDK" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/ndk_path_test.sh"
+else
+    record "build independe do caminho do NDK (teste ausente)" FAIL 0 1
+    echo "test/symbols/ndk_path_test.sh ausente: o build-id volta a depender de onde o NDK esta"
+fi
+
+# tools/symbolize.sh: o crash do usuário tem que virar função:linha em 1
+# comando. O teste cruza um tombstone sintético, o tombstone REAL do device e
+# o cruzamento histórico do offset 0x1bb34 com o build que o gerou.
+if [ -f "$ROOT/test/symbols/symbolize_test.sh" ] && [ -x "$ROOT/tools/symbolize.sh" ]; then
+    run_step "symbolize.sh (tombstone -> funcao:linha)" "${TIMEOUT_SYMBOLS:-600}" \
+        bash "$ROOT/test/symbols/symbolize_test.sh"
+else
+    record "symbolize.sh (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_test.sh ausente: crash de usuario nao vira funcao:linha"
+fi
+
 # Execução real do thunk (qemu-aarch64): run_host.sh do thunk_exec.
 # qemu ausente = SKIP com aviso, nunca PASS.
 if [ -f "$ROOT/test/device/thunk_exec/run_host.sh" ]; then
@@ -553,6 +619,18 @@ if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/ma
 else
     record "VERSION matches loader" FAIL 0 1
     echo "VERSION or jni/main.cpp version define missing" >&2
+fi
+
+# O TOMBSTONE e entrada de outra pessoa: um crash report que o usuario manda
+# nunca pode virar comando na maquina de quem symboliza (revisao do OpenCode em
+# 668cc9f: o awk montava uma command line com o token .so e rodava com
+# `cmd | getline`).
+if [ -f "$ROOT/test/symbols/symbolize_injection_test.sh" ]; then
+    run_step "symbolize: tombstone nunca vira comando" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/symbolize_injection_test.sh"
+else
+    record "symbolize: tombstone nunca vira comando (teste ausente)" FAIL 0 1
+    echo "test/symbols/symbolize_injection_test.sh ausente: o tombstone pode executar comando"
 fi
 
 # Guarda de arquitetura dos hooks: em ARM32, todo mod que usa DobbyHook tem que
