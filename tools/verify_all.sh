@@ -250,35 +250,55 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 SCAN = (".md", ".h", ".cpp", ".c", ".py", ".sh", ".java")
+
+# O que conta como harness: arquivo de teste. E nao "qualquer arquivo que
+# tenha um rotulo" — essa era a brecha da versao anterior: um README que
+# escrevesse um numero de caso inexistente entre colchetes se autodefinia e
+# passava, porque a lista de casos era montada varrendo TUDO. Definicao e
+# citacao sao papeis diferentes: so harness define, e qualquer um pode citar.
+# (Este arquivo e varrido por ele mesmo, entao nem o comentario de exemplo
+# pode trazer um numero que nao existe.)
+HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(cpp|c|py|java)$")
 define_re = re.compile(r"\[Caso (\d+)\]")
 cite_re = re.compile(r"Caso (\d+)")
 
 tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
 scannable = [item for item in tracked if item.endswith(SCAN)]
+harnesses = {item for item in scannable if HARNESS.search(item)}
 
-# Harness = o arquivo que DEFINE rotulos. Ele nao e conferido como citador: o
-# proprio rotulo e a definicao. A lista se monta sozinha, entao um harness novo
-# entra aqui sem ninguem lembrar de atualizar nada.
+# Definicao: [Caso N] DENTRO de harness. Fora de harness o colchete nao
+# define nada — vira citacao, e citacao tem que existir.
 defined = set()
-harnesses = set()
-for item in scannable:
-    found = define_re.findall((root / item).read_text(encoding="utf-8", errors="replace"))
-    if found:
-        harnesses.add(item)
-        defined.update(int(n) for n in found)
+for item in sorted(harnesses):
+    defined.update(
+        int(n) for n in define_re.findall(
+            (root / item).read_text(encoding="utf-8", errors="replace")))
 if not defined:
-    print("nenhum [Caso N] definido: a varredura de citacoes nao tem contra o que comparar",
-          file=sys.stderr)
+    print("nenhum [Caso N] definido em harness de teste: a varredura de citacoes "
+          "nao tem contra o que comparar", file=sys.stderr)
     raise SystemExit(1)
 
+# Citacao: toda mencao a caso que NAO e a propria definicao. Um harness tambem
+# cita — e e conferido, porque um harness que aponta para o caso de outro
+# harness precisa que o numero exista em algum lugar. A versao anterior pulava
+# o arquivo inteiro, e por isso uma citacao cruzada dentro de harness nunca era
+# checada contra nada.
 errors = []
 cited = 0
 for item in scannable:
-    if item in harnesses:
-        continue
-    body = (root / item).read_text(encoding="utf-8", errors="replace")
-    for line_no, line in enumerate(body.splitlines(), 1):
+    is_harness = item in harnesses
+    for line_no, line in enumerate(
+            (root / item).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        for match in define_re.finditer(line):
+            if is_harness:
+                continue  # e a definicao, nao citacao
+            cited += 1
+            if int(match.group(1)) not in defined:
+                errors.append(f"{item}:{line_no}: define fora de harness de teste: {match.group(0)}")
         for match in cite_re.finditer(line):
+            start = match.start()
+            if is_harness and start > 0 and line[start - 1] == "[":
+                continue  # ja contado como definicao acima
             cited += 1
             if int(match.group(1)) not in defined:
                 errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
