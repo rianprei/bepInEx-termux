@@ -390,11 +390,13 @@ else
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
 fi
 
-# Fuzzing com sanitizers dos 4 parsers que recebem DADO DO USUÁRIO dentro do
-# processo do jogo: linhas .bpatch/.conf do u_patch, o preflight de ELF (com a
-# guarda de SONAME do frida-gadget), o validador do config do frida e o resto
-# da superfície de string do selftest. Um crash de parser aqui derruba o jogo,
-# e 2 mortes em 20sShut ele inteiro pelo crashguard.
+# Fuzzing com sanitizers dos parsers que recebem DADO DO USUÁRIO dentro do
+# processo do jogo (ver TARGETS em test/fuzz/run_fuzz_gate.sh): linhas
+# .bpatch/.conf do u_patch, o preflight de ELF (com a guarda de SONAME do
+# frida-gadget), o validador do config do frida, o resto da superfície de
+# string do selftest e o emissor de thunk arm64 do u_patch. Um crash de
+# parser aqui derruba o jogo, e 2 mortes em 20s travam ele inteiro pelo
+# crashguard.
 #
 # A etapa é curta e DETERMINÍSTICA (seed fixa, contagem de execs fixa, ~25s):
 # ela não substitui as rodadas longas de 10 min por alvo, que são o trabalho
@@ -402,7 +404,7 @@ fi
 # clang ou sanitizer ausente é FAIL, porque um gate que pula o fuzzing quando
 # o host não tem toolchain volta a ser "PASS" sem exercitar parser nenhum.
 if [ -f "$ROOT/test/fuzz/run_fuzz_gate.sh" ]; then
-    # TIMEOUT_FUZZ, e não TIMEOUT_TEST: o limite aqui é o de 4 alvos com
+    # TIMEOUT_FUZZ, e não TIMEOUT_TEST: o limite aqui é o dos alvos com
     # sanitizer (build + execs), não o de um binário de teste.
     run_step "fuzz parsers (ASan+UBSan, seed fixa)" "${TIMEOUT_FUZZ:-300}" \
         bash "$ROOT/test/fuzz/run_fuzz_gate.sh"

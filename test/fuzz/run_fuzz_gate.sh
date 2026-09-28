@@ -2,7 +2,7 @@
 # test/fuzz/run_fuzz_gate.sh — etapa CURTA e DETERMINÍSTICA de fuzzing com
 # sanitizers, para o tools/verify_all.sh.
 #
-# O que ela é: os 4 harnesses de test/fuzz/ compilados com
+# O que ela é: os harnesses de test/fuzz/ (ver TARGETS abaixo) compilados com
 # -fsanitize=fuzzer,address,undefined, rodando sobre o corpus versionado
 # (test/fuzz/corpus/<alvo>/) com seed fixa e contagem de execs fixa. Nenhuma
 # dependência de tempo, de rede ou de artefato de build.
@@ -94,7 +94,7 @@ export ASAN_OPTIONS="detect_leaks=1:allocator_may_return_null=1:detect_stack_use
 export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1:exitcode=1"
 export LSAN_OPTIONS="exitcode=1"
 
-# --- 2. compila os 4 alvos em paralelo --------------------------------------
+# --- 2. compila os alvos em paralelo (ver TARGETS) ---------------------------
 build_pids=()
 for t in "${TARGETS[@]}"; do
     "$CXX" -std=c++17 -g -O1 -Wall -Wextra -Werror \
