@@ -551,6 +551,22 @@ else
     echo "test/symbols/mods_fd_escape_test.cpp ausente: o companion pode abrir caminho arbitrario"
 fi
 
+# O companion so serve o pacote DE QUEM conectou no socket (SO_PEERCRED).
+# Sem isso, um jogo A pede os mods do jogo B e o companion entrega: o formato do
+# pacote e valido, mas nada amarra o pedido ao chamador — e o canal e o mesmo
+# que o codigo do mod dentro do processo usa.
+if [ -f "$ROOT/test/symbols/peercred_test.cpp" ]; then
+    run_step "companion so serve o dono do pedido" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -I "$1/jni" \
+            "$1/test/symbols/peercred_test.cpp" -o "$2/peercred_test" || exit 1
+        "$2/peercred_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "companion so serve o dono do pedido (teste ausente)" FAIL 0 1
+    echo "test/symbols/peercred_test.cpp ausente: um jogo pode pedir os mods de outro"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"

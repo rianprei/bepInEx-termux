@@ -28,6 +28,7 @@
 #include "zygisk.hpp"
 #include "bc_mods_conf.h"
 #include "bc_mods_fd.h" // protocolo de entrega por FD (SCM_RIGHTS)
+#include "bc_peercred.h"  // amarra o pedido ao uid de quem conectou (SO_PEERCRED)
 #include "bc_loader.h"  // BC_MODS_DIR + BC_MODS_ROOT + bc_loader_is_mod_filename() — validação de nome pro push_mod
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
 
@@ -1019,6 +1020,74 @@ static void bc_fd_deny(int fd, const char *what) {
     LOGE("mod_* recusado: %s", what);
 }
 
+// ============================================================================
+// DE QUEM E O PEDIDO (SO_PEERCRED)
+// ============================================================================
+// O formato do pacote e valido, mas isso nao diz DE QUEM o pedido e: um jogo A
+// pode pedir os mods do jogo B, e o companion entregaria. O canal e o mesmo que
+// o codigo do mod dentro do processo usa, entao "confia no processo" nao e
+// resposta.
+//
+// getsockopt(SO_PEERCRED) no fd do cliente devolve o uid de quem CONECTOU, e o
+// kernel preenche esse campo — o cliente nao consegue mentir sobre ele. O
+// companion e root, entao le /data/system/packages.list e mapeia uid -> pacote.
+//
+// MULTIUSUARIO: o appId e uid % 100000. Na coluna do packages.list o que
+// gravado e o appId, entao comparar com o appId e o que funciona em
+// /data/user/10. Ler o uid cru nao.
+//
+// FAIL-CLOSED: packages.list ilegivel = pedido RECUSADO. Aceitar na duvida
+// seria devolver a arvore de mods de qualquer jogo a qualquer processo, que e
+// o oposto do que a mudanca de arvore root-only fez.
+static bool bc_peer_is_caller(int client_fd, char *pkg_out, size_t pkg_cap) {
+    if (pkg_out == NULL || pkg_cap == 0) return false;
+    pkg_out[0] = '\0';
+    struct ucred cred;
+    socklen_t clen = sizeof(cred);
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &clen) != 0 ||
+        clen != sizeof(cred)) {
+        LOGE("peer: SO_PEERCRED falhou: %s", strerror(errno));
+        return false;
+    }
+    int fd = open("/data/system/packages.list", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        LOGE("peer: packages.list ilegivel: %s (fail-closed)", strerror(errno));
+        return false;
+    }
+    char list[16384];
+    ssize_t n = read(fd, list, sizeof(list) - 1);
+    close(fd);
+    if (n <= 0) {
+        LOGE("peer: packages.list vazio (fail-closed)");
+        return false;
+    }
+    list[n] = '\0';
+    if (!bc_peercred_lookup(list, (size_t)n, (int)cred.uid, pkg_out, pkg_cap)) {
+        LOGE("peer: uid %d nao mapeia para pacote (fail-closed)", (int)cred.uid);
+        return false;
+    }
+    return true;
+}
+
+// O pedido (pkg, nome) so e servido se o pkg for o do chamador.
+static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *what) {
+    char caller[BC_PEERCRED_PKG_CAP];
+    if (!bc_peer_is_caller(client_fd, caller, sizeof(caller))) {
+        bc_fd_deny(client_fd, "peer nao identificavel");
+        LOGE("%s: recusado — nao deu para identificar o chamador", what);
+        return false;
+    }
+    if (!bc_peercred_pkg_matches(caller, want_pkg)) {
+        bc_fd_deny(client_fd, "pkg nao e do chamador");
+        LOGE("%s: recusado — chamador e %s, pediu %s", what, caller,
+             want_pkg ? want_pkg : "(nulo)");
+        return false;
+    }
+    return true;
+}
+
+
 // A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
 // root-only (root:root 0700, sem search para appdomain) — e nao deve: quem
 // enumera e o root. O formato e um nome por linha, ja filtrado para o que o
@@ -1035,6 +1104,7 @@ static void handle_mod_list(int fd, const char *args) {
         return;
     }
     memcpy(pkg, args, pl + 1);
+    if (!bc_peer_ok_for_pkg(fd, pkg, "mod_list")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
     if (pn <= 0 || (size_t)pn >= sizeof(path)) {
@@ -1078,6 +1148,7 @@ static void handle_mod_fd(int fd, const char *args) {
         bc_fd_deny(fd, "mod_fd: pacote ou nome invalido");
         return;
     }
+    if (!bc_peer_ok_for_pkg(fd, pkg, "mod_fd")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s/%s", BC_GENERIC_MODS_DIR, pkg, name);
     if (pn <= 0 || (size_t)pn >= sizeof(path)) {
@@ -1113,6 +1184,7 @@ static void handle_mod_txt(int fd, const char *args) {
         bc_fd_deny(fd, "mod_txt: pacote ou nome invalido");
         return;
     }
+    if (!bc_peer_ok_for_pkg(fd, pkg, "mod_txt")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s/%s", BC_GENERIC_MODS_DIR, pkg, name);
     if (pn <= 0 || (size_t)pn >= sizeof(path)) {
