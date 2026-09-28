@@ -232,6 +232,14 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
 # dois arquivos continuaram citando o caso de dump_core para assunto de
 # opcode arm64 (achado da revisão de uni/wiring-fixes-56).
 #
+# A FORMA DA DEFINIÇÃO. Um caso é definido pelo rótulo que o harness IMPRIME ao
+# rodar, dentro da chamada de saída. Qualquer outra menção é citação, inclusive
+# dentro de um arquivo de teste: um rótulo solto em comentário, em prosa ou num
+# README de fixtures deixa de se autodefinir e passa a ser conferido contra o
+# conjunto global. Estreitar o NOME do harness não fecha — um Test.java é um
+# harness de verdade e um README dentro de test/ também — então o fecha é a
+# forma, não o nome.
+#
 # O QUE ESTA ETAPA PROVA: a existência do número. Se o caso existe mas cobre
 # outro assunto, quem pega é quem lê o rótulo — automatizar isso exigiria
 # descrever o assunto de cada caso em máquina, e um resumo errado seria pior que
@@ -261,6 +269,27 @@ SCAN = (".md", ".h", ".cpp", ".c", ".py", ".sh", ".java")
 HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(cpp|c|py|java)$")
 define_re = re.compile(r"\[Caso (\d+)\]")
 cite_re = re.compile(r"Caso (\d+)")
+# Um rotulo so DEFINE caso se for a saida que o harness imprime ao rodar. Um
+# "[Caso N]" que nao esta dentro de uma chamada de saida e citacao — e citacao
+# vai contra o conjunto global, inclusive dentro de harness. A forma e o que
+# fecha: estreitar o nome do harness nao fecha (qualquer Test.java e um
+# harness de verdade, e um README dentro de test/ tambem), mas um rotulo solto
+# em comentario ou em prosa deixa de se autodefinir.
+out_call = re.compile(r"(?:^|[^A-Za-z0-9_])(?:printf|fprintf|vfprintf|snprintf|"
+                      r"puts|System\.out\.(?:print|println|printf))\s*\(")
+
+
+def defines(body, line):
+    """Rotulos [Caso N] dentro dos parenteses de uma chamada de saida."""
+    found = []
+    for match in define_re.finditer(line):
+        call = out_call.search(line)
+        if not call or call.end() > match.start():
+            continue
+        close = line.rfind(")")
+        if close > match.start():
+            found.append(match)
+    return found
 
 tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
 scannable = [item for item in tracked if item.endswith(SCAN)]
@@ -269,10 +298,12 @@ harnesses = {item for item in scannable if HARNESS.search(item)}
 # Definicao: [Caso N] DENTRO de harness. Fora de harness o colchete nao
 # define nada — vira citacao, e citacao tem que existir.
 defined = set()
+definers = set()
 for item in sorted(harnesses):
-    defined.update(
-        int(n) for n in define_re.findall(
-            (root / item).read_text(encoding="utf-8", errors="replace")))
+    for line in (root / item).read_text(encoding="utf-8", errors="replace").splitlines():
+        for match in defines(None, line):
+            defined.add(int(match.group(1)))
+            definers.add(item)
 if not defined:
     print("nenhum [Caso N] definido em harness de teste: a varredura de citacoes "
           "nao tem contra o que comparar", file=sys.stderr)
@@ -289,26 +320,30 @@ for item in scannable:
     is_harness = item in harnesses
     for line_no, line in enumerate(
             (root / item).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        own_definitions = defines(None, line) if is_harness else []
+        definition_starts = {m.start() for m in own_definitions}
         for match in define_re.finditer(line):
-            if is_harness:
-                continue  # e a definicao, nao citacao
+            if match.start() in definition_starts:
+                continue  # e a saida do harness: a definicao
             cited += 1
             if int(match.group(1)) not in defined:
-                errors.append(f"{item}:{line_no}: define fora de harness de teste: {match.group(0)}")
+                errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
         for match in cite_re.finditer(line):
             start = match.start()
-            if is_harness and start > 0 and line[start - 1] == "[":
+            if is_harness and start > 0 and line[start - 1] == "[" \
+                    and (start - 1) in definition_starts:
                 continue  # ja contado como definicao acima
             cited += 1
             if int(match.group(1)) not in defined:
                 errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
 if errors:
-    print(f"casos definidos ({len(defined)}) vivem em: " + ", ".join(sorted(harnesses)),
+    print(f"casos definidos ({len(defined)}) sao a saida de: " + ", ".join(sorted(definers)),
           file=sys.stderr)
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)
-print(f"caso-refs: {cited} citacoes conferidas contra {len(defined)} casos "
-      f"definidos em {len(harnesses)} harness(es)")
+print(f"caso-refs: {cited} citacoes conferidas contra {len(defined)} casos, "
+      f"definidos pela saida de {len(definers)} harness(es) "
+      f"({len(harnesses)} arquivos de teste varridos)")
 PY
 ' bash "$ROOT"
 
