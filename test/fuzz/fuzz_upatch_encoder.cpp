@@ -75,8 +75,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         int n = up_emit_return_int(out, d.value);
         if (n < 2 || n > 3) __builtin_trap();
         if (out[n - 1] != UP_RET) __builtin_trap();
-        // Verifica que o valor codificado bate com o original
-        uint32_t lo = out[0] & 0xFFFFu;
+        // Verifica que o valor codificado bate com o original. O imediato
+        // do MOVZ/MOVK mora nos bits [20:5] (imm16<<5), não nos 16 baixos:
+        // `out[0] & 0xFFFF` lia os 5 bits de Rd + 11 bits do imm e quebrava
+        // para qualquer valor com bit >= 11 setado (achado do review: a
+        // seed ff caía aqui antes de qualquer mutação).
+        uint32_t lo = (out[0] >> 5) & 0xFFFFu;
         uint32_t hi = (n == 3) ? ((out[1] >> 5) & 0xFFFFu) : 0;
         uint32_t reconstructed = lo | (hi << 16);
         if (reconstructed != (d.value & 0xFFFFFFFFu)) __builtin_trap();
@@ -96,25 +100,29 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (reconstructed != d.bits) __builtin_trap();
     }
 
-    // 4) up_emit_field_thunk: 9 ou 10 palavras; 0 = offset inválido
+    // 4) up_emit_field_thunk: 9 ou 10 palavras; 0 = inválido
     {
         uint32_t out[16];
+        // Espelha o contrato do emissor (size em {1,4} e offset no alcance
+        // do str[b]): fora disso ele devolve 0 por definição. Entrada
+        // curta/degenerada (ex.: size == 0) cai aqui e RETORNA 0 em vez de
+        // armadilha — o fuzzer adora entrada curta, e armadilha em entrada
+        // que o emissor recusa por contrato é falso positivo, não achado.
+        bool valid = (d.size == 1 && d.off <= 4095) ||
+                     (d.size == 4 && d.off % 4 == 0 && d.off / 4 <= 4095);
         int n = up_emit_field_thunk(out, (const void *)(uintptr_t)d.pc,
                                    (const void *)(uintptr_t)d.target,
                                    d.size, d.bits, d.off);
-        // size 1 (bool): off 0..4095; size 4 (int): off %4==0 e off/4 <= 4095
-        if (d.size == 1 && d.off > 4095) {
+        if (!valid) {
             if (n != 0) __builtin_trap();
-        } else if (d.size == 4 && (d.off % 4 != 0 || d.off / 4 > 4095)) {
-            if (n != 0) __builtin_trap();
-        } else {
-            if (n != 9 && n != 10) __builtin_trap();
-            // Verifica cbz na palavra 2 (this-null guard)
-            if ((out[2] & 0xFF00001Fu) != 0xB4000000u) __builtin_trap();
-            // Verifica ldr x16,[x16] e br x16 no final
-            if (out[n - 2] != UP_LDR_X16_ORIG) __builtin_trap();
-            if (out[n - 1] != UP_BR_X16) __builtin_trap();
+            return 0;
         }
+        if (n != 9 && n != 10) __builtin_trap();
+        // Verifica cbz na palavra 2 (this-null guard)
+        if ((out[2] & 0xFF00001Fu) != 0xB4000000u) __builtin_trap();
+        // Verifica ldr x16,[x16] e br x16 no final
+        if (out[n - 2] != UP_LDR_X16_ORIG) __builtin_trap();
+        if (out[n - 1] != UP_BR_X16) __builtin_trap();
     }
 
     // 5) up_enc_adrp_x16 + up_enc_add_x16: verifica reconstrução de endereço
