@@ -15,11 +15,42 @@ from pathlib import Path
 import struct, sys
 
 root = Path(sys.argv[1])
+
+def minimal_elf64(machine):
+    # EHDR(64) + 1 PHDR(56) + 80 bytes de enchimento: ELF valido que o
+    # llvm-strip aceita (um stub de 20 bytes nao e um ELF completo e o
+    # strip falha com "smaller than an ELF header"). Os 20 primeiros bytes
+    # seguem o layout que o check_payload confere abaixo.
+    e = bytearray(200)
+    e[:7] = b"\x7fELF" + bytes((2, 1, 1))
+    struct.pack_into("<H", e, 16, 3)
+    struct.pack_into("<H", e, 18, machine)
+    struct.pack_into("<I", e, 20, 1)
+    struct.pack_into("<Q", e, 32, 64)
+    struct.pack_into("<H", e, 52, 64)
+    struct.pack_into("<H", e, 54, 56)
+    struct.pack_into("<H", e, 56, 1)
+    struct.pack_into("<H", e, 58, 64)
+    struct.pack_into("<I", e, 64, 1)
+    return e
+
+def minimal_elf32(machine):
+    e = bytearray(164)
+    e[:7] = b"\x7fELF" + bytes((1, 1, 1))
+    struct.pack_into("<H", e, 16, 3)
+    struct.pack_into("<H", e, 18, machine)
+    struct.pack_into("<I", e, 20, 1)
+    struct.pack_into("<I", e, 28, 52)
+    struct.pack_into("<H", e, 40, 52)
+    struct.pack_into("<H", e, 42, 32)
+    struct.pack_into("<H", e, 44, 1)
+    struct.pack_into("<H", e, 46, 40)
+    struct.pack_into("<I", e, 52, 1)
+    return e
+
 for abi, elf_class, machine in (("arm64-v8a", 2, 183), ("armeabi-v7a", 1, 40)):
-    header = bytearray(20)
-    header[:7] = b"\x7fELF" + bytes((elf_class, 1, 1))
-    struct.pack_into("<H", header, 18, machine)
-    (root / "libs" / abi / f"lib{root.name}.so").write_bytes(header)
+    blob = minimal_elf64(machine) if elf_class == 2 else minimal_elf32(machine)
+    (root / "libs" / abi / f"lib{root.name}.so").write_bytes(blob)
 PY
 
 check_payload() {
