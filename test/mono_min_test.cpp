@@ -145,7 +145,7 @@ static void test_long_maps_line() {
 
 int main(int argc, char **argv) {
     printf("[Caso 92] mono_min: resolução atômica e detecção por mapas\n");
-    printf("[Caso 93] mono_min: linha de maps maior que o buffer não vira NONE falso\n");
+    printf("[Caso 94] mono_min: linha de maps maior que o buffer não vira NONE falso\n");
     if (argc != 3) {
         fprintf(stderr, "uso: mono_min_test <complete.so> <missing.so>\n");
         return 2;
