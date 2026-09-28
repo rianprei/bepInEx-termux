@@ -18,6 +18,16 @@ if [ ! -f "$SO" ]; then
     exit 1
 fi
 
+# O .so do build sai NÃO-stripado (repro.mk); o device só recebe stripado.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=tools/symbols.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../../tools/symbols.sh"
+STAGED="$(mktemp "/tmp/${NAME}.XXXXXX.so")"
+trap 'rm -f "$STAGED"' EXIT
+symbols_ship "$SO" "$STAGED" || exit 1
+SO="$STAGED"
+
 # stat -c%s e' GNU (Linux); -f%z e' BSD/macOS -- tenta os dois.
 SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
 echo "Vai enviar $SO ($SIZE bytes) como $NAME pro device via adb shell."

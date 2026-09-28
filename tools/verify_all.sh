@@ -439,6 +439,18 @@ else
     echo "test/symbols/ship_stripped_test.sh ausente: o .so nao-stripado vaza para o .bmod/APK/device"
 fi
 
+# Nenhuma rota (doc ou script) entrega .so de libs/ ou obj/ sem strip.
+# O teste acima prova o artefato; este prova as ROTAS: adb push / cp pra
+# /data com origem no diretório de build, direto ou via variável sem
+# symbols_ship no mesmo arquivo.
+if [ -f "$ROOT/test/symbols/ship_routes_check.sh" ]; then
+    run_step "rotas entregam só .so stripado" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/symbols/ship_routes_check.sh"
+else
+    record "rotas entregam só .so stripado (check ausente)" FAIL 0 1
+    echo "test/symbols/ship_routes_check.sh ausente: doc/script pode empurrar .so nao-stripado"
+fi
+
 # O build não pode depender de ONDE o NDK está. A raiz do NDK era descoberta por
 # um glob em "$HOME/Android/Sdk/ndk/*", que funciona nesta máquina e só nesta:
 # com o NDK em /opt, em ANDROID_NDK_HOME, num CI ou no home de outro usuário o
