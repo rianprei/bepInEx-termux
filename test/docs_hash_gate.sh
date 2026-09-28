@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # test/docs_hash_gate.sh — hash citado como mesclado tem que existir e estar na base.
 #
-# docs/ROADMAP-UNIVERSAL.md e docs/CHANGELOG*.md marcam linhas como merged/
-# mesclado (ou caixas [x] com hash). Um hash de branch NÃO mesclada escrito
-# como 'merged' passa em qualquer gate de conteúdo — a verdade só aparecia
-# na revisão humana. Esta etapa extrai todo hash nessas linhas e FALHA se
-# ele não existir (git cat-file) ou não for ancestral de HEAD
-# (git merge-base --is-ancestor).
-#
-# Genérico de propósito: release-notes-2 reaproveita sem mudar código, é só
-# marcar as linhas do mesmo jeito. O que está fora da base se marca
-# "fora da base" e SEM hash de merge — essas linhas são puladas.
+# Cobre exatamente: docs/ROADMAP-UNIVERSAL.md, CHANGELOG.md (raiz) e
+# docs/CHANGELOG*.md (se existir algum). Em cada arquivo coberto, extrai
+# todo hash de 7 a 40 hexadecimais (com ou sem crase, com limite de palavra)
+# das linhas que se declaram mescladas — 'merged', 'mesclado' ou caixa [x]
+# — e FALHA se o hash não existir (git cat-file) ou não for ancestral de
+# HEAD (git merge-base --is-ancestor). Linha que se declara mesclada E diz
+# 'fora da base' é CONTRADIÇÃO e falha; linha sem marca de merge continua
+# fora do check. Se nenhum arquivo coberto existir, FALHA em vez de passar
+# em silêncio.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -22,31 +21,45 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-docs = [root / "docs/ROADMAP-UNIVERSAL.md"]
-docs += [Path(p) for p in sorted(glob.glob(str(root / "docs/CHANGELOG*.md")))]
-docs = [d for d in docs if d.is_file()]
+wanted = [root / "docs/ROADMAP-UNIVERSAL.md", root / "CHANGELOG.md"]
+wanted += [Path(p) for p in sorted(glob.glob(str(root / "docs/CHANGELOG*.md")))]
+covered = [d for d in wanted if d.is_file()]
+if not covered:
+    print("docs-hash-gate: nenhum documento coberto "
+          "(docs/ROADMAP-UNIVERSAL.md, CHANGELOG.md, docs/CHANGELOG*.md)", file=sys.stderr)
+    raise SystemExit(1)
 
-ref_re = re.compile(r"`([0-9a-f]{7,40})`")
+ref_re = re.compile(r"\b[0-9a-f]{7,40}\b")
 errors = []
 checked = 0
-for doc in docs:
+for doc in covered:
+    try:
+        rel = doc.relative_to(root).as_posix()
+    except ValueError:
+        rel = doc.name
     for line_no, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
-        if re.search(r"fora da base", line, re.IGNORECASE):
+        is_merged = bool(re.search(r"merged|mesclado", line, re.IGNORECASE)) \
+            or line.lstrip().startswith("- [x]")
+        mentions_outside = bool(re.search(r"fora da base", line, re.IGNORECASE))
+        if mentions_outside:
+            if is_merged:
+                errors.append(f"{rel}:{line_no}: contradição: linha se declara "
+                              f"mesclada e 'fora da base': {line.strip()[:100]}")
             continue
-        if not re.search(r"merged|mesclado", line, re.IGNORECASE) \
-                and not line.lstrip().startswith("- [x]"):
+        if not is_merged:
             continue
         for match in ref_re.finditer(line):
-            h = match.group(1)
+            h = match.group(0)
             checked += 1
             if subprocess.run(["git", "cat-file", "-e", h],
                               cwd=root, capture_output=True).returncode != 0:
-                errors.append(f"{doc.name}:{line_no}: hash inexistente: {h}")
+                errors.append(f"{rel}:{line_no}: hash inexistente: {h}")
             elif subprocess.run(["git", "merge-base", "--is-ancestor", h, "HEAD"],
                                 cwd=root, capture_output=True).returncode != 0:
-                errors.append(f"{doc.name}:{line_no}: fora da base mas marcado como mesclado: {h}")
+                errors.append(f"{rel}:{line_no}: fora da base mas marcado como mesclado: {h}")
 if errors:
     print("\n".join(errors), file=sys.stderr)
     raise SystemExit(1)
-print(f"docs-hash-gate: {checked} hashes conferidos como ancestrais de HEAD")
+print(f"docs-hash-gate: {checked} hashes conferidos como ancestrais de HEAD "
+      f"em {len(covered)} arquivo(s)")
 PY
