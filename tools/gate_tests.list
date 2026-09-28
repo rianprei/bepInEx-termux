@@ -1,0 +1,81 @@
+# tools/gate_tests.list — o manifesto de testes do verify_all.
+#
+# Uma linha por arquivo de teste que existe em test/. NENHUM arquivo fica de
+# fora: teste novo sem linha aqui reprova o gate, porque o check da ligação
+# (primeira linha deste manifesto, entao ele roda antes de qualquer coisa)
+# varre o disco e cobra o destino de cada arquivo.
+#
+# caminho<TAB>modo[<TAB>motivo]
+#
+#   run      o verify_all EXECUTA o arquivo por esta lista, e a etapa falha se
+#            o teste falhar. O timeout é TIMEOUT_GATE_TESTS, salvo test/device/
+#            que usa TIMEOUT_DEVICE_SIM (pega TRAVA, nao lentidão). Desligar é
+#            proibido: se quebrou, conserta-se ou reporta-se.
+#   wired    o arquivo JÁ é executado, por uma etapa nomeada do verify_all.sh.
+#            O check confere a afirmação procurando o nome do arquivo no
+#            verify_all.sh; sem a prova, FAIL, porque "wired" sem prova é skip
+#            com nome mais bonito.
+#   skip     o arquivo NÃO roda no gate, e o motivo é obrigatório (mínimo de
+#            30 caracteres: "não roda aqui" sem conserto é sintoma, não motivo).
+#            O check imprime toda exceção a cada execução do gate: desligar
+#            passa a ser ato visível, e não sumiço.
+#
+# POR QUE UM MANIFESTO, E NÃO DOIS GLOBS. O gate tinha `test/*_test.sh` num
+# laço e três scripts de device noutro. A regra de "o que roda" morava dentro
+# de um padrão de nome de arquivo, e quem acrescentasse um teste tinha que
+# acertar o padrão sem saber que ele existe — que é como dois testes de
+# extração de tarball ficaram versionados, lintados e nunca executados. Agora
+# a regra está neste arquivo, e o check cobra que ela cubra o disco.
+#
+# Ordem de execução = ordem das linhas.
+#
+# ── o check da ligação primeiro: ele julga o manifesto antes que o manifesto
+#    sirva a alguém ──
+test/gate_wiring_check.py	run
+test/gate_wiring_check_test.sh	run
+#
+# ── testes executados por aqui (antes por glob em test/*_test.sh) ──
+test/abi_packaging_test.sh	run
+test/apk_align_test.sh	run
+test/frida_bridge_bundle_test.sh	run
+test/frida_bundle_extract_test.sh	run
+test/push_mod_emit_test.sh	run
+test/release_key_test.sh	run
+test/symbols/symbols_read_check.sh	run
+test/sepolicy_rule_test.sh	run
+#
+# ── simulações de device (antes num laço nomeado) ──
+test/device/device-round2-host-test.sh	run
+test/device/quoting-check.sh	run
+test/device/restore-sim.sh	run
+#
+# ── já executados por etapa nomeada do verify_all.sh ──
+#
+# ──Declarados com prova pela base, sem duplicar execução ──
+# Os quatro abaixo NÃO são executados por esta lista: cada um já roda, e o check
+# confere a prova (o nome precisa aparecer no verify_all.sh ou em outro teste
+# declarado). Declarar como `run` aqui rodaria o MESMO teste duas vezes por
+# execução do gate, que é o que esta lista existe para evitar.
+test/case_refs_test.py	wired
+test/release_notes_check.sh	wired
+test/fuzz/check_no_stale_counts.py	wired
+test/fuzz/stale_counts_vocab_test.py	wired
+test/arm32_hook_guard_check.py	wired
+test/device/thunk_exec/fix_tls_palign.py	wired
+test/device/thunk_exec/run_host.sh	wired
+test/docs_hash_gate.sh	wired
+test/docs_hash_gate_fixture.sh	wired
+test/fuzz/run_fuzz_gate.sh	wired
+test/module_zip_abi_check.sh	wired
+test/symbols/build_id_repro_test.sh	wired
+test/symbols/ndk_path_test.sh	wired
+test/symbols/ship_routes_check.sh	wired
+test/symbols/ship_stripped_test.sh	wired
+test/symbols/symbolize_injection_test.sh	wired
+test/symbols/symbolize_test.sh	wired
+test/termux_client_test.py	wired
+#
+# ── exceções: NÃO rodam no gate, com o motivo ──
+test/arm32_dobby_qemu_smoke.sh	skip	exige zig, qemu-arm e cmake no host e baixa o Dobby da rede por curl; o gate nao tem rede, e FAIL aqui seria vermelho por falta de ferramenta de outra maquina, nao por defeito do codigo
+test/fuzz/sabotage_check.sh	skip	verificacao de verificacao: injeta OOB de proposito em cada parser para provar que o sanitizer pega, entao o script nao pode passar; e verificacao pontual, nao passo de gate (o proprio cabecalho do arquivo diz isso)
+test/fuzz/seed_corpus.py	skip	gerador de corpus para as rodadas longas de 10 min que o README de test/fuzz manda rodar a mao; nao e teste e nao tem o que pasar
