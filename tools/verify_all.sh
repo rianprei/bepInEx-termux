@@ -178,11 +178,26 @@ while IFS= read -r test_file; do
             "$3"
         ' bash "$ROOT/test" "$(basename "$test_file")" "$binary"
     fi
-done < <(find "$ROOT/test" -maxdepth 1 -type f \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) -print | sort)
+done < <(find "$ROOT/test" -maxdepth 1 -type f \
+    \( -name '*_test.cpp' -o -name 'selftest_harness.cpp' \) \
+    ! -name 'mono_min_test.cpp' -print | sort)
 if [ ! -f "$ROOT/test/selftest_harness.cpp" ]; then
     record "host selftest_harness.cpp" FAIL 0 1
     echo "selftest_harness.cpp ausente: teste central do loader" >&2
 fi
+
+run_step "host test/mono_min_test.cpp" "$TIMEOUT_TEST" bash -c '
+    set -e
+    tmp="$1"
+    root="$2"
+    g++ -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
+        "$root/test/fixtures/mono_min_api_complete.cpp" -o "$tmp/mono_min_api_complete.so"
+    g++ -std=c++17 -Wall -Wextra -Werror -fPIC -shared \
+        "$root/test/fixtures/mono_min_api_missing.cpp" -o "$tmp/mono_min_api_missing.so"
+    g++ -std=c++17 -Wall -Wextra -Werror "$root/test/mono_min_test.cpp" \
+        -ldl -o "$tmp/mono_min_test"
+    "$tmp/mono_min_test" "$tmp/mono_min_api_complete.so" "$tmp/mono_min_api_missing.so"
+' bash "$TMP" "$ROOT"
 
 while IFS= read -r test_file; do
     test_name=${test_file#"$ROOT"/}

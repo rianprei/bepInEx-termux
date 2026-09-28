@@ -1,5 +1,6 @@
 // Teste host (offline) do SDK mod_common.h (F2) — sem device, sem NDK:
-//   mod_pkg_from_cmdline — rejeita zygote* e buffer que não cabe (C1)
+//   mod_pkg_from_cmdline — fallback real usado por u_dump::wait_for_pkg;
+//                          rejeita zygote* e buffer que não cabe (C1)
 //   mod_pkg              — env BEPINEX_PKG primeiro; fallback cmdline
 //                          cacheado depois da 1ª leitura boa (C1)
 //   mod_dir              — /data/local/tmp/mods/<pkg> (C1)
