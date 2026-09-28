@@ -33,10 +33,13 @@ dir="mods/$id"
 stage="$dir/.bmod-stage"
 rm -rf "$stage"; mkdir -p "$stage"
 
-python3 - "$dir/manifest.json" "$id" "$dir" "$abi" "$stage" <<'PY'
-import json, os, sys, zipfile
+# Validacao ELF/ABI ANTES do strip: o stub de 20 bytes do
+# test/abi_packaging_test.sh precisa ver a mensagem amigavel, nao o erro do
+# symbols_ship ("invalid buffer: the size (20) is smaller than an ELF header").
+python3 - "$dir/manifest.json" "$id" "$dir" "$abi" <<'PY'
+import json, os, sys
 
-man_path, mod_id, mod_dir, abi, stage = sys.argv[1:6]
+man_path, mod_id, mod_dir, abi = sys.argv[1:5]
 
 def die(msg):
     print(f"manifest inválido: {msg}", file=sys.stderr)
@@ -59,7 +62,7 @@ if not man.get("game"): die("game ausente")
 if man["type"] == "native":
     if abi not in ("arm64-v8a", "armeabi-v7a"):
         die("mod nativo exige ABI explícita: passe arm64-v8a ou armeabi-v7a")
-    src, arc = f"{mod_dir}/libs/{abi}/lib{mod_id}.so", "mod.so"
+    src = f"{mod_dir}/libs/{abi}/lib{mod_id}.so"
     try:
         with open(src, "rb") as so:
             header = so.read(20)
@@ -70,13 +73,27 @@ if man["type"] == "native":
     if (len(header) < 20 or header[:4] != b"\x7fELF"
             or header[4] != expected[0] or header[5] != 1 or machine != expected[1]):
         die(f"{src} não é um ELF da ABI selecionada ({abi})")
-    # Strip DEPOIS da validação: o .so do ndk-build sai não-stripado
-    # (repro.mk) e o .bmod é o arquivo que o usuário baixa.
-    symbols_ship "$src" "$stage/mod.so" or sys.exit(1)
-    src = f"{stage}/mod.so"
 else:
-    src, arc = f"{mod_dir}/{mod_id}.bpatch", "mod.bpatch"
+    src = f"{mod_dir}/{mod_id}.bpatch"
 if not os.path.isfile(src): die(f"artefato ausente: {src} (build primeiro)")
+PY
+
+# Strip DEPOIS da validacao: o .so do ndk-build sai nao-stripado (repro.mk)
+# e o .bmod e o arquivo que o usuario baixa. symbols_ship confere que o
+# build-id sobreviveu ao strip.
+if [ "$abi" != "" ] && [ -f "$dir/libs/$abi/lib$id.so" ]; then
+    symbols_ship "$dir/libs/$abi/lib$id.so" "$stage/mod.so" || exit 1
+    src="$stage/mod.so"
+    arc="mod.so"
+else
+    src="$dir/$id.bpatch"
+    arc="mod.bpatch"
+fi
+
+python3 - "$dir/manifest.json" "$id" "$dir" "$src" "$arc" <<'PY'
+import json, os, sys, zipfile
+
+man_path, mod_id, mod_dir, src, arc = sys.argv[1:6]
 
 out = f"{mod_dir}/{mod_id}.bmod"
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
