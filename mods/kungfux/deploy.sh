@@ -5,7 +5,9 @@
 # pra o usuário decidir e rodar manualmente quando quiser.
 #
 # Requer: device conectado via adb (adb devices), bepInEx-termux já
-# instalado e companion rodando (mesmo UID shell/root do dispositivo).
+# instalado e companion rodando (mesmo UID shell/root do dispositivo), e
+# PYTHON do Termux no aparelho: o emissor do push_mod roda LÁ, e o Termux de
+# base não traz python. Sem ele: `pkg install python` dentro do Termux.
 #
 # Uso: ./deploy.sh
 set -euo pipefail
@@ -28,10 +30,27 @@ trap 'rm -f "$STAGED"' EXIT
 symbols_ship "$SO" "$STAGED" || exit 1
 SO="$STAGED"
 
+TERMUX_PY="${TERMUX_PY:-/data/data/com.termux/files/usr/bin/python3}"
+
 # stat -c%s e' GNU (Linux); -f%z e' BSD/macOS -- tenta os dois.
 SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
 echo "Vai enviar $SO ($SIZE bytes) como $NAME pro device via adb shell."
 echo "Isso escreve em /data/local/tmp/bc_mods/ e sinaliza reload do loader."
+# O emissor do push_mod roda NO APARELHO, com o python do Termux, e o Termux
+# de base nao instala python. Sem este preflight a falha aparece no meio do
+# fluxo, com o .so e o emissor ja empurrados, e a mensagem e a do shell do
+# aparelho. Aqui ela vem antes de enviar qualquer coisa, e diz o comando.
+# Checar antes do prompt: nao faz o usuario confirmar um deploy que nao vai
+# funcionar, e nada foi enviado, entao nao ha residuo para limpar.
+if ! adb shell "test -x '$TERMUX_PY'" >/dev/null 2>&1; then
+    echo "erro: python do Termux ausente no aparelho ($TERMUX_PY)." >&2
+    echo "      o emissor do push_mod roda la dentro; sem python o deploy nao" >&2
+    echo "      tem como concluir. No Termux do aparelho:" >&2
+    echo "        pkg install python" >&2
+    echo "      (ou aponte TERMUX_PY para um python3 ja existente)" >&2
+    exit 1
+fi
+
 read -r -p "Confirma? (digite 'sim' pra continuar) " CONFIRM
 if [ "$CONFIRM" != "sim" ]; then
     echo "Cancelado."
@@ -39,9 +58,6 @@ if [ "$CONFIRM" != "sim" ]; then
 fi
 
 adb push "$SO" "/data/local/tmp/${NAME}.tmp"
-# achado de review: hardcoded, sem override -- path padrao do Termux, mas
-# pode divergir por instalacao/variante (F-Droid vs Play Store).
-TERMUX_PY="${TERMUX_PY:-/data/data/com.termux/files/usr/bin/python3}"
 # O emissor é o tools/push_mod_emit.py versionado (a mesma fonte que o gate
 # testa no host): lê o .tmp UMA vez e só anuncia/envia se o tamanho bater
 # com o SIZE medido aqui — SIZE anunciado == bytes enviados por construção.
