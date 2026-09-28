@@ -72,6 +72,11 @@ except ImportError as _exc:  # pragma: no cover - so quando o install esta torto
         "       (detalhe do import: %s)" % (_here, _exc),
         file=sys.stderr,
     )
+    # O 2 aqui e CONTRATO, nao detalhe: e o unico codigo 2 do cliente (os erros
+    # de uso sao 1), e o test/termux_client_test.py exige 2 exato para provar
+    # que o cliente distinguiu "install torto" de "voce me chamou errado". Se
+    # este 2 virar 1, o teste tem de falhar com nome — e nao por teimosia do
+    # assert, mas porque os dois jeitos de consertar sao diferentes.
     sys.exit(2)
 
 # Cores ANSI por nível de log — fonte real: BepInEx/BepInEx,

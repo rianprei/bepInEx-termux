@@ -230,7 +230,13 @@ def main():
     out_s, err_s, rc_s = rodar_cliente(
         os.path.join(root_sozinho, "termux_client.py"), ["ping"],
         dict(os.environ, BEPINEX_COMPANION_SOCKET=SOCK_NAME[1:]))
-    check("SABOTAGEM (so o cliente): sai com codigo != 0", rc_s != 0)
+    # O codigo e 2, e nao "qualquer nao-zero". O 2 e o que o cliente usa SO
+    # para emissor ausente (termux_client.py, o unico sys.exit(2) do arquivo);
+    # os erros de uso sao 1. Com "!= 0" o teste passou quando esse 2 virou 1
+    # (reprovacao do hermes), e o 1 nao distingue "faltou o emissor" de
+    # "chamei o cliente errado" — que sao jeitos bem diferentes de consertar.
+    check("SABOTAGEM (so o cliente): sai com codigo 2 (emissor ausente), viu %d" % rc_s,
+          rc_s == 2)
     check("SABOTAGEM (so o cliente): a mensagem diz qual arquivo falta",
           "push_mod_emit.py" in (err_s or ""))
     check("SABOTAGEM (so o cliente): a mensagem diz como corrigir",
@@ -272,8 +278,8 @@ def main():
     for dp, _dn, fn in os.walk(fora):
         for f in fn:
             depois.add(os.path.join(dp, f))
-    check("symlink no meio do caminho: o instalador RECUSA (rc != 0)",
-          r2.returncode != 0)
+    check("symlink no meio do caminho: o instalador RECUSA (rc 1, viu %d)" % r2.returncode,
+          r2.returncode == 1)
     check("symlink no meio do caminho: nada foi escrito FORA da arvore de destino",
           antes == depois)
     check("symlink no meio do caminho: a recusa diz que e symlink",
@@ -298,8 +304,8 @@ def main():
                os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc",
                             "termux_client.py"))
     r3 = subprocess.run(["bash", INSTALLER, root_fin], capture_output=True, text=True)
-    check("symlink no DESTINO final: o instalador RECUSA (rc != 0)",
-          r3.returncode != 0)
+    check("symlink no DESTINO final: o instalador RECUSA (rc 1, viu %d)" % r3.returncode,
+          r3.returncode == 1)
     check("symlink no destino final: a SENTINELA ficou byte a byte intacta",
           open(destino2, "rb").read() == SENTINELA)
     check("symlink no destino final: a recusa diz que e symlink",
