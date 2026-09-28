@@ -31,6 +31,19 @@ symbols_ship "$SO" "$STAGED" || exit 1
 SO="$STAGED"
 
 TERMUX_PY="${TERMUX_PY:-/data/data/com.termux/files/usr/bin/python3}"
+# O caminho vai dentro de `su -c "..."` duas vezes: no preflight e no envio.
+# Valida-lo aqui, local, antes de qualquer adb, fecha os dois sítios de uma vez:
+# aspas, espaço ou `;` virariam comando no aparelho, como root. O padrão
+# aceita o que o caminho do Termux tem de fato e nada mais.
+case "$TERMUX_PY" in
+    /*) ;;
+    *) echo "erro: TERMUX_PY tem que ser caminho absoluto: $TERMUX_PY" >&2; exit 1 ;;
+esac
+printf '%s' "$TERMUX_PY" | grep -qE '^/[A-Za-z0-9._/+-]+$' || {
+    echo "erro: TERMUX_PY tem caractere fora de [A-Za-z0-9._/+-]: $TERMUX_PY" >&2
+    echo "      o caminho entra num su -c como root; aspas, espaco ou ; viram comando." >&2
+    exit 1
+}
 
 # stat -c%s e' GNU (Linux); -f%z e' BSD/macOS -- tenta os dois.
 SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
@@ -42,7 +55,19 @@ echo "Isso escreve em /data/local/tmp/bc_mods/ e sinaliza reload do loader."
 # aparelho. Aqui ela vem antes de enviar qualquer coisa, e diz o comando.
 # Checar antes do prompt: nao faz o usuario confirmar um deploy que nao vai
 # funcionar, e nada foi enviado, entao nao ha residuo para limpar.
-if ! adb shell "test -x '$TERMUX_PY'" >/dev/null 2>&1; then
+# O caminho tem que ser conferido como root e no MESMO contexto do envio, que
+# tambem e `su -c`. Sem su, o uid do adb (2000) nao atravessa
+# /data/data/com.termux, que e 0700 do app do Termux: o `test -x` dava
+# "ausente" em TODO aparelho real e abortava um deploy que funcionaria. Por
+# isso a checagem e `su -c`, e a falha de root tem mensagem propria.
+if ! adb root >/dev/null 2>&1; then
+    echo "erro: root necessario para ler $TERMUX_PY no aparelho." >&2
+    echo "      o adb sem root nao atravessa /data/data/com.termux (0700)," >&2
+    echo "      entao a checagem do python mentiria. Este deploy usa su, e o" >&2
+    echo "      proprio script precisa dele para escrever em bc_mods/." >&2
+    exit 1
+fi
+if ! adb shell su -c "test -x '$TERMUX_PY'" >/dev/null 2>&1; then
     echo "erro: python do Termux ausente no aparelho ($TERMUX_PY)." >&2
     echo "      o emissor do push_mod roda la dentro; sem python o deploy nao" >&2
     echo "      tem como concluir. No Termux do aparelho:" >&2

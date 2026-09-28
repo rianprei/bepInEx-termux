@@ -26,18 +26,45 @@ die() { echo "deploy_python_check: $*" >&2; exit 1; }
 # --- adb falso: registra tudo e decide o python ---------------------------
 cat > "$WORK/adb" <<'EOS'
 #!/usr/bin/env bash
-# Chamadas de adb que o deploy faz, com o python presente ou ausente.
+# adb falso que MODELA o Android, em vez de responder o que o teste quer.
+#
+# O que o Android faz e o que este adb faz:
+#   - `adb shell` sem su roda como uid 2000 e NÃO atravessa /data/data/,
+#     que é 0700 do app do Termux → o teste de existência ali dá "ausente"
+#     com o python instalado. Foi exatamente esse o defeito: o preflight sem su
+#     dava falso ausente em todo aparelho real.
+#   - `adb shell su -c` roda como root e enxerga o mesmo caminho.
+#   - sem root disponível, o su falha e o script tem que dizer "root
+#     necessário", que é mensagem diferente de "python ausente".
 echo "adb $*" >> "$ADB_LOG"
+[ "${1:-}" = "root" ] && { [ "${FAKE_NO_ROOT:-0}" = "1" ] && exit 1; exit 0; }
 if [ "${1:-}" = "shell" ]; then
-    # O preflight do deploy é `adb shell "test -x '<caminho do python>'"`.
-    # Casa por padrão, não por igualdade: o caminho tem variants por instalação.
-    case "${2:-}" in
-        "test -x "*python3*) [ "${FAKE_PYTHON_PRESENT:-0}" = "1" ] && exit 0; exit 1 ;;
+    shift
+    if [ "${1:-}" = "su" ]; then
+        [ "${FAKE_NO_ROOT:-0}" = "1" ] && { echo "su: not found" >&2; exit 1; }
+        # como root: enxerga /data/data/ e responde sobre o python
+        case "$*" in
+            *"test -x "*python3*) [ "${FAKE_PYTHON_PRESENT:-0}" = "1" ] && exit 0; exit 1 ;;
+        esac
+        # caminho de ENVIO: exercitado de verdade, com o su -c real
+        if printf '%s' "$*" | grep -q 'push_mod_emit\.py'; then
+            echo "ok: 1234 bytes written"; exit 0
+        fi
+        echo "ok"; exit 0
+    fi
+    # sem su: uid 2000 não atravessa /data/data/
+    case "$2" in
+        "test -x "*python3*)
+            if printf '%s' "$2" | grep -q '/data/data/'; then
+                echo "test: /data/data/com.termux/files/usr/bin/python3: Permission denied" >&2
+                exit 1
+            fi
+            exit 1 ;;
     esac
+    echo "ok"; exit 0
 fi
 case "${1:-}" in
     push) echo "1 file pushed."; exit 0 ;;
-    shell) echo "ok"; exit 0 ;;
     *) exit 0 ;;
 esac
 EOS
@@ -73,7 +100,9 @@ printf '%s' "$out" | grep -qi 'python' ||
 if grep -q '^adb push' "$ADB_LOG"; then
     die "empurrou algo com o python ausente: $(grep '^adb push' "$ADB_LOG")"
 fi
-echo "deploy_python_check: (1) python ausente -> exit $rc, mensagem acional, nada enviado"
+grep -q "su -c test -x" "$ADB_LOG" ||
+    die "o preflight nao rodou como root; sem su o uid 2000 nao atravessa /data/data e o check mente"
+echo "deploy_python_check: (1) python ausente, com su real -> exit $rc, mensagem acional, nada enviado"
 
 # --- (2) python presente: o preflight deixa passar -------------------------
 : > "$ADB_LOG"
@@ -83,11 +112,31 @@ grep -q '^adb push' "$ADB_LOG" ||
     die "com python presente o deploy nao chegou ao push (check barrando o caminho feliz): rc=$rc $out"
 echo "deploy_python_check: (2) python presente -> o deploy segue e envia"
 
-# --- (3) o requisito esta escrito, e nos dois deploy.sh --------------------
+# --- (3) o preflight e `su -c`, no codigo — e o comentario nao conta -------
+# Conferir o comentario daria azo para apagar a checagem e deixar o texto
+# prometendo o que nao existe. O que e lido aqui e a linha que roda.
 for mod in kungfux mechabun; do
-    head -20 "$ROOT/mods/$mod/deploy.sh" | grep -q 'pkg install python' ||
+    f="$ROOT/mods/$mod/deploy.sh"
+    # Comportamento primeiro: o caso (1) ja exige no log do adb uma invocacao
+    # `shell su -c test -x`, que e o preflight rodando como root de verdade.
+    # Aqui e so o contrario que se prova no codigo: nao pode existir preflight
+    # sem su, que e o defeito original.
+    grep -q 'adb shell "test -x' "$f" &&
+        die "mods/$mod/deploy.sh: ha preflight SEM su; o uid 2000 nao atravessa /data/data/com.termux (0700) e o check da falso ausente em todo aparelho real"
+    grep -q 'echo "erro: root necessario' "$f" ||
+        die "mods/$mod/deploy.sh: sem su nao ha mensagem propria de root, e ela se confunde com 'python ausente'"
+    head -20 "$f" | grep -q 'pkg install python' ||
         die "mods/$mod/deploy.sh: o bloco Requer nao cita 'pkg install python'"
 done
-echo "deploy_python_check: (3) os dois Requer: citam o python do Termux"
+echo "deploy_python_check: (3) preflight em su -c, mensagem de root propria, Requer cita o python"
+
+# --- (4) TERMUX_PY com metacaractere e recusado antes de qualquer adb -----
+: > "$ADB_LOG"
+out="$(cd "$ROOT/mods/kungfux" && TERMUX_PY="/x' ; echo INJETADO ; '" ./deploy.sh </dev/null 2>&1)" && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || die "aceitou TERMUX_PY com metacaractere (exit 0): o caminho entra num su -c como root"
+printf '%s' "$out" | grep -q 'su -c' ||
+    die "a recusa do TERMUX_PY nao explica o risco: $out"
+[ ! -s "$ADB_LOG" ] || die "validou o caminho DEPOIS de chamar adb: $(cat "$ADB_LOG")"
+echo "deploy_python_check: (4) TERMUX_PY com aspa/ponto e virgula recusado antes de qualquer adb"
 
 echo "deploy_python_check: OK"
