@@ -58,7 +58,7 @@
 #include "bc_path_decide.h"  // decide_path (F1): caminho por app, núcleo puro testável no host
 #include "bc_signal.h"  // sinais companion<->poll: age só quando muda (Enforcing)
 #include "bc_crashguard.h"  // F1d: 2 mortes em <60s bloqueia os mods (núcleo puro)
-#include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + pkg C1), sem Android/il2cpp
+#include "../mods/common/dump_core.h"  // F3 u_dump — núcleo puro (formato C5 + layout IL2CPP), sem Android/il2cpp
 #include "../mods/common/il2cpp_min.h"
 #include "../mods/u_patch/jni/u_patch_parse.h"  // F4: parser C4/C3 (puro)
 #include "../mods/u_patch/jni/u_patch_arm64.h"  // F4: emissores arm64 (puros)
@@ -1753,12 +1753,11 @@ int main() {
     }
 
     // ================================================================
-    // Caso 57: dump_core (F3 u_dump) — formato C5 exato + pkg C1
-    // (env BEPINEX_PKG vence; cmdline só fora de zygote*). Núcleo puro,
-    // usado por mods/u_dump/jni/u_dump_mod.cpp.
+    // Caso 57: dump_core (F3 u_dump) — layout System.String ARM32/64
+    // e serialização C5. Núcleo puro usado por mods/u_dump/jni/u_dump_mod.cpp.
     // ================================================================
     {
-        printf("\n[Caso 57] dump_core: formato C5 (dump.tsv) e pkg C1 (u_dump)\n");
+        printf("\n[Caso 57] dump_core: layout IL2CPP e formato C5\n");
         Il2CppStringLayout arm32_layout = il2cpp_string_layout_for_pointer_size(4);
         Il2CppStringLayout arm64_layout = il2cpp_string_layout_for_pointer_size(8);
         check("System.String ARM32 usa len +0x08 e chars +0x0c",
