@@ -27,7 +27,11 @@ public final class NativeAbiDetector {
         if (fromLibraries != null) return fromLibraries;
 
         ApkAbiScan scan = collectApkAbis(apks);
+        // Prefer ARM64 in mixed APKs; use ARM32 only when ARM64 is absent.
+        // ARM64+ARM32 without a foreign ABI stays ambiguous and falls through.
         if (scan.abis.contains(ARM64) && hasForeignAbi(scan.abis)) return ARM64;
+        if (!scan.abis.contains(ARM64) && scan.abis.contains(ARM32)
+                && hasForeignAbi(scan.abis)) return ARM32;
         if (scan.abis.size() == 1) return scan.abis.iterator().next();
         if (scan.complete && !scan.hasNativeLibraries) return NO_NATIVE_CODE;
         return null;

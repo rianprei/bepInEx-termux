@@ -22,6 +22,9 @@ public final class NativeAbiDetectorTest {
                 NativeAbiDetector.abiFromElfHeader(header(1, 40))));
         check("ELF64 AArch64 header", NativeAbiDetector.ARM64.equals(
                 NativeAbiDetector.abiFromElfHeader(header(2, 183))));
+        byte[] nonElfArm64Header = nonElfArm64Header();
+        check("magic ELF ausente recusa header ELF64/AArch64",
+                NativeAbiDetector.abiFromElfHeader(nonElfArm64Header) == null);
         check("ELF64 x86_64 identificado",
                 "x86_64".equals(NativeAbiDetector.abiFromElfHeader(header(2, 62))));
         check("header ELF desconhecido recusado",
@@ -73,6 +76,12 @@ public final class NativeAbiDetectorTest {
             check("APK x86 mais ARM64 prefere ARM64",
                     NativeAbiDetector.ARM64.equals(
                             NativeAbiDetector.detect(null, Collections.singletonList(mixedArmApk))));
+
+            File mixedArm32Apk = new File(tmp, "mixed-arm32.apk");
+            writeApk(mixedArm32Apk, "lib/x86/libgame.so", "lib/armeabi-v7a/libgame.so");
+            check("APK x86 mais ARM32 sem ARM64 prefere ARM32",
+                    NativeAbiDetector.ARM32.equals(
+                            NativeAbiDetector.detect(null, Collections.singletonList(mixedArm32Apk))));
 
             File mipsApk = new File(tmp, "mips.apk");
             writeApk(mipsApk, "lib/mips/libgame.so");
@@ -129,10 +138,10 @@ public final class NativeAbiDetectorTest {
                             "ABI incompatível: o jogo usa armeabi-v7a, mas o mod usa arm64-v8a. "
                                     + "Baixe a versão armeabi-v7a do mod."));
 
-            String invalidGadgetAbi = NativeAbiDetector.abiFromElfHeader(header(2, 999));
+            String invalidGadgetAbi = NativeAbiDetector.abiFromElfHeader(nonElfArm64Header);
             String invalidGadgetError = LooseModInstaller.gadgetAbiError(
                     invalidGadgetAbi, null);
-            check("gadget sem ABI ELF é recusado mesmo com ABI do jogo desconhecida",
+            check("gadget sem magic ELF é recusado mesmo com ABI do jogo desconhecida",
                     invalidGadgetError != null
                             && invalidGadgetError.contains("não é uma biblioteca ELF válida"));
         } finally {
@@ -151,6 +160,14 @@ public final class NativeAbiDetectorTest {
         bytes[5] = 1;
         bytes[18] = (byte) machine;
         bytes[19] = (byte) (machine >>> 8);
+        return bytes;
+    }
+
+    private static byte[] nonElfArm64Header() {
+        byte[] bytes = new byte[20];
+        bytes[4] = 2;
+        bytes[5] = 1;
+        bytes[18] = (byte) 183;
         return bytes;
     }
 
