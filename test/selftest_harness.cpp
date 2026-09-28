@@ -1453,7 +1453,8 @@ int main() {
             if (f->n < 8) { snprintf(f->names[f->n], 64, "%s", name); f->n++; }
         };
 
-        int n = bc_elf_symtab_scan(syms, 6, strtab, sizeof(strtab), cb, &found);
+        int n = bc_elf_symtab_scan(syms, 6, strtab, sizeof(strtab),
+                                   bc_elf_filter_jni_prefix, cb, &found, false);
         check("achou exatamente 2 símbolos JNI-like (STB_GLOBAL/WEAK + STT_FUNC + prefixo Java_)", n == 2);
         check("primeiro símbolo é metodo1", found.n >= 1 && strcmp(found.names[0], "Java_com_foo_Bar_metodo1") == 0);
         check("segundo símbolo é metodo2 (STB_WEAK também conta)", found.n >= 2 && strcmp(found.names[1], "Java_com_foo_Bar_metodo2") == 0);
@@ -1468,18 +1469,21 @@ int main() {
         syms2[1] = {1, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0x9000, 0};
         syms2[2] = {(uint32_t)(1 + strlen("_ZN7cocos2d8DirectorC1Ev") + 1),
                     (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xA000, 0};
-        int n2 = bc_elf_symtab_scan_filtered(syms2, 3, strtab2, sizeof(strtab2), cocos_filter, cb, &found);
+        int n2 = bc_elf_symtab_scan(syms2, 3, strtab2, sizeof(strtab2),
+                                    cocos_filter, cb, &found, false);
         check("filtro customizado (cocos2d substring) acha só o símbolo certo", n2 == 1);
 
         // Bounds-safety: st_name apontando fora do strtab nunca lê fora dos limites
         bc_elf64_sym bad[2] = {};
         bad[0] = {0, 0, 0, 0, 0, 0};
         bad[1] = {9999, (uint8_t)((BC_ELF_STB_GLOBAL << 4) | BC_ELF_STT_FUNC), 0, 0, 0xB000, 0};
-        int n3 = bc_elf_symtab_scan(bad, 2, strtab, sizeof(strtab), cb, &found);
+        int n3 = bc_elf_symtab_scan(bad, 2, strtab, sizeof(strtab),
+                                    bc_elf_filter_jni_prefix, cb, &found, false);
         check("st_name fora do strtab é ignorado, não lê fora dos limites", n3 == 0);
 
         // sym_count == 0 (contagem GNU_HASH zerada, ex.: DT_GNU_HASH ausente) → 0 achados, sem crash
-        int n4 = bc_elf_symtab_scan(syms, 0, strtab, sizeof(strtab), cb, &found);
+        int n4 = bc_elf_symtab_scan(syms, 0, strtab, sizeof(strtab),
+                                    bc_elf_filter_jni_prefix, cb, &found, false);
         check("sym_count=0 (sem DT_GNU_HASH) → 0 símbolos, sem crash", n4 == 0);
     }
 
