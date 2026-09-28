@@ -18,7 +18,7 @@
 # Contrato de falha (qualquer um destes = exit != 0, com a causa no stderr):
 #   - clang++ ausente, ou sem -fsanitize=fuzzer/address/undefined (UBSan exige
 #     instrumentação de toda a TUnit, o que o GCC não faz em modo fuzzing)
-#   - o corpus versionado de um alvo sumiu ou ficou vazio
+#   - o corpus versionado de algum alvo sumiu ou ficou vazio
 #   - crash / heap-buffer-overflow / OOB / leak / UB em qualquer exec
 #   - regressão de crash (ver test/fuzz/fixtures/<alvo>/) que não reproduz
 set -euo pipefail
@@ -26,6 +26,18 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 FUZZ_DIR="$ROOT/test/fuzz"
 CORPUS="$FUZZ_DIR/corpus"
+
+# Nenhuma contagem literal de alvo no texto de fuzz, e ela roda AQUI, antes de
+# compilar qualquer coisa: um texto desatualizado é barato de achar e caro de
+# descobrir depois. Como o gate chama este script, a regra entra no verify_all
+# sem um passo novo lá. FAIL, nunca SKIP — se o check sumir, o gate inteiro
+# perde a regra em silêncio.
+# A mensagem sai direto (o die() do script ainda não existe nesta altura).
+python3 "$FUZZ_DIR/check_no_stale_counts.py" "$ROOT" || {
+    echo "fuzz-gate: contagem literal de alvo no texto de fuzz; a lista cresce e o texto nao" >&2
+    exit 1
+}
+
 # Semente fixa: as mutações do libFuzzer saem sempre da mesma sequência, então
 # um "funciona no meu host" e um "funciona no gate" são a mesma coisa.
 FUZZ_SEED=${FUZZ_FUZZ_SEED:-20260926}
@@ -35,9 +47,10 @@ TARGETS=(c4_line elf_preflight frida_config selmix upatch_encoder)
 
 # Execs POR ALVO, não um número único: os alvos não custam o mesmo por exec.
 # O selmix é ~20x mais lento que o frida_config (le arquivo em disco e monta
-# 512 entradas de watch por exec), então um número igual para os cinco faria
-# o gate passar de 30s por causa de um alvo só. Calibrado para os cinco
-# somarem ~15s de fuzzer, mais ~7s de build dos 5 binários em paralelo.
+# 512 entradas de watch por exec), então um número igual para todos faria o
+# gate passar de 30s por causa do alvo mais caro e o resto ia pro ar. As
+# execs de cada alvo estão em RUNS_DEFAULT, abaixo; o tempo total não é uma
+# meta, e sim consequência dessa tabela.
 declare -A RUNS_DEFAULT=(
     [c4_line]=40000
     [elf_preflight]=40000
@@ -52,7 +65,7 @@ PROBE=$(mktemp)
 BIN=$(mktemp -d)
 trap 'rm -rf "$BIN" "$PROBE"' EXIT
 
-# --- 0. o compilador tem que existir E ter os três sanitizers ---------------
+# --- 0. o compilador tem que existir E ter os sanitizers --------------------
 CXX=${FUZZ_CXX:-clang++}
 command -v "$CXX" >/dev/null 2>&1 ||
     die "$CXX ausente: o gate de fuzz exige clang com libFuzzer+ASan+UBSan (instale o clang, ou aponte FUZZ_CXX=)"
@@ -62,7 +75,7 @@ if ! printf 'extern "C" int LLVMFuzzerTestOneInput(const unsigned char*d,unsigne
 fi
 
 # --- 1. o corpus versionado tem que existir e estar cheio -------------------
-# Sem isso, um alvo "esvaziado" por engano passaria a etapa sem exercitar
+# Sem isso, o corpus de algum alvo "esvaziado" por engano passaria a etapa sem exercitar
 # parser nenhum — o mesmo buraco do SKIP, só menor.
 for t in "${TARGETS[@]}"; do
     dir="$CORPUS/$t"
@@ -120,7 +133,7 @@ fi
 failed=0
 for t in "${TARGETS[@]}"; do
     log="$BIN/$t.run.log"
-    # Roda sobre uma CÓPIA do corpus, dentro do tmp, por dois motivos:
+    # Roda sobre uma CÓPIA do corpus, dentro do tmp, por um motivo que manda:
     #   1. o libFuzzer grava as unidades novas que ELE Descobre no diretório de
     #      corpus. Se fosse o do repo, a 2a execução do gate começaria de onde
     #      a 1a parou — o gate deixaria de ser determinístico E sujaria a

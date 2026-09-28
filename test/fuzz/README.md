@@ -2,7 +2,7 @@
 
 O loader nativo roda DENTRO do processo do jogo. Um crash de parser aqui
 derruba o jogo, e 2 mortes em 20s travam o jogo inteiro pelo `bc_crashguard`.
-Por isso os cinco alvos abaixo são exercitados com AddressSanitizer +
+Por isso os alvos abaixo são exercitados com AddressSanitizer +
 UndefinedBehaviorSanitizer **no gate**, não só nos testes de host: os testes
 de host provam que o caminho feliz funciona, o fuzzing prova que o resto da
 superfície não mata o jogo.
@@ -35,16 +35,18 @@ UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
     -max_total_time=600 -max_len=300000 -print_final_stats=1 -print_coverage=1
 ```
 
-Achado vira duas coisas, sempre:
+Achado entra no repo por um destes caminhos, sempre:
 1. a entrada mínima em `test/fuzz/fixtures/<alvo>/` (o gate replaya);
 2. um `[Caso N]` no `test/selftest_harness.cpp` (prova a correção sem
    sanitizer, para quem roda o host sem toolchain de fuzz).
 
 ## Etapa do gate (o que o `verify_all.sh` roda)
 
-`test/fuzz/run_fuzz_gate.sh`: os 5 harnesses, `-seed` fixa, `-runs` fixa,
-sobre o corpus versionado. ~25s no total, determinístico (sem
-`-max_total_time`, que tornaria o resultado dependente da carga da máquina).
+`test/fuzz/run_fuzz_gate.sh`: um harness por alvo da lista dele, `-seed` fixa,
+`-runs` fixa, sobre o corpus versionado. O tempo total não é uma meta do gate
+(o que importa é exercitar todos os alvos com sanitizer dentro do orçamento);
+~25s no total, determinístico (sem `-max_total_time`, que tornaria o resultado
+dependente da carga da máquina).
 
 **Sanitizer ausente é FAIL, nunca SKIP.** Um gate que pula o fuzzing quando o
 host não tem clang voltaria a reportar PASS sem exercitar parser nenhum — que
