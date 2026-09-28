@@ -27,6 +27,27 @@ erro de digitação ou a contagem que entrou junto com a troca do substantivo, e
 falha mesmo sem marcador por perto. A lista completa de número por extenso vai
 de zero até vinte e depois as dezenas, até cem, nos dois idiomas.
 
+O VOCABULÁRIO FECHADO, EXATAMENTE O QUE ESTE CHECK COBRE. Dígito; número por
+extenso de zero a vinte e as dezenas até cem, em português e inglês; os
+quantificadores "dúzia", "dezenas" e meia dúzia, com as equivalentes em inglês;
+artigo com marcador de quantidade em volta; e artigo antes de substantivo no
+plural. Nada mais dispara.
+
+O QUE ESTÁ DECLARADAMENTE FORA DE ESCOPO, e POR QUÊ. "vários", "alguns" e os
+equivalentes em inglês ficam de fora porque não afirmam número nenhum: dizem
+que há mais de um sem dizer quantos, e por isso não envelhecem quando a lista
+cresce — é a diferença entre uma afirmação que a lista pode desmentir e uma que
+ela não toca. "integrado", "done" e "landed" também ficam fora: são sinônimos
+de merge que este gate não promete conferir, e a lista de marcas está escrita
+no gate de hash, que é quem a mantém. Acrescentar palavra aqui é decisão
+documentada, nunca efeito colateral de arrumar outra coisa.
+
+Por que o gate não tenta ser completo em linguagem natural: a invariante que
+importa — a lista de alvos e a tabela do README não divergirem nos dois
+sentidos — é estrutural e está verificada no gate. Este check é a rede de
+proteção do texto corrido em volta dela, e uma rede com vocabulário escrito
+vale mais do que uma heurística que nunca termina.
+
 O QUE NÃO É PROBLEMA. Contagem de execs, de segundos, de entradas de watch, de
 linhas: é calibração medida, não lista que cresce. E `TARGETS`/`RUNS_DEFAULT`
 são a fonte da verdade — o texto aponta para elas em vez de repeti-las.
@@ -76,12 +97,31 @@ SEP = rf"{SEP_ONE}+"
 # óbvia que ele existe para pegar.
 MID = rf"{SEP}(?:os|as)?(?:(?:[uú]nic|unic|single)\w*)?{SEP_ONE}*"
 
+# Quantificador numerico: nao e numero por extenso, e nomeia uma quantidade do
+# mesmo jeito. "meia duzia" e o caso com preposicao no meio, e por isso o "de"
+# opcional antes do substantivo. PT e EN juntos porque o README do gate escreve
+# em portugues e o codigo e em ingles.
+QUANT = (
+    r"d[uú]zias?|dezenas?|dozens?|"
+    r"par\s+de|pair\s+of|couple\s+of|"
+    r"meia\s+d[uú]zia|half\s+a\s+dozen"
+)
+
 # Marcador que transforma artigo em contagem declarada. O "só" precisa dos
 # dois acentos na classe: com IGNORECASE o "o" do padrão não casa o "ó" do
 # texto, e o marcador mais comum em português era justamente o que não casava.
 MARK = r"(?:[sś][oó]|sozinh\w*|apenas|only|just|single|[uú]nic\w*|unic\w*)"
 
 DIGIT_RE = re.compile(rf"\b\d+{MID}{NOUN}\b", re.IGNORECASE)
+# Quantificador numerico. A barra da tabela markdown fica entre a celula do
+# rotulo e a do substantivo, e MID nao aceita barra, entao o padrao casa na
+# mesma celula sem depender do pipe: e por isso que a varrura de linha inteira
+# funciona para tabela sem caso especial.
+# O quantificador leva preposicao antes do substantivo, e MID nao tem porque
+# MID nao existe para numero: e a unica diferenca entre este casamento e o
+# do numero.
+QUANT_MID = rf"{SEP}(?:(?:d[eo]s?|of|to)\s+)?{SEP_ONE}*"
+QUANT_RE = re.compile(rf"\b(?:{QUANT}){QUANT_MID}{NOUN}\b", re.IGNORECASE)
 # Número por extenso a partir de dois: sempre contagem.
 SPELLED_RE = re.compile(
     rf"\b(?:{NUMBER}){MID}{NOUN}\b", re.IGNORECASE
@@ -134,6 +174,8 @@ def main() -> int:
         checked += 1
         for line_no, line in enumerate(body.splitlines(), 1):
             for match in DIGIT_RE.finditer(line):
+                errors.append(report(path, root, line_no, match.group(0), ""))
+            for match in QUANT_RE.finditer(line):
                 errors.append(report(path, root, line_no, match.group(0), ""))
             for match in SPELLED_RE.finditer(line):
                 if ONE_RE.fullmatch(match.group(0).strip()):
