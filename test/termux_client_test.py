@@ -36,6 +36,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 CLIENT_SRC = os.path.join(REPO, "tools", "termux_client.py")
+EMIT_SRC = os.path.join(REPO, "tools", "push_mod_emit.py")
 INSTALLER = os.path.join(REPO, "tools", "install_termux_client.sh")
 CONSOLE = os.path.join(REPO, "termux-console", "bepin-console")
 
@@ -198,12 +199,45 @@ def main():
     dest = os.path.join(root, dest_rel)
     if not os.path.isfile(dest):
         # SABOTAGEM: o staging nao colocou o arquivo. Dizer e falhar, nao pular.
-        check("o instalador p\u00f5e o cliente no caminho que o console procura", False)
+        check("o instalador põe o cliente no caminho que o console procura", False)
         print("  (SAHBA: o staging nao colocou o cliente -- %s)" % dest, file=sys.stderr)
         return 1
-    check("o instalador p\u00f5e o cliente no caminho que o console procura", True)
+    check("o instalador põe o cliente no caminho que o console procura", True)
     check("o cliente instalado e byte a byte o do repo",
           open(dest, "rb").read() == open(CLIENT_SRC, "rb").read())
+
+    # O EMISSOR E INSTALADO JUNTO (achado do hermes). O cliente parou de ter
+    # copia da logica de envio e importa o emissor oficial; se o instalador
+    # entregar so o cliente, o que fica no aparelho e um cliente que nao roda.
+    dest_emit = os.path.join(root, dest_rel.rsplit("/", 1)[0],
+                             "push_mod_emit.py")
+    check("o instalador põe o EMISSOR no mesmo diretorio do cliente",
+          os.path.isfile(dest_emit))
+    check("o emissor instalado e byte a byte o do repo",
+          os.path.isfile(dest_emit)
+          and open(dest_emit, "rb").read() == open(EMIT_SRC, "rb").read())
+    check("cliente e emissor estao no MESMO diretorio (o import e por diretorio)",
+          os.path.dirname(dest) == os.path.dirname(dest_emit))
+
+    # --- 0c. SABOTAGEM: instalar SO o cliente ------------------------------
+    # O instalador foi reduzido a um so arquivo. O que fica no aparelho e um
+    # cliente que nao roda — e o que o teste exige e que ele DIGA ISSO, com o
+    # nome do arquivo que falta, em vez de estourar um NameError cru no meio de
+    # um verbo. Um traceback seria pior que a falha: pareceria bug do cliente
+    # quando a causa e o install.
+    root_sozinho = tempfile.mkdtemp(prefix="bepin-termux-so-cliente-")
+    shutil.copy2(CLIENT_SRC, os.path.join(root_sozinho, "termux_client.py"))
+    out_s, err_s, rc_s = rodar_cliente(
+        os.path.join(root_sozinho, "termux_client.py"), ["ping"],
+        dict(os.environ, BEPINEX_COMPANION_SOCKET=SOCK_NAME[1:]))
+    check("SABOTAGEM (so o cliente): sai com codigo != 0", rc_s != 0)
+    check("SABOTAGEM (so o cliente): a mensagem diz qual arquivo falta",
+          "push_mod_emit.py" in (err_s or ""))
+    check("SABOTAGEM (so o cliente): a mensagem diz como corrigir",
+          "install_termux_client" in (err_s or ""))
+    check("SABOTAGEM (so o cliente): NAO e NameError nem traceback cru",
+          "NameError" not in (err_s or "") and "Traceback" not in (err_s or "")
+          and "ModuleNotFoundError" not in (out_s or ""))
 
     # e o console aponta para ESSE caminho
     expect_rel = None

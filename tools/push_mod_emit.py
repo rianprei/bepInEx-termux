@@ -20,10 +20,73 @@ import os
 import socket
 import sys
 
+# Tempo de espera do socket. O cliente do Termux usava 20s; o emissor, antes
+# desta refatoracao, usava o padrao do sistema. Fica 20s para que os dois
+# caminhos esperem o mesmo antes de desistir.
+SOCKET_TIMEOUT = 20.0
+
+
+class EmitError(Exception):
+    """Falha de emissao, com mensagem ja pronta para o usuario.
+
+    Antes desta refatoracao a logica vivia dentro de main() e chamava die(),
+    que faz sys.exit(1). Isso servia para o uso em linha de comando, mas
+    impossibilitava o cliente do Termux REUSAR a mesma logica: importar o
+    modulo e chamar main() matava o processo inteiro do cliente. A separacao
+    em emit() (levanta) + main() (traduz para die) mantem o comportamento do
+    script e abre a porta para o cliente, sem duas copias do protocolo.
+    """
+
 
 def die(msg):
     print(f"push_mod_emit: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def emit(sock_addr, path, name, size, timeout=SOCKET_TIMEOUT):
+    """Envia <path> como push_mod <name> <size>. Devolve a resposta do companion.
+
+    Esta e a FONTE UNICA do envio. Quem chamar nao deve montar cabecalho nem
+    payload: o ponto de ter uma funcao e nao haver um segundo lugar onde o
+    protocolo possa divergir do companion.
+    """
+    try:
+        expected = int(size)
+    except (TypeError, ValueError):
+        raise EmitError(f"tamanho inválido: {size!r}")
+    if expected <= 0:
+        raise EmitError(f"tamanho inválido: {expected}")
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise EmitError(f"não abri {path}: {exc}")
+    if len(data) != expected:
+        raise EmitError(
+            f"tamanho divergiu do anunciado: arquivo tem {len(data)}, "
+            f"esperado {expected}")
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        if sock_addr.startswith("@"):
+            sock.connect("\0" + sock_addr[1:])
+        else:
+            sock.connect(sock_addr)
+        sock.sendall(f"push_mod {name} {expected}\n".encode("ascii"))
+        # sendall, nao send: ele reenvia o que o kernel aceitou pela metade.
+        # O cliente antigo cortava o payload em pedacos de 8 KiB para "nao
+        # passar do limite de um send()", mas e exatamente o que o sendall ja
+        # faz — o pedacinho era redundancia, nao protecao.
+        sock.sendall(data)
+        reply = sock.recv(256)
+    except (OSError, UnicodeEncodeError) as exc:
+        raise EmitError(f"falha no socket: {exc}")
+    finally:
+        sock.close()
+    try:
+        return reply.decode().strip()
+    except UnicodeDecodeError:
+        raise EmitError("resposta do companion não é texto")
 
 
 def main(argv):
@@ -31,35 +94,9 @@ def main(argv):
         die("uso: push_mod_emit.py <socket> <arquivo> <nome> <size>")
     _, sock_addr, path, name, size_arg = argv
     try:
-        expected = int(size_arg)
-    except ValueError:
-        die(f"tamanho inválido: {size_arg!r}")
-    if expected <= 0:
-        die(f"tamanho inválido: {expected}")
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read()
-    except OSError as exc:
-        die(f"não abri {path}: {exc}")
-    if len(data) != expected:
-        die(f"tamanho divergiu do anunciado: arquivo tem {len(data)}, esperado {expected}")
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        if sock_addr.startswith("@"):
-            sock.connect("\0" + sock_addr[1:])
-        else:
-            sock.connect(sock_addr)
-        sock.sendall(f"push_mod {name} {expected}\n".encode("ascii"))
-        sock.sendall(data)
-        reply = sock.recv(256)
-    except (OSError, UnicodeEncodeError) as exc:
-        die(f"falha no socket: {exc}")
-    finally:
-        sock.close()
-    try:
-        print(reply.decode().strip())
-    except UnicodeDecodeError:
-        die("resposta do companion não é texto")
+        print(emit(sock_addr, path, name, size_arg))
+    except EmitError as exc:
+        die(str(exc))
 
 
 if __name__ == "__main__":

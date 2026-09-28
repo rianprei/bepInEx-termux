@@ -41,7 +41,38 @@ SOCKET_NAME = ('\0' + _override) if _override else '\0bc_companion'
 # para sempre. PUSH_TIMEOUT e menor que o timeout de comando: um push que
 # travou e pior do que um comando que travou, porque nao tem resposta util.
 PUSH_TIMEOUT = 20.0
-PUSH_CHUNK = 8192
+
+# ---------------------------------------------------------------------------
+# O EMISSOR E A FONTE UNICA DO ENVIO (achado do hermes)
+# ---------------------------------------------------------------------------
+# Este cliente tinha uma copia propria do protocolo push_mod: montava o
+# cabecalho, lia o arquivo e mandava o payload em pedacos. O repositorio ja
+# tinha tools/push_mod_emit.py, que e o emissor oficial e o mesmo que
+# mods/*/deploy.sh usa — duas copias do mesmo protocolo, e o jeito delas
+# divergirem nao era hipotetico, ja tinha sido (uma mandava so o cabecalho).
+# Agora o cliente importa o emissor e nao tem mais nenhuma logica de envio.
+#
+# O import e aqui no topo, e nao dentro de push_mod(), por escolha: o emissor
+# e ARTEFATO DO MESMO INSTALL. Se ele faltar no destino, o instalador esta
+# quebrado, e um cliente que so funciona para 11 de 12 verbos e pior do que um
+# cliente que recusa dizendo o nome do arquivo que falta. Erro claro logo no
+# primeiro uso, em vez de um NameError cru mais adiante.
+_here = os.path.dirname(os.path.abspath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+try:
+    import push_mod_emit
+except ImportError as _exc:  # pragma: no cover - so quando o install esta torto
+    print(
+        "error: push_mod_emit.py nao esta no mesmo diretorio do cliente (%s).\n"
+        "       O cliente nao tem mais uma copia da logica de envio: ele usa o "
+        "emissor oficial.\n"
+        "       Reinstale com tools/install_termux_client.sh, que instala os dois.\n"
+        "       (detalhe do import: %s)" % (_here, _exc),
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 # Cores ANSI por nível de log — fonte real: BepInEx/BepInEx,
 # Console/Unix/TtyHandler.cs L101-104 (ansiColorMapping[], indexado por
@@ -117,21 +148,29 @@ def send_command(cmd):
 def push_mod(path):
     """Envia um arquivo .so para o companion instalar.
 
-    ACHADO DO HERMES (bug real): a versao anterior mandava SO o cabecalho
-    "push_mod <nome> <tamanho>\n" e nenhum payload. O companion
-    (jni/companion.cpp, handle_push_mod) le EXATAMENTE <tamanho> bytes depois do
-    cabecalho, entao ficava esperando payload que nunca chegava: timeout, e o
-    arquivo nunca aparecia em BC_MODS_DIR.
+    Nao ha mais logica de envio aqui: o protocolo e do push_mod_emit (fonte
+    unica, a mesma que mods/*/deploy.sh usa). Esta funcao so traduz o erro
+    do emissor para o formato "error: ..." que o resto do cliente devolve.
 
-    O tamanho declarado e o que foi REALMENTE LIDO do arquivo, e nao o que o
-    stat falava. Se o arquivo encolher (ou for truncado) entre o stat e a
-    leitura, declarar o stat seria mandar um cabecalho que o companion nunca
-    satisfaz — o mesmo timeout, com uma causa diferente. Ler primeiro e
-    declarar o que saiu e o que mantem os dois lados de acordo.
+    ACHADO DO HERMES (bug real, agora coberto pelo emissor): a versao
+    anterior desta funcao mandava SO o cabecalho "push_mod <nome> <tamanho>"
+    e nenhum payload. O companion (jni/companion.cpp, handle_push_mod) le
+    EXATAMENTE <tamanho> bytes depois do cabecalho, entao ficava esperando
+    payload que nunca chegava: timeout, e o arquivo nunca aparecia em
+    BC_MODS_DIR.
     """
-    if not os.path.isfile(path):
-        return "error: arquivo ausente: %s" % path
+    # O emissor trabalha com '@nome' para o namespace abstrato; o cliente
+    # guarda o socket com o byte NUL, que e a mesma coisa. Esta conversao e a
+    # unica adaptacao entre os dois, e ela mora AQUI porque quem conhece o
+    # formato do cliente e o cliente.
+    addr = "@" + SOCKET_NAME[1:] if SOCKET_NAME.startswith("\0") else SOCKET_NAME
+    name = os.path.basename(path)
     try:
+        # O size declarado e o que foi lido do arquivo, nunca o do stat: se o
+        # arquivo encolher entre o stat e o envio, declarar o stat seria
+        # mandar um cabecalho que o companion nunca satisfaz. O emissor le o
+        # arquivo e REConfere o tamanho contra o que saiu, entao o que
+        # passamos aqui e a checagem, nao a fonte da verdade.
         with open(path, "rb") as f:
             payload = f.read()
     except OSError as e:
@@ -140,40 +179,14 @@ def push_mod(path):
         # size <= 0 e recusado pelo companion com "invalid size"; melhor dizer
         # isso aqui do que mandar cabecalho com 0 e esperar timeout.
         return "error: arquivo vazio: %s" % path
-    name = os.path.basename(path)
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(PUSH_TIMEOUT)
     try:
-        sock.connect(SOCKET_NAME)
-        # cabecalho e payload NA MESMA conexao: o companion le os bytes do
-        # payload no mesmo fd, logo que recv a linha.
-        sock.sendall(("push_mod %s %d\n" % (name, len(payload))).encode())
-        # payload em pedacos, para nao passar do limite de um send() e para
-        # nao travar com arquivo grande esperando o buffer inteiro.
-        for offset in range(0, len(payload), PUSH_CHUNK):
-            sock.sendall(payload[offset:offset + PUSH_CHUNK])
-        chunks = []
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                break
-            chunks.append(data)
-        resp = b"".join(chunks).decode()
-        if not resp:
-            return "error: resposta vazia ao enviar %s" % name
-        return resp
-    except socket.timeout:
-        return "error: timeout ao enviar %s" % name
-    except ConnectionRefusedError:
-        return "error: connection refused (companion not running?)"
-    except FileNotFoundError:
-        return "error: socket not found (companion not running?)"
-    except (ConnectionResetError, BrokenPipeError):
-        return "error: conexao resetada durante o envio de %s" % name
-    except OSError as e:
-        return "error: falha de conexao durante o envio (%s)" % e
-    finally:
-        sock.close()
+        resp = push_mod_emit.emit(addr, path, name, len(payload),
+                                  timeout=PUSH_TIMEOUT)
+    except push_mod_emit.EmitError as e:
+        return "error: %s" % e
+    if not resp:
+        return "error: resposta vazia ao enviar %s" % name
+    return resp
 
 
 def stream():

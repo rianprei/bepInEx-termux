@@ -35,14 +35,26 @@ REPO="$(cd "$HERE/.." && pwd)"
 # CLIENT=... em termux-console/bepin-console:18; se um mudar, o outro tem que
 # mudar junto (o teste confere).
 REL_DEST="battlecats-mods/zygisk-bc-poc/termux_client.py"
+
+# O emissor e ARTEFATO DO MESMO INSTALL, nao um extra opcional (achado do
+# hermes): o cliente importava uma copia propria da logica de push_mod, que
+# e a mesma que o push_mod_emit.py oficial ja faz. Com a copia removida, o
+# cliente depende do emissor — entao instalar so o cliente produz um cliente
+# que nao roda. Os dois vao juntos, lado a lado, porque o cliente importa o
+# emissor do SEU proprio diretorio (sys.path com o dir do arquivo), que e o
+# mesmo caminho onde o console procura o cliente.
+REL_DEST_EMIT="battlecats-mods/zygisk-bc-poc/push_mod_emit.py"
 SRC="$REPO/tools/termux_client.py"
+SRC_EMIT="$REPO/tools/push_mod_emit.py"
 
 # Onde instalar. No aparelho e o home do Termux; fora dele, o $HOME de quem
 # roda, que e a mesma arvore relativa.
 DEST_ROOT="${1:-${HOME}}"
 DEST="$DEST_ROOT/$REL_DEST"
+DEST_EMIT="$DEST_ROOT/$REL_DEST_EMIT"
 
 [ -f "$SRC" ] || { echo "install_termux_client: fonte ausente: $SRC" >&2; exit 1; }
+[ -f "$SRC_EMIT" ] || { echo "install_termux_client: fonte ausente: $SRC_EMIT" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # NUNCA SEGUIR SYMLINK, em nenhum nivel (achado do hermes em 7d084a5)
@@ -55,36 +67,55 @@ DEST="$DEST_ROOT/$REL_DEST"
 # Nao basta checar o destino final: um `mods` symlink para /sdcard faz o
 # caminho INTEIRO parecer legitimo e o cp grava em /sdcard. Por isso a checagem
 # e de cada componente, do raiz ate o destino.
+#
+# A checagem e por COMPONENTE DO CAMINHO, e os dois arquivos moram no mesmo
+# diretorio, entao a varredura e a mesma para os dois — nao ha como o cliente
+# passar e o emissor falhar, nem o inverso.
 # ---------------------------------------------------------------------------
 aviso() { echo "install_termux_client: $1" >&2; }
 
 # 1) nenhum componente do caminho relativo pode ser symlink. Os diretorios
 #    ainda podem nao existir: nesse caso nao ha link.
-rel_dir="$(dirname "$REL_DEST")"
-cur=""
-for comp in $(echo "$rel_dir" | tr '/' ' '); do
-    [ -n "$comp" ] || continue
-    cur="$cur$comp"
-    probe="$DEST_ROOT/$cur"
-    if [ -L "$probe" ]; then
-        aviso "recusado: $probe e symlink — escreveria fora da arvore de destino"
+for rel_dir in "$(dirname "$REL_DEST")" "$(dirname "$REL_DEST_EMIT")"; do
+    cur=""
+    for comp in $(echo "$rel_dir" | tr '/' ' '); do
+        [ -n "$comp" ] || continue
+        cur="$cur$comp"
+        probe="$DEST_ROOT/$cur"
+        if [ -L "$probe" ]; then
+            aviso "recusado: $probe e symlink — escreveria fora da arvore de destino"
+            exit 1
+        fi
+    done
+done
+# 2) os DESTinos finais tambem. Os dois: um deles e symlink e escrever nele
+#    e o mesmo perigo do link no meio do caminho.
+for dest in "$DEST" "$DEST_EMIT"; do
+    if [ -L "$dest" ]; then
+        aviso "recusado: o destino $dest ja e symlink"
         exit 1
     fi
 done
-# 2) o DEST final tambem.
-if [ -L "$DEST" ]; then
-    aviso "recusado: o destino $DEST ja e symlink"
-    exit 1
-fi
 
 mkdir -p "$(dirname "$DEST")" || { aviso "nao criei $(dirname "$DEST")"; exit 1; }
+
 # 3) escrita ATOMICA: temporario no MESMO diretorio + mv. Um cp direto deixa o
 #    arquivo pela metade se o processo morrer no meio, e o console executaria
 #    um cliente truncado.
-tmp="$(mktemp "$(dirname "$DEST")/.termux_client.XXXXXX")" || {
-    aviso "mktemp falhou em $(dirname "$DEST")"; exit 1; }
-# -p preserva o bit de execucao do fonte; o chmod abaixo normaliza.
-cp -p "$SRC" "$tmp" || { rm -f "$tmp"; aviso "cp falhou"; exit 1; }
-chmod 0755 "$tmp" || { rm -f "$tmp"; aviso "chmod falhou"; exit 1; }
-mv -f "$tmp" "$DEST" || { rm -f "$tmp"; aviso "mv falhou para $DEST"; exit 1; }
-printf '%s\n' "$DEST"
+# O temporario e por arquivo, e a escrita so é declarada boa no fim: se o
+# segundo falhar, o primeiro ja esta no lugar e o dest da segunda esta
+# intacto, entao nao sobra metade de um install em estado impossivel de
+# diagnosticar.
+instalar() {
+    local src="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.$(basename "$dest").XXXXXX")" || {
+        aviso "mktemp falhou em $(dirname "$dest")"; return 1; }
+    # -p preserva o bit de execucao do fonte; o chmod abaixo normaliza.
+    cp -p "$src" "$tmp" || { rm -f "$tmp"; aviso "cp falhou para $dest"; return 1; }
+    chmod 0755 "$tmp" || { rm -f "$tmp"; aviso "chmod falhou para $dest"; return 1; }
+    mv -f "$tmp" "$dest" || { rm -f "$tmp"; aviso "mv falhou para $dest"; return 1; }
+}
+
+instalar "$SRC" "$DEST" || exit 1
+instalar "$SRC_EMIT" "$DEST_EMIT" || exit 1
+printf '%s\n%s\n' "$DEST" "$DEST_EMIT"
