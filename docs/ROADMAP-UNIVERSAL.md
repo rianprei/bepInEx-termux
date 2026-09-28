@@ -40,6 +40,17 @@ Nada modifica APK, OBB ou arquivos do jogo: tudo acontece em runtime (regra dura
 | T1 kit de device | merged, sem device | `1224346` cria o kit com backup verificado; `c3da4cc` adiciona relógio falso; `2b3d8c6` corrige stdin herdado; `05b7138` valida SHA-256 de cada arquivo restaurado; tudo isso foi testado em simulação de host |
 | docs de referência no gate | merged, sem device | `73e45b5` estende a checagem para validar linha/faixa e texto literal citado; o gate atual verifica 26 referências; `docs/DEVICE-ROUND.md` é o roteiro da rodada |
 | guarda do gadget no loader | merged, sem device | `e92b13f` rejeita `.so` com `DT_SONAME` de gadget (Caso 63) — é barreira de host, ainda não testada com o gadget real num celular |
+| README honesto | merged, sem device | `37a4120`: matriz de suporte honesta, limite medido do tradutor, Frida pinado; sem device |
+| roteiro device-round-2 | merged, sem device | `6381ead`: roteiro em `docs/DEVICE-ROUND-2.md` + automação com testes host; a rodada no aparelho é pré-requisito de publicação |
+| espera IL2CPP unificada | merged, sem device | `8eba793`: 240s com poll de 200ms, matcher por sufixo, log da rota de abertura; host; sem aparelho |
+| IDs de caso únicos no harness | merged, sem device | `94dd077`: casos renumerados + gate detecta duplicados; host; sem aparelho |
+| tradutor `.dll`→`.bpatch` (JVM→C++) | merged, sem device | `5581e2e`: round-trip real tradutor→parser C++ (Caso 80); testes JVM e harness C++; sem aparelho |
+| ABI dupla arm32 + recusa de hook 32-bit | merged, sem device | `f8a12fc`: loader e mods em arm64-v8a e armeabi-v7a, Dobby arm32 pinado com smoke qemu, hooks recusam 32-bit com log, Manager escolhe o `.so` pela ABI; host e qemu, sem aparelho |
+| limite medido do tradutor | merged, sem device | `139aceb`: 0 de 378 patches em 30 mods convertem (375 sem o tipo-alvo na DLL, 3 por classe aninhada); `docs/DLL-COVERAGE.md` + checagem no gate; sem aparelho |
+| árvore root-only + entrega por FD (mods-reloc) | em revisão, fora da base | `uni/mods-reloc`: mods em diretório root-only com entrega por descritor, kit separa trânsito e árvore; sem hash de merge |
+| companion serve só quem conectou (peercred) | em revisão, fora da base | `uni/peercred`: companion monta a partir de pacote e nome, sem aceitar caminho; sem hash de merge |
+| símbolos e symbolize (symbols) | em revisão, fora da base | `uni/symbols`: build-id reproduzível, símbolos guardados, tombstone vira função e linha; sem hash de merge |
+| fuzz do emissor arm64 (fuzz-upatch) | em revisão, fora da base | `uni/fuzz-upatch`: alvo de fuzz do emissor de thunk com ASan e UBSan; sem hash de merge |
 
 ## Diferença honesta pro Lucky Patcher
 
