@@ -362,6 +362,18 @@ if [ -f "$ROOT/test/docs_hash_gate.sh" ]; then
       echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
   fi
 
+# CHANGELOG v0.5.0 cobre os merges: todo merge first-parent desde o sync
+# tem linha (hash do merge ou do 2º pai), nenhum Pendente entrou na base e
+# toda linha de merge tem descrição. O próximo merge que esquecer o
+# CHANGELOG quebra aqui.
+if [ -f "$ROOT/test/release_notes_check.sh" ]; then
+    run_step "docs: CHANGELOG cobre os merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/release_notes_check.sh"
+else
+    record "docs: CHANGELOG cobre os merges (check ausente)" FAIL 0 1
+    echo "test/release_notes_check.sh ausente: merge sem linha no CHANGELOG passa" >&2
+fi
+
   # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
   # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
   # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma

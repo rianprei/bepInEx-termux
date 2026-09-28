@@ -7,17 +7,20 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## v0.5.0 — 2026-09-28
 
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
-(`575903b`), com o hash do merge e o assunto do merge. O `docs-hash-gate`
-confere, para cada hash marcado como mesclado, que ele existe e é ancestral
-da base; os hashes aqui são de merge, e é por isso que passam.
+(`575903b`), com hash e assunto. O hash da linha pode ser o do MERGE ou o
+da ponta da branch mesclada (2º pai do merge): o hash do merge só existe
+depois do commit, então o autor escreve a linha com o hash da própria
+ponta e o gate aceita os dois. O `release-notes-check` do gate confere que
+todo merge first-parent desde o sync tem linha, que nenhum item do
+Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
 
 - `02c501a` — uni/modtypes — detector de tipo de mod testado com corpus real e textos honestos
 - `672eed2` — uni/install-path — instalar mod funciona mesmo quando o seletor do sistema falha
 - `74ba919` — uni/device-run — relatório da rodada no aparelho (POCO C75, 2026-09-26)
-- `27d22d0` — 593c76e
-- `49f2088` — 4207b99
+- `27d22d0` — pin frida-gadget 17.18.0 (17.19.0 quebra no construtor)
+- `49f2088` — rejeita traduções Harmony inseguras
 - `4c1b0c3` — uni/bpatch — extensão do mod declarativo .patch → .bpatch
 - `860adcc` — uni/guia — passo a passo do Mod Maker, com o que só a bpatch sabia
 - `5753585` — uni/docs-audit — estado real do Manager e do u_frida, com .bpatch
@@ -29,7 +32,7 @@ da base; os hashes aqui são de merge, e é por isso que passam.
 - `2a654c6` — uni/dll2patch2 — artefato .bpatch, detector por conteúdo, round-trip real tradutor JVM → parser C++ (Caso 80)
 - `6381ead` — uni/device-round2 — roteiro docs/DEVICE-ROUND-2.md + automação (field SA2, picker, Frida 17.18.0, :sufixo, soak 10 min) com testes host
 - `8eba793` — uni/il2cpp-wait — espera IL2CPP unificada (240s/200ms), matcher por sufixo /libil2cpp.so, log da rota __loader_dlopen vs fallback
-- `94dd077` — 0efce16
+- `94dd077` — uni/caso-ids — IDs de caso como literais estáveis
 - `5581e2e` — uni/dll2patch2 — round-trip real tradutor JVM → parser C++ (Caso 80)
 - `f8a12fc` — uni/arm32 — ABI dupla no loader e mods, Dobby arm32 pinado+patchado com smoke qemu, hooks AArch64-only recusam 32-bit com log (gate estático), Manager escolhe o .so pela ABI do jogo
 - `139aceb` — uni/dll-coverage — cobertura do tradutor Harmony sobre 30 mods reais
@@ -41,12 +44,12 @@ da base; os hashes aqui são de merge, e é por isso que passam.
 - `87dea1c` — uni/ux-reference — UX dos apps de referência com âncora de código por citação
 - `75e208a` — uni/symbols — build-id reproduzível, símbolo guardado e emissor único de push_mod
 - `080b7f0` — uni/docs-hash-gate — hash declarado mesclado tem que existir e estar na base
+- `7028630` — uni/ux-errors — ABI x86/sem-nativo acionável, magic ELF testado, arm32 vence x86
 
 ### Pendente (não mergeado, sem hash de merge)
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - termux-client — cliente Termux do protocolo do companion
-- ux-errors — mensagens de ABI acionáveis no Manager
 - caso-refs — citação de caso aponta para caso que existe, com gate no verify_all
 - fuzz-upatch — alvo de fuzz do emissor de thunk arm64, com Caso 93
 - il2cpp-bridge — empacotador do script Frida com a ponte IL2CPP pinada por sha256
