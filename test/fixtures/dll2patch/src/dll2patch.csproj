@@ -8,4 +8,7 @@
     <Deterministic>true</Deterministic>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../harmony-stubs/harmony-stubs.csproj" />
+  </ItemGroup>
 </Project>

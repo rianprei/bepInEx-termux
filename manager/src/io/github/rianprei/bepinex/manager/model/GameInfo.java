@@ -7,6 +7,7 @@ public class GameInfo {
     public String packageName;
     public String appName;
     public String engine = EngineDetector.ENGINE_JAVA;
+    public String nativeAbi;
     public int installedModsCount = 0;
     public int activeModsCount = 0;
     public boolean isGame = false;

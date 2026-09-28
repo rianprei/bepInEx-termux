@@ -54,6 +54,26 @@ static ssize_t uf_read_config(const char *path, char *buf, size_t size) {
     return (ssize_t)got;
 }
 
+static bool uf_gadget_matches_process_abi(const char *path) {
+    unsigned char header[20];
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    size_t got = 0;
+    while (got < sizeof(header)) {
+        ssize_t n = read(fd, header + got, sizeof(header) - got);
+        if (n <= 0) { close(fd); return false; }
+        got += (size_t)n;
+    }
+    close(fd);
+#if defined(__aarch64__)
+    return uf_elf_matches_abi(header, sizeof(header), 2, 183);
+#elif defined(__arm__)
+    return uf_elf_matches_abi(header, sizeof(header), 1, 40);
+#else
+    return false;
+#endif
+}
+
 static void *uf_worker(void *) {
     // Tem .js? Sem script, o gadget nem carrega (nada pra rodar).
     struct dirent **ents = nullptr;
@@ -80,6 +100,10 @@ static void *uf_worker(void *) {
     struct stat st;
     if (stat(gadget, &st) != 0) {
         mod_log(UF_TAG, "sem %s na pasta (tools/deploy_frida.sh instala) — gadget NAO carregado", UF_GADGET_FILE);
+        return nullptr;
+    }
+    if (!uf_gadget_matches_process_abi(gadget)) {
+        mod_log(UF_TAG, "%s não corresponde à ABI do processo — gadget NAO carregado", gadget);
         return nullptr;
     }
     // Config: ausente/ilegível e fora do modo script são mensagens

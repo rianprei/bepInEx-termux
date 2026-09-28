@@ -221,7 +221,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 ### F2 — SDK de mod + kit
 - [~] `mods/common/mod_common.h`: `mod_pkg()`, `mod_dir()`, `mod_log(tag, fmt, ...)` (logcat + log.txt C1), `mod_conf_get(id, key, default)` (C3). (host OK: `6fd1415` + etapa `host test/mod_common_test.cpp`; device: pendente.)
 - [~] `mods/_template/` (Android.mk, Application.mk, `mod.cpp` com boot il2cpp + log). (host OK: `d0e35f7` + etapa `ndk-build mods/_template` PASS; device: pendente — `new_mod.sh hello` no SA2 nunca rodou.)
-- [~] `tools/new_mod.sh <id>`, `tools/deploy_mod.sh <id> <pkg>` (ndk-build + push + force-stop), `tools/pack_bmod.sh <id>` (gera `.bmod`, C2). (host OK: `d0e35f7`, `bash -n` + shellcheck PASS no gate; device: pendente.)
+- [~] `tools/new_mod.sh <id>`, `tools/deploy_mod.sh <id> <pkg>` (ndk-build + ABI do `primaryCpuAbi` + push + force-stop), `tools/pack_bmod.sh <id> <abi>` (gera `.bmod`, C2). (ABI routing: host; device: pendente.)
 - [~] Migrar sa2ammo/sa2content pra `mod_common.h`, **só se** não mudar comportamento. (host OK: `5166d37` (sa2ammo, sa2content) + `3b85de2` (u_dump e t_crash, que ainda tinham C1 duplicado por baixo do `mod_common`) + `09483b8`; a linha de log dos dois passou a ir para `/data/data/<pkg>/files/bepinex/log.txt` e o `up_log` próprio do u_patch saiu, então a rotação do log C1 tem UM dono; device: pendente — o SA2 tem que continuar com munição e conteúdo, e o t_crash tem que continuar matando 2x.)
 - **Verifica:** `new_mod.sh hello` → deploy no SA2 → `hello: il2cpp ok` no log.txt.
 

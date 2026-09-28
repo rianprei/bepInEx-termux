@@ -31,6 +31,9 @@ for f in "$@"; do
         *) die "não é .js: '$b'" ;;
     esac
 done
+adb wait-for-device || die "device indisponível"
+GAME_ABI=$(adb shell dumpsys package "$PKG" | tr -d '\r' | tools/parse_primary_abi.sh)
+[ "$GAME_ABI" = arm64-v8a ] || die "o gadget pinado só tem arm64-v8a; ABI do jogo: ${GAME_ABI:-desconhecida}"
 GADGET_BIN="mods/u_frida/gadget/frida-gadget.bin"
 [ -f "$GADGET_BIN" ] || die "rode tools/fetch_frida_gadget.sh antes"
 MODS="/data/adb/bepinex/mods/$PKG"   # arvore root-only (ver post-fs-data.sh). O adb nao le /data/adb: o push vai para /data/local/tmp e um su -c mv coloca no lugar.

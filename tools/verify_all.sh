@@ -108,6 +108,49 @@ while IFS= read -r mod_dir; do
     fi
 done < <(find "$ROOT/mods" -mindepth 1 -maxdepth 1 -type d -print | sort)
 
+run_step "outputs ARM64/ARM32 do loader e mods" "$TIMEOUT_TEST" python3 - "$ROOT" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+artifacts = [
+    ("libs", "libbc-poc.so"),
+    ("mods/u_patch/libs", "libu_patch.so"),
+    ("mods/u_noads/libs", "libu_noads.so"),
+    ("mods/u_dump/libs", "libu_dump.so"),
+    ("mods/u_frida/libs", "libu_frida.so"),
+    ("mods/sa2ammo/libs", "libsa2ammo.so"),
+    ("mods/sa2content/libs", "libsa2content.so"),
+]
+for directory, filename in artifacts:
+    for abi, elf_class, machine in (("arm64-v8a", 2, 183), ("armeabi-v7a", 1, 40)):
+        path = root / directory / abi / filename
+        if not path.is_file():
+            raise SystemExit(f"artefato ausente: {path.relative_to(root)}")
+        head = path.read_bytes()[:20]
+        got_machine = struct.unpack_from("<H", head, 18)[0] if len(head) >= 20 else -1
+        if head[:4] != b"\x7fELF" or head[4] != elf_class or head[5] != 1 or got_machine != machine:
+            raise SystemExit(f"arquitetura errada em {path.relative_to(root)}")
+        if abi == "armeabi-v7a" and filename in ("libu_patch.so", "libu_noads.so"):
+            if "não suportado em 32-bit".encode() not in path.read_bytes():
+                raise SystemExit(f"aviso de recurso indisponível ausente em {path.relative_to(root)}")
+print("loader, mods universais e mods SA2 têm ELF ARM64 e ARM32 corretos")
+print("u_patch/u_noads ARM32 contêm recusa explícita de hooks AArch64")
+PY
+
+if [ -x "$NDK_BUILD" ]; then
+    run_step "zip Magisk contém loader ARM64 e ARM32" "$TIMEOUT_BUILD" bash -c '
+        set -e
+        out="$1/module"
+        NDK="$(dirname "$3")" OUT_DIR="$out" "$2/tools/build_module.sh"
+        bash "$2/test/module_zip_abi_check.sh" "$out/bepinex-termux-$(awk "{print \$1}" "$2/VERSION").zip"
+    ' bash "$TMP" "$ROOT" "$NDK_BUILD"
+else
+    record "zip Magisk contém loader ARM64 e ARM32" SKIP 0 0
+    echo "missing executable: $NDK_BUILD" >&2
+fi
+
 while IFS= read -r makefile; do
     mod_dir=$(dirname "$(dirname "$makefile")")
     case "$mod_dir" in
@@ -153,11 +196,15 @@ done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_cl
 
 run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
     cd "$1"
-    # TODOS os arquivos que declaram [Caso N] — não só selftest_harness.cpp.
-    # Antes o grep olhava um arquivo só, e a colisão do F4 (61-64 no
-    # upatch_harness x 61-64/65-68 da base) passava reto (achado do review).
-    duplicates=$(git grep -h -E "\[Caso [0-9]+\]" -- "test/*.cpp" "mods/*/jni/*harness*.cpp" |
-        grep -oE "\[Caso [0-9]+\]" | sort | uniq -d || true)
+    # Varre todo .cpp do worktree (test/, mods/, selftest e demais raízes);
+    # só .git é podado, pois contém objetos/metadados, não arquivos-fonte.
+    labels=$(find . -path "./.git" -prune -o -type f -name "*.cpp" \
+        -exec grep -h -o -E "\[Caso [0-9]+\]" {} + || true)
+    [ -n "$labels" ] || {
+        echo "nenhum rótulo [Caso N] encontrado nos diretórios de teste" >&2
+        exit 1
+    }
+    duplicates=$(printf "%s\n" "$labels" | sort | uniq -d || true)
     if [ -n "$duplicates" ]; then
         printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
         exit 1
@@ -377,6 +424,50 @@ else
     record "u_patch exec test (not present)" SKIP 0 0
 fi
 
+# dll-coverage: MANIFEST.tsv ↔ DLL-COVERAGE.md ↔ README
+# O MANIFEST.tsv é a fonte da verdade do corpus; o doc e o README têm que
+# bater com ele. Apagar 1 linha do MANIFEST → gate FALHA.
+if [ -f "$ROOT/MANIFEST.tsv" ] && [ -f "$ROOT/docs/DLL-COVERAGE.md" ]; then
+    run_step "dll-coverage MANIFEST ↔ doc ↔ README" "$TIMEOUT_TEST" bash -c '
+        manifest="$1/MANIFEST.tsv"
+        doc="$1/docs/DLL-COVERAGE.md"
+        readme="$1/README.md"
+
+        # Conta IDs únicos do MANIFEST (1ª coluna)
+        manifest_count=$(cut -f1 "$manifest" | sort -u | wc -l | tr -d " ")
+        [ "$manifest_count" -gt 0 ] || { echo "MANIFEST.tsv vazio ou ilegível"; exit 1; }
+
+        # Extrai "Total de mods no corpus" do doc
+        doc_total=$(grep -oP "Total de mods no corpus \| \K[0-9]+" "$doc" || true)
+        [ -n "$doc_total" ] || { echo "DLL-COVERAGE.md: sem Total de mods"; exit 1; }
+
+        # Extrai "N mods reais" do README
+        readme_mods=$(grep -oP "medido em \K[0-9]+ mods reais" "$readme" | grep -oP "^[0-9]+" || true)
+        [ -n "$readme_mods" ] || { echo "README: sem contagem de mods"; exit 1; }
+
+        # Verifica 375+3=378 e 0/378 entre doc e README
+        doc_refusals=$(grep -oP "Recusas .* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_nested=$(grep -oP "classe aninhada.* \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_total_patches=$(grep -oP "Total de patches Harmony \| \K[0-9]+" "$doc" | head -1 | tr -d " " || true)
+        doc_translated=$(grep -oP "\*\*\K0(?=/)" "$doc" | head -1 | tr -d " " || true)
+        # Extrai "0 de N patches" do README — N tem que bater com doc_total_patches
+        readme_patches_line=$(grep -oP "\K0 de [0-9]+ patches" "$readme" | head -1 || true)
+        readme_translated=$(echo "$readme_patches_line" | grep -oP "^0" || true)
+        readme_total_patches=$(echo "$readme_patches_line" | grep -oP "de \K[0-9]+" | head -1 || true)
+
+        [ "$manifest_count" = "$doc_total" ] || { echo "MANIFEST ($manifest_count) != doc Total ($doc_total)"; exit 1; }
+        [ "$manifest_count" = "$readme_mods" ] || { echo "MANIFEST ($manifest_count) != README mods ($readme_mods)"; exit 1; }
+        [ "$((doc_refusals + doc_nested))" = "$doc_total_patches" ] || { echo "doc: $doc_refusals + $doc_nested != $doc_total_patches"; exit 1; }
+        [ -n "$readme_total_patches" ] || { echo "README: sem 0 de N patches"; exit 1; }
+        [ "$readme_total_patches" = "$doc_total_patches" ] || { echo "README patches ($readme_total_patches) != doc ($doc_total_patches)"; exit 1; }
+        [ "$readme_translated" = "$doc_translated" ] || { echo "README traduzidos ($readme_translated) != doc ($doc_translated)"; exit 1; }
+        echo "MANIFEST=$manifest_count doc=$doc_total readme=$readme_mods patches=$doc_total_patches refusals=$doc_refusals nested=$doc_nested translated=$doc_translated"
+    ' bash "$ROOT"
+else
+    record "dll-coverage MANIFEST ↔ doc ↔ README" FAIL 0 1
+    echo "MANIFEST.tsv ou docs/DLL-COVERAGE.md ausente" >&2
+fi
+
 if [ -f "$ROOT/VERSION" ] && grep -q '^#define BC_LOADER_VERSION ' "$ROOT/jni/main.cpp"; then
     run_step "VERSION matches loader" "$TIMEOUT_TEST" bash -c '
         version=$(awk "{print \$1}" "$1/VERSION")
@@ -432,6 +523,32 @@ if [ -f "$ROOT/test/symbols/stream_guard_test.cpp" ]; then
 else
     record "streaming do companion nao espera (teste ausente)" FAIL 0 1
     echo "test/symbols/stream_guard_test.cpp ausente: o caminho quente pode voltar a esperar"
+# Guarda de arquitetura dos hooks: em ARM32, todo mod que usa DobbyHook tem que
+# recusar COM LOG antes de alcancar o hook, porque o hook so foi validado em
+# aparelho AArch64 (revisao de 5edfb41: sa2ammo e sa2content chamavam
+# DobbyHook sem nenhuma guarda).
+if [ -f "$ROOT/test/arm32_hook_guard_check.py" ]; then
+    run_step "hooks ARM32 recusam 32-bit" "$TIMEOUT_TEST" \
+        python3 "$ROOT/test/arm32_hook_guard_check.py" "$ROOT"
+else
+    record "hooks ARM32 recusam 32-bit (check ausente)" FAIL 0 1
+
+fi
+fi
+
+# O companion NAO pode abrir nada fora da arvore de mods, por mais que o cliente
+# peça (achado crítico: o protocolo aceitava caminho e conferia só prefixo
+# textual, então ".." passava e o root devolvia o FD de um arquivo arbitrário).
+if [ -f "$ROOT/test/symbols/mods_fd_escape_test.cpp" ]; then
+    run_step "companion nao abre fora da arvore" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" \
+            "$1/test/symbols/mods_fd_escape_test.cpp" -o "$2/mods_fd_escape_test" || exit 1
+        "$2/mods_fd_escape_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "companion nao abre fora da arvore (teste ausente)" FAIL 0 1
+    echo "test/symbols/mods_fd_escape_test.cpp ausente: o companion pode abrir caminho arbitrario"
 fi
 
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'

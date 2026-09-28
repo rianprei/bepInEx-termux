@@ -12,3 +12,7 @@ static  <Classe>  <campo>   <bool|int|float>           <valor>   # fixa e reapli
 Exemplo (SA2): `return ComplexCreature HasAmmo 0 bool true`.
 
 Log: logcat `u_patch` + `/data/data/<pkg>/files/bepinex/log.txt`.
+
+Em processos ARM32 este módulo registra no log que não há suporte e sai sem
+aplicar regras: os thunks `return`, `mul` e `field` ainda emitem instruções
+AArch64. `static` também fica desativado junto com o motor.

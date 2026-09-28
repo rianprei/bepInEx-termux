@@ -749,9 +749,9 @@ static void handle_push_mod(int fd, const char *name, long size) {
 // chamador (accept loop) NÃO deve fechar o client_fd — false = fluxo normal
 // request/response, chamador fecha como sempre.
 // Entrega por FD — definidos mais abaixo, junto do resto do transporte.
-static void handle_mod_fd(int fd, const char *path);
-static void handle_mod_txt(int fd, const char *path);
-static void handle_mod_list(int fd, const char *dir);
+static void handle_mod_fd(int fd, const char *args);   // "<pkg> <nome>"
+static void handle_mod_txt(int fd, const char *args);   // "<pkg> <nome>"
+static void handle_mod_list(int fd, const char *args); // "<pkg>"
 
 bool handle_termux_request(int client_fd) {
     char buf[4096];
@@ -944,15 +944,79 @@ bool handle_termux_request(int client_fd) {
 // nao ganha "abrir o que eu pedir" — ganha "abrir o que estiver na arvore de
 // mods, com o nome validado".
 
-// Confere que `path` esta DENTRO de BC_MODS_ROOT, sem resolver link no
-// caminho. Prefixo textual + '/' evita que /data/adb/bepinexX case com
-// /data/adb/bepinex.
-static bool bc_path_in_mods_root(const char *path) {
-    if (path == nullptr) return false;
-    const size_t root = strlen(BC_MODS_ROOT);
-    if (strncmp(path, BC_MODS_ROOT, root) != 0) return false;
-    if (path[root] == '\0') return true;
-    return path[root] == '/';
+// ============================================================================
+// O PROTOCOLO NAO ACEITA CAMINHO. Aceita (pkg, nome) e o companion MONTA o
+// caminho. (ACHADO CRITICO, revisao do OpenCode em c47f5e5)
+// ============================================================================
+// A versao anterior aceitava um CAMINHO e conferia so o PREFIXO TEXTUAL, que
+// nao normaliza "..", e o O_NOFOLLOW do open() nao impede
+// "..": ele barra LINK SIMBOLICO, nao travessia de diretorio. Entao o root
+// abria e devolvia o FD/conteudo de um arquivo ARBITRARIO, e a listagem
+// enumerava um diretorio qualquer.
+//
+// E o canal e o MESMO que o codigo do mod dentro do jogo usa, entao este e o
+// modelo de ameaca: quem consegue falar com o companion e o proprio jogo.
+//
+// A correcao e estrutural, nao mais um filtro: o cliente NUNCA manda caminho.
+// Manda um pacote e um nome; o companion valida os DOIS e concatena com a raiz
+// fixa. Nao existe ".." a filtrar, porque o caminho nao vem do cliente.
+
+// Pacote: o mesmo formato que o Manager valida (SuHelper.requirePkg) e que o
+// loader ja usava. Sem "/" e sem ".." — o pacote e UM nome, nao um caminho.
+static bool bc_mod_pkg_ok(const char *pkg) {
+    if (pkg == nullptr) return false;
+    const size_t n = strlen(pkg);
+    if (n == 0 || n > 160) return false;
+    if (pkg[0] == '.' || pkg[n - 1] == '.') return false;   // ".." nao entra
+    for (size_t i = 0; i < n; i++) {
+        const char c = pkg[i];
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (!ok) return false;
+    }
+    // ".." no meio tambem: com ponto-permitido, "a..b" e nome invalido de
+    // pacote, e um nome com ".." no meio e porta de traversia em outra base.
+    if (strstr(pkg, "..") != nullptr) return false;
+    return true;
+}
+
+// Nome do arquivo: o MESMO validador que o loader usa para nao carregar
+// arquivo que nao e mod (bc_loader_is_mod_filename). Sem "/" e sem "..", o que
+// ja barra a travessia de diretorio E o separador de caminho.
+static bool bc_mod_name_ok(const char *name) {
+    if (name == nullptr || *name == 0) return false;
+    const size_t n = strlen(name);
+    if (n >= 256) return false;
+    if (strchr(name, '/') != nullptr) return false;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return false;
+    if (strstr(name, "..") != nullptr) return false;
+    return bc_loader_is_mod_filename(name);
+}
+
+// Quebra "pkg nome" do comando. Devolve 1 ok, 0 recusado (com EACCES ja enviado).
+static int bc_parse_pair(const char *args, char *pkg, size_t pkgcap,
+                        char *name, size_t namecap) {
+    if (args == nullptr) return 0;
+    while (*args == ' ') args++;
+    const char *sp = strchr(args, ' ');
+    if (sp == nullptr) return 0;
+    const size_t pl = (size_t)(sp - args);
+    if (pl == 0 || pl >= pkgcap) return 0;
+    memcpy(pkg, args, pl);
+    pkg[pl] = '\0';
+    const char *nm = sp + 1;
+    while (*nm == ' ') nm++;
+    const size_t nl = strlen(nm);
+    if (nl == 0 || nl >= namecap) return 0;
+    memcpy(name, nm, nl + 1);
+    return 1;
+}
+
+static void bc_fd_deny(int fd, const char *what) {
+    char e[BC_FD_ERR_MAX];
+    ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
+    if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+    LOGE("mod_* recusado: %s", what);
 }
 
 // A LISTA tambem vem pelo socket. O jogo nao pode scandir() a arvore
@@ -960,13 +1024,21 @@ static bool bc_path_in_mods_root(const char *path) {
 // enumera e o root. O formato e um nome por linha, ja filtrado para o que o
 // loader carrega (.so e nada mais), ordenado no ROOT (o readdir do root e
 // imprevisivel e um mod pode depender de outro).
-static void handle_mod_list(int fd, const char *dir) {
-    char path[512];
-    int pw = snprintf(path, sizeof(path), "%s/%s", BC_MODS_ROOT, dir);
-    if (pw <= 0 || (size_t)pw >= sizeof(path) || !bc_path_in_mods_root(path)) {
-        char e[BC_FD_ERR_MAX];
-        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
-        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+// mod_list <pkg> -> lista os .so de <BC_GENERIC_MODS_DIR>/<pkg>. Sem caminho do
+// cliente: o companion monta a partir do pacote validado.
+static void handle_mod_list(int fd, const char *args) {
+    char pkg[192];
+    if (args == nullptr) { bc_fd_deny(fd, "mod_list: sem pacote"); return; }
+    size_t pl = strlen(args);
+    if (pl == 0 || pl >= sizeof(pkg) || !bc_mod_pkg_ok(args)) {
+        bc_fd_deny(fd, "mod_list: pacote invalido");
+        return;
+    }
+    memcpy(pkg, args, pl + 1);
+    char path[640];
+    int pn = snprintf(path, sizeof(path), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) {
+        bc_fd_deny(fd, "mod_list: caminho montado grande demais");
         return;
     }
     // lstat pelo root: um link dentro da arvore nao e seguido, e um item que
@@ -997,12 +1069,19 @@ static void handle_mod_list(int fd, const char *dir) {
     bc_fd_send_data(fd, line, strlen(line));
 }
 
-static void handle_mod_fd(int fd, const char *path) {
-    if (!bc_path_in_mods_root(path)) {
-        char e[BC_FD_ERR_MAX];
-        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
-        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
-        LOGE("mod_fd: caminho fora da raiz de mods: %s", path);
+// mod_fd <pkg> <nome> -> o companion monta <BC_GENERIC_MODS_DIR>/<pkg>/<nome> e
+// devolve o FD. O cliente nao manda caminho (ver o bloco dos validadores acima).
+static void handle_mod_fd(int fd, const char *args) {
+    char pkg[192], name[288];
+    if (!bc_parse_pair(args, pkg, sizeof(pkg), name, sizeof(name)) ||
+        !bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
+        bc_fd_deny(fd, "mod_fd: pacote ou nome invalido");
+        return;
+    }
+    char path[640];
+    int pn = snprintf(path, sizeof(path), "%s/%s/%s", BC_GENERIC_MODS_DIR, pkg, name);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) {
+        bc_fd_deny(fd, "mod_fd: caminho montado grande demais");
         return;
     }
     int f = bc_fd_open_ro(path);
@@ -1025,11 +1104,19 @@ static void handle_mod_fd(int fd, const char *path) {
     close(f);
 }
 
-static void handle_mod_txt(int fd, const char *path) {
-    if (!bc_path_in_mods_root(path)) {
-        char e[BC_FD_ERR_MAX];
-        ssize_t n = bc_fd_build_error(e, sizeof(e), EACCES);
-        if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
+// mod_txt <pkg> <nome> -> conteudo do .conf/.bpatch do mod. Mesmo modelo do
+// mod_fd: o cliente manda (pkg, nome) e o companion monta o caminho.
+static void handle_mod_txt(int fd, const char *args) {
+    char pkg[192], name[288];
+    if (!bc_parse_pair(args, pkg, sizeof(pkg), name, sizeof(name)) ||
+        !bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
+        bc_fd_deny(fd, "mod_txt: pacote ou nome invalido");
+        return;
+    }
+    char path[640];
+    int pn = snprintf(path, sizeof(path), "%s/%s/%s", BC_GENERIC_MODS_DIR, pkg, name);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) {
+        bc_fd_deny(fd, "mod_txt: caminho montado grande demais");
         return;
     }
     int f = bc_fd_open_ro(path);
@@ -1039,8 +1126,8 @@ static void handle_mod_txt(int fd, const char *path) {
         if (n > 0) bc_fd_send_data(fd, e, (size_t)n);
         return;
     }
-    // Conteudo: primeiro o tamanho, depois os bytes, e o jogo aloca e le.
-    // Acima de BC_FD_TXT_MAX o cliente tem que pedir mod_fd.
+    // Conteudo: primeiro o tamanho, depois os bytes. O jogo aloca e le. Acima
+    // de BC_FD_TXT_MAX o cliente tem que pedir mod_fd.
     char head[32];
     off_t sz = lseek(f, 0, SEEK_END);
     if (sz < 0 || sz > BC_FD_TXT_MAX) {

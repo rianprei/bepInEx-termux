@@ -1,0 +1,30 @@
+TPC_CheatAutoConsume	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/CheatAutoConsume/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_CheatAutoHarvest	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/CheatAutoHarvest/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_CheatCraftFromNearbyContainers	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/CheatCraftFromNearbyContainers/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_CheatInventoryStacking	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/CheatInventoryStacking/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_CheatMoreTrade	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/CheatMoreTrade/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_FeatFlatlands	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/FeatFlatlands/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_FeatSpaceCows	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/FeatSpaceCows/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_FixUnofficialPatches	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/FixUnofficialPatches/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_ItemRods	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/ItemRods/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_LathreyAutoMove	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/LathreyAutoMove/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_UIHotbar	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/UIHotbar/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+TPC_UIQuickLoot	https://github.com/akarnokd/ThePlanetCrafterMods/blob/b8f9440ac5da77bb4a4ee66177ccdee00d02b8d2/UIQuickLoot/Plugin.cs	Apache-2.0	desconhecido	The Planet Crafter	Mono
+dsp-AddFuelStar	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/AddFuelStar/AddFuelStar.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-BiggerSeed	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/BiggerSeed/BiggerSeed.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-CanNotShowItem	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/CanNotShowItem/CanNotShowItem.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-ChangeSun	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/ChangeSun/ChangeSun.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-DSPHierarchicalDisplay	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/DSPHierarchicalDisplay/DSPHierarchicalDisplay.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-DSPModSave	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/DSPModSave/DSPModSave.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-GeothermalUsing	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/GeothermalUsing/GeothermalUsing.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-PlanetMiner	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/PlanetMiner/PlanetMiner.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-StationAutoCollect	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/StationAutoCollet/StationAutoCollect.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+dsp-TidalLocked	https://github.com/crecheng/DSPMod/blob/9dabb0275a3bafa0fa1a992fda5d8e0c7f29ff8a/TidalLocked/TidalLocked.cs	Apache-2.0	desconhecido	Dyson Sphere Program	Mono
+Darkwood_Customizer	https://github.com/xamionex/DarkwoodCustomizer/blob/5583bff8b4beb9525e0782a93b99ac7b20e2b8f1/Plugin.cs	MIT	desconhecido	Darkwood	Mono
+FFPR_Fix	https://github.com/d3xMachina/FFPR-Fix/blob/2e98a03f4f45afda7b9b185d4a6be4bb12d75f36/Plugin.cs	MIT	desconhecido	Final Fantasy Pixel Remaster	IL2CPP
+Magicite	https://github.com/Silvris/Magicite/blob/30f0d5d0c040baca37e9657e4166c2651621bd95/Magicite/EntryPoint.cs	MIT	desconhecido	Final Fantasy Pixel Remaster	IL2CPP
+MiSide_KappiMod	https://github.com/MrSago/MiSide-KappiMod/blob/f01a0763e18a6b8337cc4a831cadbed173c73c35/KappiMod.csproj	MIT	desconhecido	MiSide	IL2CPP
+PotionCraft_EnableDev	desconhecido	desconhecido	desconhecido	Potion Craft	desconhecido
+TLD_PrepperCache	https://github.com/okclm/PrepperCache/blob/8e9b9a1a036b61fdd6b5ee89d8df75f4ee95a87e/PrepperCache.csproj	MIT	desconhecido	The Long Dark	IL2CPP
+TLD_QualityOfLife	https://github.com/VonDoogles/TLD-QualityOfLife/blob/ec5f124cf4852b6e4da2a455f3ad3b5f7dbe60aa/Source/QualityOfLifeMod.cs	MIT	desconhecido	The Long Dark	IL2CPP
+Tunic_Translation	https://github.com/holly-hacker/TunicTranslationMod/blob/47bdcdc42b2fb643fffeabf31795754ca4647a01/Plugin.cs	BSD-2-Clause	desconhecido	Tunic	IL2CPP

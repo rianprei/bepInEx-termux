@@ -243,10 +243,14 @@ int main() {
                 check("toda abertura de caminho de cliente leva O_NOFOLLOW (a escrita do push_mod inclusive)",
                       n_aberturas > 0 && todas_com_flag);
             }
-            // E a guarda de "o caminho tem que estar na arvore" existe: sem ela o
-            // cliente ganha "abrir o que eu pedir".
-            check("companion exige o caminho dentro de BC_MODS_ROOT",
-                  code.find("bc_path_in_mods_root") != std::string::npos);
+            // O companion nao recebe caminho nenhum: recebe (pkg, nome), valida
+            // os dois e monta o caminho a partir da raiz fixa. Sem os dois
+            // validadores, o cliente ganha "abrir o que eu pedir" (achado
+            // critico: prefixo textual nao barra "..").
+            check("companion valida (pkg, nome) e monta o caminho, em vez de aceitar caminho do cliente",
+                  code.find("bc_mod_pkg_ok") != std::string::npos &&
+                  code.find("bc_mod_name_ok") != std::string::npos &&
+                  code.find("bc_path_in_mods_root") == std::string::npos);
         }
     }
 

@@ -79,6 +79,12 @@ extern "C" {
 // Verbo: "SO" quer o FD, "TXT" quer o conteúdo.
 #define BC_FD_VERB_SO "SO"
 #define BC_FD_VERB_TXT "TXT"
+// Dois argumentos (pkg e nome), separados por UM espaco. O caminho NUNCA e
+// enviado: o companion monta a partir da raiz fixa depois de validar os dois.
+// Ver bc_mod_pkg_ok/bc_mod_name_ok em companion.cpp: com caminho do cliente e
+// checagem de prefixo textual, uma travessia de diretorio passava e o root
+// devolvia o FD de um arquivo arbitrario.
+#define BC_FD_VERB_LS "LS"
 
 // Linha de comando: "<proto> <verbo> <caminho>\n". Sem espaços no caminho
 // (é um nome sob uma raiz fixa, e o parser é deliberadamente burro).
@@ -179,19 +185,27 @@ static inline ssize_t bc_fd_send_data(int sock, const void *data, size_t len) {
     return (ssize_t)sent;
 }
 
+// Com DOIS argumentos: "<proto> <verb> <a> <b>\n". O segundo é o nome do
+// arquivo quando o primeiro é o pacote; ambos são validados no companion.
+static inline ssize_t bc_fd_build_request2(char *buf, size_t cap, int proto,
+                                          const char *verb, const char *a,
+                                          const char *b) {
+    // Rejeita espaco/newline em qualquer campo: o parser é linha-a-linha, e um
+    // espaco viraria um campo a mais, trocando o significado do pedido.
+    if (strpbrk(a, " \t\n") != NULL) return -1;
+    if (b != NULL && strpbrk(b, " \t\n") != NULL) return -1;
+    int n = (b != NULL) ? snprintf(buf, cap, "%d %s %s %s\n", proto, verb, a, b)
+                        : snprintf(buf, cap, "%d %s %s\n", proto, verb, a);
+    if (n < 0 || (size_t)n >= cap) return -1;
+    return (ssize_t)n;
+}
+
 // Monta o pedido. Devolve o tamanho, ou -1 se não coube / tem caractere ruim.
 static inline ssize_t bc_fd_build_request(char *buf, size_t cap, int proto,
                                          const char *verb, const char *path) {
-    size_t vl = strlen(verb);
-    size_t pl = strlen(path);
-    // Rejeita espaço/newline no caminho: o parser é linha-a-linha, e um
-    // caminho com espaço viraria dois campos silenciosamente.
-    if (memchr(path, '\n', pl) != NULL || memchr(path, ' ', pl) != NULL) return -1;
-    int n = snprintf(buf, cap, "%d %s %s\n", proto, verb, path);
-    if (n < 0 || (size_t)n >= cap) return -1;
-    (void)vl;
-    return (ssize_t)n;
+    return bc_fd_build_request2(buf, cap, proto, verb, path, NULL);
 }
+
 
 // Lê o pedido que o outro lado mandou. Devolve 1=ok, 0=nada ainda, -1=malformado.
 static inline int bc_fd_parse_request(const char *line, int *proto,

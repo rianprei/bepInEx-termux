@@ -55,6 +55,14 @@ static inline const char *bc_app_state_dir(char *out, size_t cap) {
     return bc_app_state_dir_impl(out, cap);
 }
 
+// O PACOTE do jogo, para os pedidos ao companion. O protocolo NAO aceita
+// caminho: o companion recebe (pkg, nome), valida os dois e monta o caminho a
+// partir da raiz fixa. Sem isso o cliente mandava caminho e o root abria o que o
+// cliente pedisse (achado de seguranca em c47f5e5).
+// 160 = BC_PROCESS_PACKAGE_CAP, declarado com o literal porque bc_process.h e
+// incluido depois deste ponto.
+static char g_game_pkg[160] = {0};
+
 // ============================================================================
 // O socket do companion e COMPARTILHADO
 // ============================================================================
@@ -138,7 +146,11 @@ static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     char req[BC_FD_REQ_MAX];
-    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, BC_FD_VERB_SO, path);
+    // O companion NAO aceita caminho: recebe (pkg, nome) e monta. `path` aqui
+    // e o nome do arquivo, que o loader ja validou por
+    // bc_loader_is_mod_filename; o pacote vem do proprio jogo.
+    ssize_t n = bc_fd_build_request2(req, sizeof(req), BC_FD_PROTO,
+                                     BC_FD_VERB_SO, g_game_pkg, path);
     int fd = -1;
     if (n <= 0) {
         snprintf(why, whycap, "caminho invalido para o pedido");
@@ -182,7 +194,7 @@ static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     char req[BC_FD_REQ_MAX];
-    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, "LS", dir);
+    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, BC_FD_VERB_LS, dir);
     int total = -1;
     if (n <= 0) {
         snprintf(why, whycap, "caminho invalido para o pedido de lista");
@@ -259,7 +271,8 @@ static int bc_mod_text_request(const char *rel, char *out, size_t cap,
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     char req[BC_FD_REQ_MAX];
-    ssize_t n = bc_fd_build_request(req, sizeof(req), BC_FD_PROTO, "TX", rel);
+    ssize_t n = bc_fd_build_request2(req, sizeof(req), BC_FD_PROTO, "TX",
+                                     g_game_pkg, rel);
     long total = -1;
     if (n <= 0) {
         snprintf(why, whycap, "caminho invalido para o pedido de conteudo");
@@ -351,6 +364,7 @@ static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t why
 // src/gen e src=/data (o padrao do Android) sao equivalentes; o app ve o
 // caminho em que foi montado.
 static char g_app_data_dir[256] = {0};
+
 
 static const char *bc_app_state_dir_impl(char *out, size_t cap) {
     const char *base = g_app_data_dir[0] ? g_app_data_dir : "/data/data";
@@ -2285,6 +2299,10 @@ static void *generic_event_thread(void *arg) {
              loaded > 0 ? "" : " (pasta vazia)");
         return nullptr;
     }
+#if !defined(__aarch64__)
+    LOGI("%s: detector/hook genérico ainda não suportado em 32-bit; ignorando", pkg);
+    return nullptr;
+#endif
     // ACHADO REAL (teste ao vivo no device, 2026-09-17): app com chamada
     // JNI única logo após System.loadLibrary() (padrão comum de init) pode
     // rodar ANTES do poll instalar o hook — DobbyInstrument só intercepta
@@ -2334,6 +2352,8 @@ public:
             (int)args->uid,
             args->is_child_zygote != nullptr && *args->is_child_zygote != JNI_FALSE,
             nice_name, app_data_dir, pkg_copy, sizeof(pkg_copy));
+        // O pacote do jogo, para os pedidos ao companion (ver g_game_pkg).
+        snprintf(g_game_pkg, sizeof(g_game_pkg), "%s", pkg_copy);
         if (app_data_dir != nullptr) {
             // Copia antes de soltar a string do JNI: o log e o snapshot sao
             // escritos DEPOIS do specialize, quando ja nao da para ler dali.
@@ -2348,6 +2368,14 @@ public:
         }
         be_bc = bc_path_is_bc(pkg_copy);
         env->ReleaseStringUTFChars(args->nice_name, nice_name);
+#if !defined(__aarch64__)
+        if (be_bc) {
+            LOGW("%s: offsets e hooks do Battle Cats só foram validados em AArch64; processo ignorado",
+                 pkg_copy);
+            api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+#endif
         if (!be_bc) {
             // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
             // entrar no caminho de mods autônomos — nada de allowlist, nada de

@@ -127,11 +127,25 @@ static inline void *il2cpp_method_ptr(const Il2Cpp &il, void *klass, const char 
     return m ? *(void **)m : nullptr;
 }
 
-// System.String -> compara com ASCII sem alocar (UTF-16 em +0x14, tamanho em +0x10).
+struct Il2CppStringLayout {
+    size_t length_offset;
+    size_t chars_offset;
+};
+
+static inline Il2CppStringLayout il2cpp_string_layout_for_pointer_size(size_t pointer_size) {
+    return {2 * pointer_size, 2 * pointer_size + sizeof(int32_t)};
+}
+
+static inline Il2CppStringLayout il2cpp_string_layout() {
+    return il2cpp_string_layout_for_pointer_size(sizeof(void *));
+}
+
+// System.String: object header is two pointers; chars follow the 32-bit length.
 static inline bool il2cpp_str_eq(const void *s, const char *ascii) {
     if (!s) return false;
-    int32_t len = *(const int32_t *)((const uint8_t *)s + 0x10);
-    const uint16_t *c = (const uint16_t *)((const uint8_t *)s + 0x14);
+    Il2CppStringLayout layout = il2cpp_string_layout();
+    int32_t len = *(const int32_t *)((const uint8_t *)s + layout.length_offset);
+    const uint16_t *c = (const uint16_t *)((const uint8_t *)s + layout.chars_offset);
     for (int32_t i = 0; i < len; i++)
         if (!ascii[i] || c[i] != (uint8_t)ascii[i]) return false;
     return ascii[len] == '\0';

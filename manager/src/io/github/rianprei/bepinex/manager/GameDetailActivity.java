@@ -52,6 +52,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
     private String mPkg;
     private String mAppName;
     private String mEngine;
+    private String mNativeAbi;
 
     private ImageView mImgIcon;
     private TextView mTvName;
@@ -79,6 +80,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
         mPkg = getIntent().getStringExtra("pkg");
         mAppName = getIntent().getStringExtra("name");
         mEngine = getIntent().getStringExtra("engine");
+        mNativeAbi = getIntent().getStringExtra("abi");
 
         if (mPkg == null) {
             finish();
@@ -269,7 +271,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
         // A flag vive no ESTADO da tela: o segundo toque chama a mesma API
         // e é recusado enquanto o primeiro roda (bug A, agora na raiz).
         boolean started = mFlow.install(FILE_EXECUTOR, mMainHandler::post, file,
-                () -> LooseModInstaller.installFromFile(file, mPkg, mEngine),
+                () -> LooseModInstaller.installFromFile(file, mPkg, mEngine, mNativeAbi),
                 (result, error) -> {
                     if (!UiLiveness.alive(this)) {
                         // Morreu com o install em voo: se instalou, o staged
