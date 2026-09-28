@@ -209,36 +209,18 @@ while IFS= read -r test_file; do
     ' bash "$test_file" "$binary"
 done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_closers.cpp' \) -print | sort)
 
-run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
-    cd "$1"
-    # Varre todo .cpp do worktree (test/, mods/, selftest e demais raízes);
-    # só .git é podado, pois contém objetos/metadados, não arquivos-fonte.
-    labels=$(find . -path "./.git" -prune -o -type f -name "*.cpp" \
-        -exec grep -h -o -E "\[Caso [0-9]+\]" {} + || true)
-    [ -n "$labels" ] || {
-        echo "nenhum rótulo [Caso N] encontrado nos diretórios de teste" >&2
-        exit 1
-    }
-    duplicates=$(printf "%s\n" "$labels" | sort | uniq -d || true)
-    if [ -n "$duplicates" ]; then
-        printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
-        exit 1
-    fi
-' bash "$ROOT"
-
 # Citação de caso tem que apontar para um caso que EXISTE. Os rótulos [Caso N]
 # vivem nos harnesses; um README, header ou script que aponta para um número
 # inexistente manda o leitor procurar uma prova que não existe — foi assim que
 # dois arquivos continuaram citando o caso de dump_core para assunto de
 # opcode arm64 (achado da revisão de uni/wiring-fixes-56).
 #
-# A FORMA DA DEFINIÇÃO. Um caso é definido pelo rótulo que o harness IMPRIME ao
-# rodar, dentro da chamada de saída. Qualquer outra menção é citação, inclusive
-# dentro de um arquivo de teste: um rótulo solto em comentário, em prosa ou num
-# README de fixtures deixa de se autodefinir e passa a ser conferido contra o
-# conjunto global. Estreitar o NOME do harness não fecha — um Test.java é um
-# harness de verdade e um README dentro de test/ também — então o fecha é a
-# forma, não o nome.
+# A FORMA DA DEFINIÇÃO. Só define o rótulo que inicia o primeiro literal de uma
+# chamada de saída num harness; o literal precisa estar na mesma linha da
+# chamada, ignorando espaços e escapes \n iniciais. Todos os outros rótulos
+# são citações, inclusive dentro de comentários, README e argumentos seguintes.
+# Um erro impresso cujo primeiro literal começa com um rótulo ainda o define;
+# se o ID já existir, a verificação de unicidade o rejeita como duplicata.
 #
 # O QUE ESTA ETAPA PROVA: a existência do número. Se o caso existe mas cobre
 # outro assunto, quem pega é quem lê o rótulo — automatizar isso exigiria
@@ -249,103 +231,10 @@ run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
 # gate. Um número no meio de um buraco da sequência também é FAIL — se alguém
 # cita um número que nunca foi definido, o problema é da citação, não da
 # sequência.
-run_step "citacoes de caso apontam para caso existente" "$TIMEOUT_TEST" bash -c '
-    python3 - "$1" <<"PY"
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-SCAN = (".md", ".h", ".cpp", ".c", ".py", ".sh", ".java")
-
-# O que conta como harness: arquivo de teste. E nao "qualquer arquivo que
-# tenha um rotulo" — essa era a brecha da versao anterior: um README que
-# escrevesse um numero de caso inexistente entre colchetes se autodefinia e
-# passava, porque a lista de casos era montada varrendo TUDO. Definicao e
-# citacao sao papeis diferentes: so harness define, e qualquer um pode citar.
-# (Este arquivo e varrido por ele mesmo, entao nem o comentario de exemplo
-# pode trazer um numero que nao existe.)
-HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(cpp|c|py|java)$")
-define_re = re.compile(r"\[Caso (\d+)\]")
-cite_re = re.compile(r"Caso (\d+)")
-# Um rotulo so DEFINE caso se for a saida que o harness imprime ao rodar. Um
-# "[Caso N]" que nao esta dentro de uma chamada de saida e citacao — e citacao
-# vai contra o conjunto global, inclusive dentro de harness. A forma e o que
-# fecha: estreitar o nome do harness nao fecha (qualquer Test.java e um
-# harness de verdade, e um README dentro de test/ tambem), mas um rotulo solto
-# em comentario ou em prosa deixa de se autodefinir.
-out_call = re.compile(r"(?:^|[^A-Za-z0-9_])(?:printf|fprintf|vfprintf|snprintf|"
-                      r"puts|System\.out\.(?:print|println|printf))\s*\(")
-
-
-def defines(body, line):
-    """Rotulos [Caso N] dentro dos parenteses de uma chamada de saida."""
-    found = []
-    for match in define_re.finditer(line):
-        call = out_call.search(line)
-        if not call or call.end() > match.start():
-            continue
-        close = line.rfind(")")
-        if close > match.start():
-            found.append(match)
-    return found
-
-tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
-scannable = [item for item in tracked if item.endswith(SCAN)]
-harnesses = {item for item in scannable if HARNESS.search(item)}
-
-# Definicao: [Caso N] DENTRO de harness. Fora de harness o colchete nao
-# define nada — vira citacao, e citacao tem que existir.
-defined = set()
-definers = set()
-for item in sorted(harnesses):
-    for line in (root / item).read_text(encoding="utf-8", errors="replace").splitlines():
-        for match in defines(None, line):
-            defined.add(int(match.group(1)))
-            definers.add(item)
-if not defined:
-    print("nenhum [Caso N] definido em harness de teste: a varredura de citacoes "
-          "nao tem contra o que comparar", file=sys.stderr)
-    raise SystemExit(1)
-
-# Citacao: toda mencao a caso que NAO e a propria definicao. Um harness tambem
-# cita — e e conferido, porque um harness que aponta para o caso de outro
-# harness precisa que o numero exista em algum lugar. A versao anterior pulava
-# o arquivo inteiro, e por isso uma citacao cruzada dentro de harness nunca era
-# checada contra nada.
-errors = []
-cited = 0
-for item in scannable:
-    is_harness = item in harnesses
-    for line_no, line in enumerate(
-            (root / item).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-        own_definitions = defines(None, line) if is_harness else []
-        definition_starts = {m.start() for m in own_definitions}
-        for match in define_re.finditer(line):
-            if match.start() in definition_starts:
-                continue  # e a saida do harness: a definicao
-            cited += 1
-            if int(match.group(1)) not in defined:
-                errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
-        for match in cite_re.finditer(line):
-            start = match.start()
-            if is_harness and start > 0 and line[start - 1] == "[" \
-                    and (start - 1) in definition_starts:
-                continue  # ja contado como definicao acima
-            cited += 1
-            if int(match.group(1)) not in defined:
-                errors.append(f"{item}:{line_no}: cita um caso que nao existe: {match.group(0)}")
-if errors:
-    print(f"casos definidos ({len(defined)}) sao a saida de: " + ", ".join(sorted(definers)),
-          file=sys.stderr)
-    print("\n".join(errors), file=sys.stderr)
-    raise SystemExit(1)
-print(f"caso-refs: {cited} citacoes conferidas contra {len(defined)} casos, "
-      f"definidos pela saida de {len(definers)} harness(es) "
-      f"({len(harnesses)} arquivos de teste varridos)")
-PY
-' bash "$ROOT"
+run_step "case refs sabotage regressions" "$TIMEOUT_TEST" \
+    python3 "$ROOT/test/case_refs_test.py"
+run_step "harness case IDs unique and citations exist" "$TIMEOUT_TEST" \
+    python3 "$ROOT/tools/check_case_refs.py" "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
 # UX-REFERENCE citations must each carry one exact source anchor. The anchor
