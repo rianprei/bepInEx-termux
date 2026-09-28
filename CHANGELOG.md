@@ -7,10 +7,10 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## v0.5.0 — 2026-09-28
 
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
-(`575903b`), com hash e assunto. O hash da linha pode ser o do MERGE ou o
-da ponta da branch mesclada (2º pai do merge): o hash do merge só existe
-depois do commit, então o autor escreve a linha com o hash da própria
-ponta e o gate aceita os dois. O `release-notes-check` do gate confere que
+(`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
+cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
+autor cita o PRIMEIRO commit da própria branch, que é estável e já existe
+antes de ele escrever a linha. O `release-notes-check` do gate confere que
 todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
@@ -47,12 +47,13 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `7028630` — uni/ux-errors — ABI x86/sem-nativo acionável, magic ELF testado, arm32 vence x86
 - `12f00b3` — uni/il2cpp-bridge — recusa tarballs com links
 - `03eac87` — uni/termux-client4 — contrato de saída do cliente
+- `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
+- `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
 
 ### Pendente (não mergeado, sem hash de merge)
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - caso-refs — citação de caso aponta para caso que existe, com gate no verify_all
-- fuzz-upatch — alvo de fuzz do emissor de thunk arm64, com Caso 93
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio
 - audit3-hardening — endurecimento da terceira rodada de auditoria
 

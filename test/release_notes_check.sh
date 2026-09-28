@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # test/release_notes_check.sh — CHANGELOG v0.5.0 cobre os merges da base.
 #
-# Regra ovo-e-galinha: o hash do merge só existe depois do commit, então a
-# linha da seção v0.5.0 pode citar o hash do MERGE ou o da ponta da branch
-# mesclada (2º pai do merge) — o autor escreve com a própria ponta e o gate
-# aceita os dois. O que esta etapa exige:
+# Regra sem ovo-galinha: um merge M está coberto se alguma linha da seção
+# v0.5.0 cita M OU QUALQUER commit introduzido por M
+# (git rev-list M^1..M, que cobre o 2º pai e o polvo inteiro). O autor cita
+# o PRIMEIRO commit da própria branch — estável e já existente antes de ele
+# escrever a linha — e o gate aceita. O que esta etapa exige:
 #   1. todo merge first-parent desde o sync (hash no cabeçalho da seção)
-#      tem linha na seção v0.5.0 (pelo hash do merge ou do 2º pai);
+#      tem linha na seção v0.5.0 (pelo hash do merge ou de qualquer commit
+#      que ele introduziu);
 #   2. nenhum item do Pendente já entrou na base (ponta de uni/<nome>
 #      ancestral de HEAD);
 #   3. toda linha de merge tem descrição (não só outro hash).
@@ -61,22 +63,25 @@ for line_no, line in enumerate(lines[start:end], start + 1):
     if not desc or re.fullmatch(r"[0-9a-f]{7,40}", desc):
         errors.append(f"CHANGELOG.md:{line_no}: linha de merge sem descrição: {h}")
 
-# 1. todo merge first-parent desde o sync tem linha (merge ou 2º pai).
+# 1. todo merge first-parent desde o sync tem linha: vale o hash do merge
+#    ou de qualquer commit introduzido por ele (rev-list M^1..M). O autor
+#    cita o PRIMEIRO commit da própria branch, que já existe antes da linha.
 log = git("log", "--format=%H %P", "--merges", "--first-parent",
           f"{sync}..HEAD")
 if log.returncode != 0:
     print(f"release-notes-check: git log falhou para {sync}..HEAD", file=sys.stderr)
     raise SystemExit(1)
+cited_short = {h[:7] for h in cited}
 for entry in log.stdout.splitlines():
     parts = entry.split()
-    merge, parents = parts[0], parts[1:]
+    merge = parts[0]
     acceptable = {merge[:7]}
-    if len(parents) >= 2:
-        acceptable.add(parents[1][:7])
-    cited_short = {h[:7] for h in cited}
+    introduced = git("rev-list", f"{merge}^1..{merge}")
+    if introduced.returncode == 0:
+        acceptable |= {h[:7] for h in introduced.stdout.split()}
     if not (acceptable & cited_short):
         errors.append(f"CHANGELOG.md: merge {merge[:7]} sem linha na v0.5.0 "
-                      f"(vale o 2º pai {parents[1][:7] if len(parents) >= 2 else '?'}))")
+                      f"(vale o merge ou qualquer commit introduzido por ele)")
 
 # 2. nenhum Pendente já entrou na base.
 in_pendente = False
