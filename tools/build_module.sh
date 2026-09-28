@@ -105,6 +105,13 @@ done
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
 cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \
    module/action.sh "$STAGE/"
+# Console do Termux + cliente: moram NO módulo (companion executa de lá, ver
+# BC_CONSOLE_PATH no companion.cpp e o check bc_root_script_ok). O cliente é o
+# tools/termux_client.py versionado — o mesmo que o gate testa.
+mkdir -p "$STAGE/termux-console"
+cp termux-console/bepin-console "$STAGE/termux-console/bepin-console"
+cp tools/termux_client.py "$STAGE/termux-console/termux_client.py"
+chmod 755 "$STAGE/termux-console/bepin-console" "$STAGE/termux-console/termux_client.py"
 
 cp "$ZIP_IN" "$STAGE/META-INF/com/google/android/update-binary"
 chmod 755 "$STAGE/META-INF/com/google/android/update-binary"
