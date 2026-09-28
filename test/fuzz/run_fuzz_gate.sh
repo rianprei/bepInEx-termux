@@ -35,9 +35,9 @@ TARGETS=(c4_line elf_preflight frida_config selmix upatch_encoder)
 
 # Execs POR ALVO, não um número único: os alvos não custam o mesmo por exec.
 # O selmix é ~20x mais lento que o frida_config (le arquivo em disco e monta
-# 512 entradas de watch por exec), então um número igual para os quatro faria
-# o gate passar de 30s por causa de um alvo só. Calibrado para os quatro
-# somarem ~15s de fuzzer, mais ~7s de build dos 4 binários em paralelo.
+# 512 entradas de watch por exec), então um número igual para os cinco faria
+# o gate passar de 30s por causa de um alvo só. Calibrado para os cinco
+# somarem ~15s de fuzzer, mais ~7s de build dos 5 binários em paralelo.
 declare -A RUNS_DEFAULT=(
     [c4_line]=40000
     [elf_preflight]=40000
@@ -69,6 +69,22 @@ for t in "${TARGETS[@]}"; do
     [ -d "$dir" ] || die "corpus do alvo '$t' ausente: $dir"
     n=$(find "$dir" -type f | wc -l)
     [ "$n" -gt 0 ] || die "corpus do alvo '$t' vazio: $dir"
+done
+
+# --- 1b. README lista exatamente estes alvos ---------------------------------
+# test/fuzz/README.md documenta os alvos na tabela ## Alvos; se a doc e o
+# TARGETS divergirem, alguém adicionou alvo sem documentar (ou apagou da
+# doc sem tirar do gate) — FAIL.
+readme_targets=$(sed -n '/^## Alvos/,/^## /p' "$FUZZ_DIR/README.md" \
+    | grep -oE '^\| `[a-z0-9_]+' | tr -d '| `' || true)
+[ -n "$readme_targets" ] || die "tabela ## Alvos vazia em test/fuzz/README.md"
+for t in "${TARGETS[@]}"; do
+    printf '%s\n' "$readme_targets" | grep -qx "$t" \
+        || die "alvo '$t' do TARGETS ausente na tabela ## Alvos de test/fuzz/README.md"
+done
+for t in $readme_targets; do
+    printf '%s\n' "${TARGETS[@]}" | grep -qx "$t" \
+        || die "test/fuzz/README.md lista '$t', fora do TARGETS"
 done
 
 # ASan/UBSan decides: crash, leitura fora do limite e leak são todos FAIL.
