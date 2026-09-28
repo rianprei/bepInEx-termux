@@ -18,11 +18,14 @@ das frases — a forma mais comum de dizer "um alvo" no texto é exatamente essa
 não afirma nada sobre tamanho de lista. Tratá-lo sempre como contagem obrigaria
 a reescrever prosa inocente, e o primeiro desenvolvedor a tomar uma decisão ruim
 seria desligar este check; um check que força mentira é pior do que nenhum.
-O que dispara é a forma que DECLARA a contagem: o "um" com um marcador de
-quantidade em volta, seja antes, depois ou entre o número e o substantivo.
-Marcadores são "só", "apenas", "sozinho", "único" e, em inglês, "only", "just" e
-"single". A lista completa de número por extenso vai de zero até vinte e depois
-as dezenas, até cem, nos dois idiomas.
+Por isso o artigo sozinho passa. Disparam as duas formas que declaram a
+contagem. A primeira é o artigo com marcador de quantidade em volta, seja
+antes, depois ou entre o número e o substantivo; os marcadores são "só",
+"apenas", "sozinho", "único" e, em inglês, "only", "just" e "single". A segunda
+é o artigo antes de substantivo no plural: em português isso não é artigo, é
+erro de digitação ou a contagem que entrou junto com a troca do substantivo, e
+falha mesmo sem marcador por perto. A lista completa de número por extenso vai
+de zero até vinte e depois as dezenas, até cem, nos dois idiomas.
 
 O QUE NÃO É PROBLEMA. Contagem de execs, de segundos, de entradas de watch, de
 linhas: é calibração medida, não lista que cresce. E `TARGETS`/`RUNS_DEFAULT`
@@ -89,6 +92,9 @@ SPELLED_RE = re.compile(
 ONE_RE = re.compile(
     rf"\b(?:um|uma|one){MID}{NOUN}\b", re.IGNORECASE
 )
+# Artigo seguido de substantivo no plural: o casamento existe para pegar a
+# contagem que entrou junto com a troca do substantivo.
+PLURAL_TAIL_RE = re.compile(rf"{PLURAL_NOUN}\b", re.IGNORECASE)
 WINDOW = 16
 
 # O que é varrido: o diretório de fuzz inteiro (README, runner, gerador de
@@ -139,6 +145,16 @@ def main() -> int:
                             or re.search(rf"\b{MARK}\b", after, re.IGNORECASE) \
                             or re.search(rf"{MARK}", gap, re.IGNORECASE):
                         errors.append(report(path, root, line_no, match.group(0), ""))
+                        continue
+                    # Artigo no plural não é artigo: é erro de digitação que
+                    # nasceu de alguém substituindo o substantivo e o número
+                    # junto, e é a forma como a contagem entra sorrindo. Sem
+                    # esta regra a frase passa em silêncio — foi a regressão
+                    # apontada na revisão da versão reescrita.
+                    if PLURAL_TAIL_RE.search(gap):
+                        errors.append(report(
+                            path, root, line_no, match.group(0),
+                            "; substantivo no plural apos artigo: contagem ou erro de digitação"))
                     continue
                 errors.append(report(path, root, line_no, match.group(0), ""))
     if errors:
