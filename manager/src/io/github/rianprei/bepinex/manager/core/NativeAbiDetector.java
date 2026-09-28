@@ -51,13 +51,17 @@ public final class NativeAbiDetector {
     }
 
     public static String incompatibilityMessage(String payloadAbi, String gameAbi) {
-        if (payloadAbi == null) return "O arquivo nativo não é uma biblioteca ARM Android válida.";
-        if (gameAbi == null) {
-            return "Não foi possível descobrir a arquitetura instalada deste jogo. O Manager "
-                    + "não vai arriscar instalar uma biblioteca incompatível.";
+        if (payloadAbi == null) {
+            return "ABI inválida: o arquivo não é uma biblioteca ARM do Android. Escolha um mod "
+                    + ".so compilado para arm64-v8a ou armeabi-v7a.";
         }
-        return "Este mod é para " + payloadAbi + ", mas o jogo instalado usa " + gameAbi
-                + ". Escolha a versão do mod para a arquitetura do jogo.";
+        if (gameAbi == null) {
+            return "ABI do jogo desconhecida: o Manager não consegue confirmar se ele usa "
+                    + "arm64-v8a ou armeabi-v7a. Confirme a ABI do jogo e use um mod correspondente; "
+                    + "não instale por tentativa.";
+        }
+        return "ABI incompatível: o jogo usa " + gameAbi + ", mas o mod usa " + payloadAbi
+                + ". Baixe a versão " + gameAbi + " do mod.";
     }
 
     private static String abiInPath(String path) {

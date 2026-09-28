@@ -43,10 +43,23 @@ public final class NativeAbiDetectorTest {
             writeApk(multiAbiApk, "lib/arm64-v8a/libgame.so", "lib/armeabi-v7a/libgame.so");
             check("APK universal sem ABI instalado fica desconhecido",
                     NativeAbiDetector.detect(null, Collections.singletonList(multiAbiApk)) == null);
-            check("mod ARM32 vs jogo ARM64 recusado",
-                    !NativeAbiDetector.ARM32.equals(NativeAbiDetector.ARM64)
-                            && NativeAbiDetector.incompatibilityMessage(
-                                    NativeAbiDetector.ARM32, NativeAbiDetector.ARM64).contains("armeabi-v7a"));
+            check("erro ABI ARM32 em jogo ARM64 explica causa e download correto",
+                    ("ABI incompatível: o jogo usa arm64-v8a, mas o mod usa armeabi-v7a. "
+                            + "Baixe a versão arm64-v8a do mod.")
+                            .equals(NativeAbiDetector.incompatibilityMessage(
+                                    NativeAbiDetector.ARM32, NativeAbiDetector.ARM64)));
+            check("erro ABI ARM64 em jogo ARM32 explica causa e download correto",
+                    ("ABI incompatível: o jogo usa armeabi-v7a, mas o mod usa arm64-v8a. "
+                            + "Baixe a versão armeabi-v7a do mod.")
+                            .equals(NativeAbiDetector.incompatibilityMessage(
+                                    NativeAbiDetector.ARM64, NativeAbiDetector.ARM32)));
+            check("ABI de jogo desconhecida pede confirmação e recusa tentativa",
+                    NativeAbiDetector.incompatibilityMessage(NativeAbiDetector.ARM32, null)
+                            .contains("Confirme a ABI do jogo e use um mod correspondente; "
+                                    + "não instale por tentativa."));
+            check("arquivo nativo inválido indica as ABIs aceitas",
+                    NativeAbiDetector.incompatibilityMessage(null, NativeAbiDetector.ARM64)
+                            .contains("Escolha um mod .so compilado para arm64-v8a ou armeabi-v7a."));
             check("classe ELF roteia para ABI",
                     NativeAbiDetector.ARM32.equals(
                             NativeAbiDetector.abiForKind(ModContentDetector.Kind.ELF_ARM32)));
@@ -55,8 +68,10 @@ public final class NativeAbiDetectorTest {
             write(arm64Gadget, header(2, 183));
             LooseModInstaller.Result gadgetMismatch = LooseModInstaller.installFromFile(
                     arm64Gadget, "com.example.game", "unity-il2cpp", NativeAbiDetector.ARM32);
-            check("Manager recusa gadget ARM64 para jogo ARM32",
-                    !gadgetMismatch.success && gadgetMismatch.message.contains(NativeAbiDetector.ARM64));
+            check("Manager mostra ação ABI também para incompatibilidade do gadget",
+                    !gadgetMismatch.success && gadgetMismatch.message.equals(
+                            "ABI incompatível: o jogo usa armeabi-v7a, mas o mod usa arm64-v8a. "
+                                    + "Baixe a versão armeabi-v7a do mod."));
         } finally {
             deleteTree(tmp);
         }
