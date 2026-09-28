@@ -31,7 +31,7 @@ CORPUS="$FUZZ_DIR/corpus"
 FUZZ_SEED=${FUZZ_FUZZ_SEED:-20260926}
 TIMEOUT_TARGET=${FUZZ_FUZZ_TIMEOUT:-60}
 
-TARGETS=(c4_line elf_preflight frida_config selmix)
+TARGETS=(c4_line elf_preflight frida_config selmix upatch_encoder)
 
 # Execs POR ALVO, não um número único: os alvos não custam o mesmo por exec.
 # O selmix é ~20x mais lento que o frida_config (le arquivo em disco e monta
@@ -43,6 +43,7 @@ declare -A RUNS_DEFAULT=(
     [elf_preflight]=40000
     [frida_config]=40000
     [selmix]=8000
+    [upatch_encoder]=40000
 )
 
 die() { echo "fuzz-gate: $*" >&2; exit 1; }
