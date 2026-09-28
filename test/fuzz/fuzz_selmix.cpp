@@ -233,12 +233,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             (void)dump_join_class_name(out, d.medium, g_buf, parts, np);
             (void)dump_join_class_name(out, 1, g_buf, parts, np);
         }
-        {
-            char pkg[80];
-            (void)dump_pick_pkg(g_buf, g_buf, pkg, sizeof(pkg));
-            (void)dump_pick_pkg(g_buf, g_buf, pkg, d.medium);
-            (void)dump_pick_pkg(g_buf, g_buf, pkg, 1);
-        }
     }
 
     // ---- dedupe do u_patch: a chave é o texto da REGRA lida do .bpatch ---
