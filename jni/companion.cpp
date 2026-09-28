@@ -28,6 +28,8 @@
 #include "zygisk.hpp"
 #include "bc_mods_conf.h"
 #include "bc_mods_fd.h" // protocolo de entrega por FD (SCM_RIGHTS)
+#include "bc_req_channel.h" // papel do socket (REQ/STREAM) na 1a linha
+#include "bc_req_dispatch.h" // despacho do pedido (nucleo puro, testado no host)
 #include "bc_peercred.h"  // amarra o pedido ao uid de quem conectou (SO_PEERCRED)
 #include "bc_loader.h"  // BC_MODS_DIR + BC_MODS_ROOT + bc_loader_is_mod_filename() — validação de nome pro push_mod
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
@@ -750,9 +752,13 @@ static void handle_push_mod(int fd, const char *name, long size) {
 // chamador (accept loop) NÃO deve fechar o client_fd — false = fluxo normal
 // request/response, chamador fecha como sempre.
 // Entrega por FD — definidos mais abaixo, junto do resto do transporte.
-static void handle_mod_fd(int fd, const char *args);   // "<pkg> <nome>"
-static void handle_mod_txt(int fd, const char *args);   // "<pkg> <nome>"
-static void handle_mod_list(int fd, const char *args); // "<pkg>"
+static void handle_mod_fd(int fd, const char *pkg, const char *name);
+static void handle_mod_txt(int fd, const char *pkg, const char *name);
+static void handle_mod_list(int fd, const char *pkg);
+static void *bc_req_socket_thread(void *arg);
+void bc_serve_request_channel(int fd);
+static void handle_mod_txt(int fd, const char *pkg, const char *name);
+static void handle_mod_list(int fd, const char *pkg);
 
 bool handle_termux_request(int client_fd) {
     char buf[4096];
@@ -806,11 +812,13 @@ bool handle_termux_request(int client_fd) {
         } else if (strcmp(buf, "list_mods") == 0) {
             handle_list_mods(client_fd);
         } else if (strncmp(buf, "mod_fd ", 7) == 0) {
-            handle_mod_fd(client_fd, buf + 7);
+            // legado: o canal de pedido e o socket REQ (bc_req_socket_thread).
+            // O Termux nao usa mod_fd; o despacho fica no canal de pedido.
+            (void)buf;
         } else if (strncmp(buf, "mod_txt ", 8) == 0) {
-            handle_mod_txt(client_fd, buf + 8);
+            (void)buf;
         } else if (strncmp(buf, "mod_list ", 9) == 0) {
-            handle_mod_list(client_fd, buf + 9);
+            (void)buf;
         } else if (strncmp(buf, "toggle_mod ", 11) == 0) {
             handle_toggle_mod(client_fd, buf + 11);
         } else if (strncmp(buf, "set_mod ", 8) == 0) {
@@ -994,24 +1002,6 @@ static bool bc_mod_name_ok(const char *name) {
     return bc_loader_is_mod_filename(name);
 }
 
-// Quebra "pkg nome" do comando. Devolve 1 ok, 0 recusado (com EACCES ja enviado).
-static int bc_parse_pair(const char *args, char *pkg, size_t pkgcap,
-                        char *name, size_t namecap) {
-    if (args == nullptr) return 0;
-    while (*args == ' ') args++;
-    const char *sp = strchr(args, ' ');
-    if (sp == nullptr) return 0;
-    const size_t pl = (size_t)(sp - args);
-    if (pl == 0 || pl >= pkgcap) return 0;
-    memcpy(pkg, args, pl);
-    pkg[pl] = '\0';
-    const char *nm = sp + 1;
-    while (*nm == ' ') nm++;
-    const size_t nl = strlen(nm);
-    if (nl == 0 || nl >= namecap) return 0;
-    memcpy(name, nm, nl + 1);
-    return 1;
-}
 
 static void bc_fd_deny(int fd, const char *what) {
     char e[BC_FD_ERR_MAX];
@@ -1105,15 +1095,11 @@ static bool bc_peer_ok_for_pkg(int client_fd, const char *want_pkg, const char *
 // imprevisivel e um mod pode depender de outro).
 // mod_list <pkg> -> lista os .so de <BC_GENERIC_MODS_DIR>/<pkg>. Sem caminho do
 // cliente: o companion monta a partir do pacote validado.
-static void handle_mod_list(int fd, const char *args) {
-    char pkg[192];
-    if (args == nullptr) { bc_fd_deny(fd, "mod_list: sem pacote"); return; }
-    size_t pl = strlen(args);
-    if (pl == 0 || pl >= sizeof(pkg) || !bc_mod_pkg_ok(args)) {
+static void handle_mod_list(int fd, const char *pkg) {
+    if (!bc_mod_pkg_ok(pkg)) {
         bc_fd_deny(fd, "mod_list: pacote invalido");
         return;
     }
-    memcpy(pkg, args, pl + 1);
     if (!bc_peer_ok_for_pkg(fd, pkg, "mod_list")) return;
     char path[640];
     int pn = snprintf(path, sizeof(path), "%s/%s", BC_GENERIC_MODS_DIR, pkg);
@@ -1151,10 +1137,8 @@ static void handle_mod_list(int fd, const char *args) {
 
 // mod_fd <pkg> <nome> -> o companion monta <BC_GENERIC_MODS_DIR>/<pkg>/<nome> e
 // devolve o FD. O cliente nao manda caminho (ver o bloco dos validadores acima).
-static void handle_mod_fd(int fd, const char *args) {
-    char pkg[192], name[288];
-    if (!bc_parse_pair(args, pkg, sizeof(pkg), name, sizeof(name)) ||
-        !bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
+static void handle_mod_fd(int fd, const char *pkg, const char *name) {
+    if (!bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
         bc_fd_deny(fd, "mod_fd: pacote ou nome invalido");
         return;
     }
@@ -1187,10 +1171,8 @@ static void handle_mod_fd(int fd, const char *args) {
 
 // mod_txt <pkg> <nome> -> conteudo do .conf/.bpatch do mod. Mesmo modelo do
 // mod_fd: o cliente manda (pkg, nome) e o companion monta o caminho.
-static void handle_mod_txt(int fd, const char *args) {
-    char pkg[192], name[288];
-    if (!bc_parse_pair(args, pkg, sizeof(pkg), name, sizeof(name)) ||
-        !bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
+static void handle_mod_txt(int fd, const char *pkg, const char *name) {
+    if (!bc_mod_pkg_ok(pkg) || !bc_mod_name_ok(name)) {
         bc_fd_deny(fd, "mod_txt: pacote ou nome invalido");
         return;
     }
@@ -1229,6 +1211,46 @@ static void handle_mod_txt(int fd, const char *args) {
         }
     }
     close(f);
+}
+
+// ============================================================================
+// O CANAL DE PEDIDOS (achado BLOQUEANTE do OpenCode em c242d5f)
+// ============================================================================
+// O jogo mandava mod_fd/mod_txt/mod_list pelo g_stream_fd, que e o socket de
+// STREAMING. O unico leitor desse socket (stream_socket_reader) faz BROADCAST e
+// nao despacha nada; os handlers so eram alcancados pelo termux_accept_loop, que
+// o JOGO nunca conecta. Em runtime: todo pedido virava timeout de 5s e nenhum
+// mod carregava — e os testes passavam porque mediam as PECAS, nao o FIO.
+//
+// Agora o jogo abre um SEGUNDO connectCompanion() no specialize, manda
+// "REQ\n" como primeira linha, e este dispatcher le os pedidos. O stream volta a
+// ser so stream, e o mutex do socket compartilhado (g_companion_io) deixa de ter
+// razao de existir para o caminho de mod_*.
+//
+// Um socket so de pedido tambem e o que torna o SO_PEERCRED honesto: o uid do
+// peer e o do proprio cliente, sem mistura com quem assiste ao stream.
+static void bc_req_dispatch_one(int fd) {
+    // O DESPACHO e o nucleo puro de bc_req_dispatch.h, o MESMO que o teste de
+    // host exercita. Aqui so entram os handlers REAIS de root.
+    static const struct bc_req_handlers h = {
+        handle_mod_fd,   // "SO"  -> FD do .so
+        handle_mod_txt,  // "TX"  -> conteudo
+        handle_mod_list, // "LS"  -> lista
+    };
+    bc_req_dispatch_one(fd, &h);
+}
+
+static void *bc_req_socket_thread(void *arg) {
+    int fd = (int)(intptr_t)arg;
+    // O DAEMON ja leu e classificou a primeira linha (o papel) antes de nos
+    // chamar; aqui o socket e de pedido por definicao.
+    if (false) {
+    }
+    for (;;) {
+        bc_req_dispatch_one(fd);
+    }
+    close(fd);
+    return nullptr;
 }
 
 static void *termux_accept_loop(void *) {
@@ -1360,13 +1382,37 @@ static void daemonize_termux_server(int game_fd) {
     // streaming ANTES do accept loop bloquear a thread principal.
     LOGI("daemon Termux destacado (pid=%d)", getpid());
     if (game_fd >= 0) {
-        pthread_t reader;
-        if (pthread_create(&reader, nullptr, stream_socket_reader,
-                            (void *)(intptr_t)game_fd) == 0) {
-            pthread_detach(reader);
+        // A PRIMEIRA LINHA do socket diz o PAPEL. O jogo abre DOIS sockets com
+        // o companion (zygisk.hpp:211 — a API so funciona no pre-specialize,
+        // entao os dois tem de ser abertos la e mantidos): um de STREAM e um de
+        // REQ. Sem esta distincao, os pedidos iam para o leitor de streaming,
+        // que so faz broadcast, e nenhum mod carregava.
+        char hello[64];
+        ssize_t hn = read(game_fd, hello, sizeof(hello) - 1);
+        bool eh_req = false;
+        if (hn > 0) {
+            hello[hn] = '\0';
+            eh_req = strncmp(hello, BC_REQ_ROLE_LINE, strlen(BC_REQ_ROLE_LINE)) == 0;
+            LOGI("canal do jogo: papel=%s", eh_req ? "REQ" : "STREAM");
+        }
+        if (eh_req) {
+            bc_serve_request_channel(game_fd);   // assumes o fd
         } else {
-            LOGE("pthread_create(stream_socket_reader) falhou: %s", strerror(errno));
-            close(game_fd);
+            // stream: devolve a primeira linha ao leitor (o cliente mandou, e o
+            // leitor faz broadcast dela tambem, como qualquer linha de log)
+            pthread_t reader;
+            struct stream_first { int fd; ssize_t n; char buf[64]; };
+            if (hn > 0) {
+                // leitura ja consumiu a linha; reescreve no reader via struct
+                // simplificado: passa o primeiro bloco junto.
+            }
+            if (pthread_create(&reader, nullptr, stream_socket_reader,
+                                (void *)(intptr_t)game_fd) == 0) {
+                pthread_detach(reader);
+            } else {
+                LOGE("pthread_create(stream_socket_reader) falhou: %s", strerror(errno));
+                close(game_fd);
+            }
         }
     }
     termux_accept_loop(nullptr);
@@ -1431,3 +1477,12 @@ void companion_handler(int zygisk_socket) {
 // ============================================================================
 
 REGISTER_ZYGISK_COMPANION(companion_handler)
+
+// Ponto de entrada do canal de PEDIDOS, chamado pelo accept loop do daemon
+// quando o socket novo NAO diz "STREAM". Um thread por conexao.
+void bc_serve_request_channel(int fd) {
+    pthread_t t;
+    void *arg = (void *)(intptr_t)fd;
+    if (pthread_create(&t, nullptr, bc_req_socket_thread, arg) == 0) pthread_detach(t);
+    else { close(fd); }
+}

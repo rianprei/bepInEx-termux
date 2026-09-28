@@ -567,6 +567,28 @@ else
     echo "test/symbols/peercred_test.cpp ausente: um jogo pode pedir os mods de outro"
 fi
 
+# O FIO do canal de pedidos. STEP esta VERMELHO DE PROPÓSITO nesta branch: e o
+# bloqueio que a revisão do OpenCode achou (os pedidos iam pelo socket de
+# streaming, cujo leitor só faz broadcast, então nenhum mod carregava em runtime).
+# O teste e2e liga o cliente REAL ao despacho REAL num socketpair; enquanto o
+# despacho não atender, ele falha — e o gate vermelho é o aviso.
+#
+# Não remover nem relaxar o teste para o gate ficar verde: um gate verde aqui
+# seria a mesma classe de erro do achado (teste que só passa quando alguém olha).
+if [ -f "$ROOT/test/symbols/req_channel_test.cpp" ]; then
+    run_step "canal de pedidos: cliente REAL <-> despacho REAL (e2e)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" -pthread \
+            "$1/test/symbols/req_channel_test.cpp" -o "$2/req_channel_test" || exit 1
+        root="$2/mods-root"
+        mkdir -p "$root"
+        BC_TEST_MODS_ROOT="$root" "$2/req_channel_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "canal de pedidos e2e (teste ausente)" FAIL 0 1
+    echo "test/symbols/req_channel_test.cpp ausente: o fio dos pedidos nao e testado"
+fi
+
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
 for ((i = 0; i < ${#LABELS[@]}; i++)); do
     printf '| %s | %s | %s | %s |\n' "${LABELS[i]}" "${STATUSES[i]}" "${EXITS[i]}" "${DURATIONS[i]}"

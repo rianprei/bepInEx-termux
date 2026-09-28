@@ -200,6 +200,22 @@ static inline ssize_t bc_fd_build_request2(char *buf, size_t cap, int proto,
     return (ssize_t)n;
 }
 
+// Le UMA linha terminated em \n ( ate cap-1 ). Devolve o tamanho lido, ou <=0.
+// E o par de bc_fd_build_request: o que o cliente escreve e o que o despachante le.
+static inline ssize_t bc_fd_read_line(int fd, char *buf, size_t cap) {
+    if (buf == NULL || cap < 2) return -1;
+    size_t used = 0;
+    while (used + 1 < cap) {
+        ssize_t n = read(fd, buf + used, 1);
+        if (n < 0) { if (errno == EINTR) continue; return -1; }
+        if (n == 0) break;
+        if (buf[used] == '\n') break;
+        used++;
+    }
+    buf[used] = '\0';
+    return (ssize_t)(used > 0 ? used : (buf[0] == '\0' ? 0 : 1));
+}
+
 // Monta o pedido. Devolve o tamanho, ou -1 se não coube / tem caractere ruim.
 static inline ssize_t bc_fd_build_request(char *buf, size_t cap, int proto,
                                          const char *verb, const char *path) {

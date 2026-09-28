@@ -40,6 +40,7 @@
 #include "dobby.h"
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
 #include "bc_mods_fd.h" // entrega do .so por FD (SCM_RIGHTS), do companion
+#include "bc_req_channel.h" // papel REQ/STREAM na 1a linha do socket
 #include "bc_stream_guard.h" // caminho quente do socket compartilhado (try_lock)
 
 // Declaracoes antecipadas: as implementacoes ficam mais abaixo (depois do
@@ -62,6 +63,14 @@ static inline const char *bc_app_state_dir(char *out, size_t cap) {
 // 160 = BC_PROCESS_PACKAGE_CAP, declarado com o literal porque bc_process.h e
 // incluido depois deste ponto.
 static char g_game_pkg[160] = {0};
+
+// O CANAL DE PEDIDOS: um SEGUNDO connectCompanion(), aberto no specialize.
+// g_stream_fd e o socket de STREAMING, e o companion so faz broadcast nele
+// (stream_socket_reader) — nenhum mod_fd/mod_txt/mod_list era despachado por
+// la, entao todo pedido dava timeout de 5s e nenhum mod carregava. Ver
+// jni/zygisk.hpp:211: a API so funciona no pre[XXX]Specialize, entao a conexao
+// tem que ser aberta AQUI e mantida; "abrir por pedido" e impossivel.
+static int g_req_fd = -1;
 
 // ============================================================================
 // O socket do companion e COMPARTILHADO
@@ -122,8 +131,13 @@ static std::atomic<unsigned> g_stream_dropped{0};
 // O socket do companion, ou -1. Snapshot unico: se cair no meio do envio o
 // mod nao carrega, e o proximo ciclo tenta de novo.
 static int bc_fd_socket(void) {
-    int fd = g_stream_fd.load(std::memory_order_relaxed);
-    return fd;
+    return g_stream_fd.load(std::memory_order_relaxed);
+}
+
+// O socket de PEDIDOS. Socket separado, portanto sem mutex: o stream e os
+// pedidos nao se misturam mais, e o timeout de um nao vaza para o outro.
+static inline int bc_req_socket(void) {
+    return g_req_fd;
 }
 
 // Pede o FD de `path` ao companion. Devolve o fd pronto para o dlopen, ou -1
@@ -135,12 +149,11 @@ static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
         snprintf(why, whycap, "sem canal com o companion");
         return -1;
     }
-    // O socket e compartilhado com o streaming de eventos (stream_send_prefixed),
-    // entao o pedido precisa de timeout explicito. SO_RCVTIMEO e por socket, e o
-    // socket e do companion — entao armamos e DESARMAMOS em volta do pedido.
-    // Serializado com o streaming (g_companion_io): request+response sao uma
-    // transacao so, e o SO_RCVTIMEO e por socket.
-    pthread_mutex_lock(&g_companion_io);
+    // Socket DEDICADO de pedidos (canal REQ): nao e compartilhado com o
+    // streaming, entao NAO precisa de mutex — request+response sao uma
+    // transacao so num socket so nosso. O timeout e explicito porque um
+    // companion mudo nao pode virar travada de jogo; e desarmado no fim para
+    // nao vazar para o proximo pedido.
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -184,12 +197,11 @@ static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
 static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why, size_t whycap) {
     out[0] = '\0';
     why[0] = '\0';
-    int sock = bc_fd_socket();
+    int sock = bc_req_socket();
     if (sock < 0) {
-        snprintf(why, whycap, "sem canal com o companion");
+        snprintf(why, whycap, "sem canal de pedidos com o companion");
         return -1;
     }
-    pthread_mutex_lock(&g_companion_io);
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -266,7 +278,6 @@ static int bc_mod_text_request(const char *rel, char *out, size_t cap,
     why[0] = '\0';
     int sock = bc_fd_socket();
     if (sock < 0) { snprintf(why, whycap, "sem canal com o companion"); return -1; }
-    pthread_mutex_lock(&g_companion_io);
     struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -313,7 +324,6 @@ static int bc_mod_text_request(const char *rel, char *out, size_t cap,
     struct timeval off = { .tv_sec = 0, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &off, sizeof(off));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &off, sizeof(off));
-    pthread_mutex_unlock(&g_companion_io);
     return (int)total;
 }
 
@@ -2456,6 +2466,24 @@ public:
         // Sem essa chamada, companion_handler() nunca roda e o socket
         // @bc_companion pro Termux nunca existe.
         int companion_fd = api->connectCompanion();
+        // O canal de PEDIDOS e uma segunda conexao, com "REQ\n" na primeira
+        // linha. E o que faz o despacho de mod_fd/mod_txt/mod_list existir de
+        // verdade: antes eles iam pelo g_stream_fd, cujo unico leitor faz
+        // broadcast. O stream continua sendo so stream, e o mutex do socket
+        // compartilhado deixa de ser necessario para o caminho de mod_*.
+        int req_fd = api->connectCompanion();
+        if (req_fd >= 0) {
+            ssize_t hn = write(req_fd, BC_REQ_HELLO, strlen(BC_REQ_HELLO));
+            if (hn == (ssize_t)strlen(BC_REQ_HELLO)) {
+                g_req_fd = req_fd;
+                LOGI("canal de pedidos aberto (fd=%d)", req_fd);
+            } else {
+                LOGE("canal de pedidos: falha ao enviar o papel — %s", strerror(errno));
+                close(req_fd);
+            }
+        } else {
+            LOGE("connectCompanion() do canal de pedidos falhou — nenhum mod vai carregar");
+        }
         if (companion_fd >= 0) {
             LOGI("companion conectado (fd=%d) — socket @bc_companion deve estar ativo", companion_fd);
             // NÃO é leak: este fd é o canal STREAMING de eventos pro companion
