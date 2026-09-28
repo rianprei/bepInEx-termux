@@ -29,9 +29,6 @@ namespace {
 
 constexpr size_t kMaxInput = 256;
 
-// Buffer de saída dos emissores (máximo: thunk field com movk = 10 palavras)
-uint32_t g_out[16];
-
 struct Derived {
     uint16_t imm;      // imediato para movz/movk
     uint32_t value;    // valor de 32 bits para return int/float
