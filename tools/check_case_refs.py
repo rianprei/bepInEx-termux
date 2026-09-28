@@ -13,7 +13,7 @@ from pathlib import Path
 
 SCAN_SUFFIXES = (".md", ".txt", ".h", ".hpp", ".cpp", ".c", ".py", ".sh", ".java")
 DEFINITION_SUFFIXES = (".c", ".cpp", ".h", ".hpp", ".py", ".java")
-HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(cpp|c|py|java)$")
+HARNESS = re.compile(r"(^|/)test/|(harness|_test|Test)\.(c|cpp|h|hpp|py|java)$")
 CASE_LABEL = re.compile(r"\[Caso (\d+)\]")
 CASE_REFERENCE = re.compile(r"\bCaso (\d+)\b")
 OUTPUT_CALL = re.compile(

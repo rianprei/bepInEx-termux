@@ -114,6 +114,18 @@ def run() -> None:
         ),
     )
 
+    source_header = {
+        "test/selftest_harness.cpp":
+            'int main() { printf("\\n' + label(1) + ' baseline"); }\n',
+        "mods/u_patch/jni/case_harness.h":
+            'printf("' + label(2) + ' header outside test path");\n',
+    }
+    expect_pass(
+        "out-of-test C header can define a case",
+        source_header,
+        "2 definições únicas",
+    )
+
     missing_definition = baseline()
     missing_definition["mods/u_patch/jni/u_patch_resolve.h"] = (
         "\n" * 90 + "// citation: " + reference(87) + "\n"
