@@ -46,7 +46,9 @@ MERGE_FLOOR="791966d"
 UNPAIRED_ALLOWED="72e0dd1"
 
 # Autor. Todo commit de primeiraparent apos MERGE_FLOOR tem que ter o MESMO autor
-# do MERGE_FLOOR, salvo excecao declarada. 791966d (merge de uni/config-leak) saiu
+# ESPERADO (o dono do repo, escrito na constante mais abaixo), salvo excecao
+# declarada. Nao e o autor do PISO: o piso de um floor anterior era justamente o
+# commit corrompido, e deduzir o esperado dele invertia a regra. 791966d (merge de uni/config-leak) saiu
 # com autor "f <f@t>": e o config local do repo tinha user.name=f / user.email=f@t
 # porque a fixture do hash-gate escreveu nele — worktrees compartilham .git/config,
 # entao o estrago alcança o repo principal mesmo com a fixture num worktree. Nao da
@@ -85,7 +87,7 @@ while IFS='|' read -r sha parents subject; do
             *" $sha "*)
                 echo "merge-subject-lint: excecao declarada: $sha autor=$autor (esperado $ESPERADO_AUTHOR)" ;;
             *)
-                errors+=("$sha: autor \"$autor\" diferente do autor do piso ($ESPERADO_AUTHOR). Merge com autor de fila e sempre config local sujo: rode 'git config --local --unset user.name user.email' antes de commitar, ou commite com --author explicito.")
+                errors+=("$sha: autor \"$autor\" diferente do autor esperado (dono do repo) ($ESPERADO_AUTHOR). Merge com autor de fila e sempre config local sujo: rode 'git config --local --unset user.name user.email' antes de commitar, ou commite com --author explicito.")
                 ;;
         esac
     fi

@@ -22,8 +22,8 @@ novo_repo() {
     mkdir -p "$d/tools"
     cp "$CHECK" "$d/tools/"
     git -C "$d" init -q .
-    git -C "$d" config user.email lucaguerian@gmail.com
-    git -C "$d" config user.name rianprei
+    git -C "$d" config user.email "${ESPERADO_REAL##*<}"
+    git -C "$d" config user.name "${ESPERADO_REAL%% <*}"
     git -C "$d" config commit.gpgsign false
     printf '## v0.5.0\n' > "$d/CHANGELOG.md"
     printf 'base\n' > "$d/f.txt"
@@ -41,10 +41,36 @@ merge_legit() {
     git -C "$d" checkout -q master
     local m; m="$d/.msg"
     printf 'merge: uni/%s — resumo legitimo\n\nCo-Authored-By: OpenCode <noreply@opencode.ai>\n' "$branch" > "$m"
-    git -C "$d" -c user.name=rianprei -c user.email=lucaguerian@gmail.com merge --no-ff "$branch" -q -F "$m"
+    git -C "$d" -c user.name="${ESPERADO_REAL%% <*}" -c user.email="${ESPERADO_REAL##*<}" merge --no-ff "$branch" -q -F "$m"
     rm -f "$m"
     git -C "$d" rev-parse HEAD
 }
+
+
+# O ESPERADO_AUTHOR REAL, extraido do script do repo. Este e o ponto do
+# achado do kimi: as versoes anteriores deste teste reescreviam a constante no
+# script copiado com sed, entao mediam o valor que o teste escolhia e nao o
+# valor que o gate usa. Com o bug da deducao pelo piso de volta, os 8
+# cenarios passavam do mesmo jeito. O teste tem que ler o valor de quem vai
+# rodar, e montar o fixture com esse valor.
+# A DEDUCAO PELO PISO PRIMEIRO, porque e o diagnostico que importa. Se o script
+# voltar a ser ESPERADO_AUTHOR=$(git log ... "$MERGE_FLOOR"), o valor nao existe
+# como constante e a extracao abaixo volta vazia — e ai a mensagem seria "nao
+# consegui ler", que manda o maintainer procurar o sintaxe errada em vez de
+# mostrar que o bug do 9b5df31 voltou. A ordem importa.
+if grep -qE '^ESPERADO_AUTHOR=\$\(' "$CHECK"; then
+    echo "  [FALHA] ESPERADO_AUTHOR voltou a ser DEDUZIDO do piso — e o bug do" >&2
+    echo "          9b5df31: com o piso no commit corrompido, a regra invertia e" >&2
+    echo "          recusava o merge legitimo do dono do repo. Tem de ser" >&2
+    echo "          constante: ESPERADO_AUTHOR=\"<nome> <<email>>\"." >&2
+    exit 1
+fi
+ESPERADO_REAL=$(sed -n 's/^ESPERADO_AUTHOR="\(.*\)"$/\1/p' "$CHECK" | head -n1)
+if [ -z "$ESPERADO_REAL" ]; then
+    echo "  [FALHA] nao achei ESPERADO_AUTHOR como constante em $CHECK" >&2
+    exit 1
+fi
+echo "  ESPERADO_AUTHOR lido do repo: $ESPERADO_REAL"
 
 aponta_piso() { sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$1\"|" "$1/tools/merge_subject_check.sh" 2>/dev/null || true; }
 
@@ -179,13 +205,12 @@ D=$(mktemp -d); novo_repo "$D"
 FLOOR=$(merge_legit "$D" branch-piso)
 sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$FLOOR\"|" "$D/tools/merge_subject_check.sh"
 sed -i "s|^UNPAIRED_ALLOWED=.*|UNPAIRED_ALLOWED=\"\"|" "$D/tools/merge_subject_check.sh"
-sed -i "s|^ESPERADO_AUTHOR=.*|ESPERADO_AUTHOR=\"rianprei <lucaguerian@gmail.com>\"|" "$D/tools/merge_subject_check.sh"
 git -C "$D" checkout -q -b branch-rianprei
 printf 'r\n' > "$D/r.txt"; git -C "$D" add -A
-git -C "$D" -c user.name=rianprei -c user.email=lucaguerian@gmail.com commit -qm "branch-rianprei: trabalho"
+git -C "$D" -c user.name="${ESPERADO_REAL%% <*}" -c user.email="${ESPERADO_REAL##*<}" commit -qm "branch-rianprei: trabalho"
 git -C "$D" checkout -q master
 m2="$D/.msg2"; printf 'merge: uni/branch-rianprei — merge legitimo de rianprei\n\nCo-Authored-By: OpenCode <noreply@opencode.ai>\n' > "$m2"
-git -C "$D" -c user.name=rianprei -c user.email=lucaguerian@gmail.com merge --no-ff branch-rianprei -q -F "$m2"
+git -C "$D" -c user.name="${ESPERADO_REAL%% <*}" -c user.email="${ESPERADO_REAL##*<}" merge --no-ff branch-rianprei -q -F "$m2"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
 if [ $rc -eq 0 ]; then
     ok "merge legítimo do autor esperado PASSA (o piso não define mais o autor)"
@@ -201,7 +226,6 @@ D=$(mktemp -d); novo_repo "$D"
 FLOOR=$(merge_legit "$D" branch-ok)
 sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$FLOOR\"|" "$D/tools/merge_subject_check.sh"
 sed -i "s|^UNPAIRED_ALLOWED=.*|UNPAIRED_ALLOWED=\"\"|" "$D/tools/merge_subject_check.sh"
-sed -i "s|^ESPERADO_AUTHOR=.*|ESPERADO_AUTHOR=\"rianprei <lucaguerian@gmail.com>\"|" "$D/tools/merge_subject_check.sh"
 git -C "$D" checkout -q -b branch-fantasma
 printf 'f\n' > "$D/f.txt"; git -C "$D" add -A
 git -C "$D" -c user.name=f -c user.email=f@t commit -qm "branch-fantasma: trabalho"
