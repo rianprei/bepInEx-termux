@@ -29,6 +29,8 @@
 # combinação de flags na forma `set ... -o pipefail`, e também `shopt -so pipefail`,
 # e o resumo em stdout informa QUANTOS scripts com pipefail existem e QUANTOS
 # foram varridos — para o sucesso ser conferível de fora, e não uma promessa.
+# shellcheck disable=SC2016  # crase literal em padrao de grep e em printf:
+# e o que queremos, nao ha expressao para expandir.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

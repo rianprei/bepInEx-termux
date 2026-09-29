@@ -63,7 +63,7 @@ printf 'test/wired_exemplo.sh\twired\ntest/fuzz/check_de_exemplo.py\twired\ntest
     > "$NEW/tools/gate_tests.list"
 out="$(run_lint)" && rc=0 || rc=$?
 [ "$rc" -eq 0 ] || die "árvore limpa reprovada: $out"
-printf '%s\n' "$out" | grep -q 'gate-wiring:' ||
+grep -q 'gate-wiring:' <<<\"\$out\" ||
     die "o lint não impressions o resumo: $out"
 ok "(2) árvore limpa: PASS, com resumo"
 
@@ -73,7 +73,7 @@ printf 'test/wired_exemplo.sh\twired\ntest/fuzz/check_de_exemplo.py\twired\ntest
     > "$NEW/tools/gate_tests.list"
 out="$(run_lint)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "wired sem prova foi aceito"
-printf '%s\n' "$out" | grep -q 'declarado wired' ||
+grep -q 'declarado wired' <<<\"\$out\" ||
     die "a reprovação não diz que é falta de prova: $out"
 ok "(3) wired sem prova: FAIL com a mensagem certa"
 
@@ -84,7 +84,7 @@ printf 'test/wired_exemplo.sh\twired\ntest/orfao_novo.sh\trun\ntest/fuzz/check_d
     > "$NEW/tools/gate_tests.list"
 out="$(run_lint)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "exceção sem motivo foi aceita"
-printf '%s\n' "$out" | grep -q 'sem motivo' ||
+grep -q 'sem motivo' <<<\"\$out\" ||
     die "a reprovação não diz que o motivo falta: $out"
 ok "(4) exceção sem motivo: FAIL"
 
@@ -95,7 +95,7 @@ printf 'test/wired_exemplo.sh\twired\ntest/orfao_novo.sh\trun\ntest/fuzz/check_d
     > "$NEW/tools/gate_tests.list"
 out="$(run_lint)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "destino de arquivo apagado foi aceito"
-printf '%s\n' "$out" | grep -q 'nao existe no disco' ||
+grep -q 'nao existe no disco' <<<\"\$out\" ||
     die "a reprovação não diz que o arquivo sumiu: $out"
 ok "(5) caminho do manifesto que sumiu: FAIL"
 
@@ -107,7 +107,7 @@ printf '#!/usr/bin/env bash\nrun_step "primeira etapa" x y\n# --- O manifesto de
     > "$NEW/tools/verify_all.sh"
 out="$(run_lint)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "manifesto depois da primeira etapa foi aceito"
-printf '%s\n' "$out" | grep -q 'DEPOIS da primeira etapa' ||
+grep -q 'DEPOIS da primeira etapa' <<<\"\$out\" ||
     die "a reprovação não diz que o bloco veio tarde: $out"
 ok "(6) manifesto depois da primeira etapa: FAIL"
 

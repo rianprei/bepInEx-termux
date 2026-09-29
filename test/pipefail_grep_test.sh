@@ -13,6 +13,8 @@
 #     e o pipeline devolve 141 mesmo com o elemento PRESENTE. Aqui medimos
 #     as duas formas com uma saída grande e o padrão no começo (que é o que
 #     dispara). A forma antiga tem que dar falso-negativo; a nova, nunca.
+# shellcheck disable=SC2016  # crase literal em padrao de grep e em printf:
+# e o que queremos, nao ha expressao para expandir.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
