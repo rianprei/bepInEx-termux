@@ -83,12 +83,12 @@ EOF
     fi
     # e a resposta tem que ser uma linha de symbolize (resolvida ou recusada),
     # nunca um trace de shell nem um "command not found"
-    if printf '%s' "$out" | grep -qiE "command not found|syntax error|unexpected token|/bin/sh:"; then
+if grep -qiE "command not found|syntax error|unexpected token|/bin/sh:" <<<"$out"; then
         bad "payload #$i vazou erro de shell na saida"
     else
         ok "payload #$i sem ruido de shell na saida"
     fi
-    if printf '%s' "$out" | grep -qE "SEM BUILD-ID|NAO VERIFICADO|u_patch|\.cpp:"; then
+if grep -qE "SEM BUILD-ID|NAO VERIFICADO|u_patch|\.cpp:" <<<"$out"; then
         ok "payload #$i respondeu (resolvido ou recusado de forma clara)"
     else
         bad "payload #$i nao deu nenhuma resposta aproveitavel"
@@ -122,7 +122,7 @@ for t in "$WORK"/tomb_*.txt; do
     else
         ok "execucao real: payload #$i nao rodou nada"
     fi
-    if printf '%s' "$out" | grep -qiE "command not found|/bin/sh:"; then
+if grep -qiE "command not found|/bin/sh:" <<<"$out"; then
         bad "payload #$i vazou erro de shell"
     else
         ok "payload #$i sem erro de shell"
@@ -147,7 +147,7 @@ fi
 for flag in --offset --symbols --build-id; do
     rc=0
     out="$(bash "$ROOT/tools/symbolize.sh" "$flag" 2>&1 < /dev/null)" || rc=$?
-    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi -- "$flag"; then
+    if [ "$rc" -ne 0 ] && grep -qi -- "$flag" <<<"$out"; then
         ok "$flag sem valor: erro com mensagem (rc=$rc)"
     else
         bad "$flag sem valor: rc=$rc, saida=[$out]"
@@ -157,9 +157,9 @@ done
 # --- 8: o awk nao pode mais executar nada ---------------------------------
 # Guarda de regressão no FONTE: se alguém reintroduzir `cmd | getline` ou
 # system()/eval no awk, isto falha mesmo que o payload acima deixe de casar.
-if sed 's/[[:space:]]*#.*$//' "$ROOT/tools/symbolize.sh" \
-     | grep -nE '(^|[^a-zA-Z_])(getline|system|eval)[[:space:]]*[( ]' \
-     | grep -q .; then
+_awk_hits=$(sed 's/[[:space:]]*#.*$//' "$ROOT/tools/symbolize.sh" \
+     | grep -nE '(^|[^a-zA-Z_])(getline|system|eval)[[:space:]]*[( ]' || true)
+if [ -n "${_awk_hits}" ]; then
     bad "o awk voltou a executar algo (getline/system/eval fora de comentario)"
 else
     ok "o awk nao executa nada (sem getline/system/eval em codigo)"

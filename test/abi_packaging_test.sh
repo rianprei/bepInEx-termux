@@ -88,12 +88,12 @@ check_rejeitado() {
         echo "pack_bmod aceitou $motivo" >&2
         exit 1
     fi
-    printf '%s\n' "$so_out" | grep -Fq "não é um ELF da ABI selecionada" || {
+    grep -Fq "não é um ELF da ABI selecionada" <<<"$so_out" || {
         echo "sem mensagem amigável para $motivo" >&2
         printf '%s\n' "$so_out" >&2
         exit 1
     }
-    if printf '%s\n' "$so_out" | grep -Fq "invalid buffer"; then
+    if grep -Fq "invalid buffer" <<<"$so_out"; then
         echo "strip rodou antes da validação ($motivo)" >&2
         exit 1
     fi

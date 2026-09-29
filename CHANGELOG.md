@@ -15,6 +15,7 @@ todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
+- `b4dfe16` — uni/pipefail-grep — pipefail-grep lint cobre todos os `set -o pipefail` / `set -euo pipefail` / `set -uo pipefail` / `shopt -so pipefail`; contagem 1 por sítio; teste de comportamento com produtor externo 100% reproduzível; exceções declaradas com motivo; gate PASS SKIP=0
 - `74fa673` — uni/test-runner-accum-2 — contrato do TestRunner JVM validado no gate: resumo com checks/falhas, baseline derivado de manager/test_checks_baseline (deriva por igualdade, não apodrece), e o runner REAL rodado com um teste que falha de propósito (exit != 0, acúmulo conferido); os dois testes declarados em tools/gate_tests.list
 - `5333113` — uni/device-round3 — roteiro de verificação da rodada 3 no aparelho (recusas ARM32 com âncora de arquivo:linha conferida pelo gate); a âncora do u_patch corrigida para a faixa 792-793
 

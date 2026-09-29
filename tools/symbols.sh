@@ -120,6 +120,7 @@ symbols_add() {
         echo "symbols: sem NT_GNU_BUILD_ID em $so" >&2
         return 1
     fi
+
     status_file="$(mktemp)"
     if ! sections="$(symbols_sections "$so" "$status_file")"; then
         echo "symbols: nao consegui ler as secoes de $name — e isso NAO e o build" >&2
@@ -131,7 +132,8 @@ symbols_add() {
         return 1
     fi
     rm -f "$status_file"
-    if ! printf '%s' "$sections" | grep -q '\.symtab'; then
+    if ! grep -q '\.symtab' <<<"$sections"; then
+
         echo "symbols: $name saiu sem .symtab — o build voltou a stripar e o" >&2
         echo "symbols: build-id não vai servir para nada. See jni/repro.mk." >&2
         return 1

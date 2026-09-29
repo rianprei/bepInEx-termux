@@ -62,7 +62,7 @@ fi
 #    minSdk 26; v1 é só para < 24 e não é exigido aqui).
 verify_out="$("$BUILD_TOOLS/apksigner" verify --min-sdk-version 26 -v "$APK" 2>&1)"
 if "$BUILD_TOOLS/apksigner" verify --min-sdk-version 26 "$APK" >/dev/null 2>&1; then
-    if printf '%s' "$verify_out" | grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true'; then
+    if grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$verify_out"; then
         ok "assinatura verificável com esquema v2 (minSdk 26)"
     else
         bad "assinatura verificada, mas sem o esquema v2 que o minSdk 26 exige"
