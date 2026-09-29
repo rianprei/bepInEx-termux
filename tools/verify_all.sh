@@ -458,6 +458,21 @@ fi
   fi
 
 
+# A forma do merge conta, e conferida. Um merge feito com `git commit-tree` a
+# partir da arvore de uma branch, em vez de `git merge --no-ff`, tem UM PAI SO
+# e nao aparece no historico como merge — foi assim que 72e0dd1 carregou a
+# arvore de 016640a sem trazer a branch, e o gate inteiro passou. O check
+# cobra assunto, dois pais, e hash citado na v0.5.0 que e ancestral de HEAD.
+if [ -f "$ROOT/tools/merge_subject_check.sh" ]; then
+    run_step "git: assunto, dois pais e citacao de hash dos merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/merge_subject_check.sh"
+else
+    record "git: assunto, dois pais e citacao de hash dos merges (check ausente)" FAIL 0 1
+    echo "tools/merge_subject_check.sh ausente: um merge de 1 pai com arvore de branch passa" >&2
+fi
+run_step "git: merge-subject-lint (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/merge_subject_check_test.sh"
+
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
