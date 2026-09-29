@@ -192,7 +192,16 @@ fi
 echo "[+] Build concluido com sucesso: ${OUTPUT_APK}"
 echo "--- Informacoes do APK gerado ---"
 "${BUILD_TOOLS}/aapt2" dump badging "${OUTPUT_APK}" | grep -E "package|minSdkVersion|targetSdkVersion|application-label"
-# A versao do APK tem que ser a do VERSION da raiz: se divergir, o build falhou.
-"${BUILD_TOOLS}/aapt2" dump badging "${OUTPUT_APK}" | grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'" \
-    || { echo "ERRO: o APK saiu com outra versao (esperado ${VERSION_NAME}/${VERSION_CODE})." >&2; exit 1; }
+  # A versao do APK tem que ser a do VERSION da raiz: se divergir, o build falhou.
+  # Materializa a saida do aapt2 ANTES de comparar, em vez de `aapt2 | grep -q`.
+  # O grep -q sai assim que acha o padrao e fecha o pipe; se o aapt2 ainda
+  # tivesse bytes pendentes, levaria SIGPIPE (141) e o pipefail entregaria esse
+  # 141 como status do pipeline — reprovando um APK que esta correto. Medido:
+  # `seq 1 300000 | grep -q '^1$'` falha em 200 de 200 execucoes, com o elemento
+  # presente. Aqui a saida do badging e curta e o risco e baixo, mas "baixo" nao
+  # e "medido", e o custo de materializar e uma variavel. Ver
+  # tools/pipefail_grep_check.sh.
+  _badging="$("${BUILD_TOOLS}/aapt2" dump badging "${OUTPUT_APK}")"
+  grep -q "versionCode='${VERSION_CODE}' versionName='${VERSION_NAME}'" <<<"$_badging" \
+      || { echo "ERRO: o APK saiu com outra versao (esperado ${VERSION_NAME}/${VERSION_CODE})." >&2; exit 1; }
 echo "[-] APK confere com o VERSION da raiz: ${VERSION_NAME} (${VERSION_CODE})"

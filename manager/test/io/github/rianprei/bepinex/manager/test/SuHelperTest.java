@@ -21,7 +21,7 @@ public class SuHelperTest {
     }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 
     private static void checkRejeita(String what, Runnable r) {

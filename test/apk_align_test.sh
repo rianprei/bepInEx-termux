@@ -52,7 +52,7 @@ echo "== (1) o APK real tem que passar inteiro =="
 APK="$ROOT/manager/bepinex-manager.apk"
 if [ -f "$APK" ] && [ -x "$BUILD_TOOLS/apksigner" ]; then
     out="$(bash "$ROOT/tools/check_apk_installable.sh" "$APK" 2>&1)"
-    if printf '%s' "$out" | grep -q '== APK instalável: OK'; then
+    if grep -q '== APK instalável: OK' <<<"$out"; then
         ok "APK do Manager passa em todas as checagens"
     else
         bad "APK do Manager FALHOU:"
@@ -89,7 +89,7 @@ fi
 check "consegui um offset desalinhado ($o1)" "$([ $((o1 % 4)) -ne 0 ] && echo 1 || echo 0)"
 
 out="$(bash "$ROOT/tools/check_apk_installable.sh" "$TMP/desalinhado.zip" 2>&1)"
-if printf '%s' "$out" | grep -q 'não múltiplo de 4'; then
+if grep -q 'não múltiplo de 4' <<<"$out"; then
     ok "check acusa o arsc desalinhado (e é por isso que existe)"
 else
     bad "check NÃO acusou o arsc desalinhado:"
@@ -108,7 +108,7 @@ fi
 echo "== (3) arsc DEFLATE tem que FALHAR (o bug do Android 11+) =="
 make_zip "$TMP/deflate.zip" 8 "CD" "EF"
 out="$(bash "$ROOT/tools/check_apk_installable.sh" "$TMP/deflate.zip" 2>&1)"
-if printf '%s' "$out" | grep -q 'está comprimido (método 8'; then
+if grep -q 'está comprimido (método 8' <<<"$out"; then
     ok "check acusa o arsc comprimido (o -124 do Android 11+)"
 else
     bad "check NAO acusou o arsc comprimido:"

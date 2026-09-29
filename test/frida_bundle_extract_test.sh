@@ -79,9 +79,9 @@ run_tool() { # run_tool <tgz> <saida>
 out="$(run_tool "$WORK/sym.tgz" "$WORK/out-sym.js")" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "aceitou tarball com link simbolico (exit 0)"
 [ ! -e "$WORK/out-sym.js" ] || die "gerou saida com o tarball de link simbolico"
-printf '%s' "$out" | grep -qiE 'link|simbolic|regular' ||
+grep -qiE 'link|simbolic|regular' <<<"$out" ||
     die "a recusa nao diz que o problema e o tipo da entrada: $out"
-if printf '%s' "$out" | grep -q 'SENHA'; then die "o segredo do host apareceu na saida"; fi
+if grep -q 'SENHA' <<<"$out"; then die "o segredo do host apareceu na saida"; fi
 ok "(1) link simbolico recusado, sem saida e sem vazar o arquivo do host"
 
 # (2) hardlink para fora: mesma recusa
