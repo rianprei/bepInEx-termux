@@ -293,10 +293,11 @@ run_step "harness case IDs unique and citations exist" "$TIMEOUT_TEST" \
     python3 "$ROOT/tools/check_case_refs.py" "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
-# UX-REFERENCE citations must each carry one exact source anchor. The anchor
-# must occur once in its target file, inside the cited range, and on code rather
-# than package/import/comment/license lines. This proves the quote can be found,
-# not that it semantically supports the prose; that remains a review judgment.
+# UX-REFERENCE and DEVICE-ROUND-3 citations must each carry one exact source
+# anchor. The anchor must occur once in its target file, inside the cited range,
+# and on code rather than package/import/comment/license lines. This proves the
+# quote can be found, not that it semantically supports the prose; that remains
+# a review judgment.
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"
 import re
@@ -323,9 +324,12 @@ for doc_name in files:
         refs = list(ref_re.finditer(line))
         if not refs:
             continue
-        is_ux_reference = doc_name == "docs/UX-REFERENCE.md"
-        anchors = anchor_re.findall(line) if is_ux_reference else []
-        if is_ux_reference and len(anchors) != len(refs):
+        requires_anchors = doc_name in {
+            "docs/UX-REFERENCE.md",
+            "docs/DEVICE-ROUND-3.md",
+        }
+        anchors = anchor_re.findall(line) if requires_anchors else []
+        if requires_anchors and len(anchors) != len(refs):
             errors.append(
                 f"{doc_name}:{line_no}: cada citação exige uma âncora explícita "
                 "no formato (anchor: `texto`)"
@@ -349,7 +353,7 @@ for doc_name in files:
                 continue
             targets.append((target, target_lines, start, end))
             checked += 1
-            if is_ux_reference and ref_index < len(anchors):
+            if requires_anchors and ref_index < len(anchors):
                 anchor = anchors[ref_index]
                 occurrence_count = sum(source_line.count(anchor) for source_line in target_lines)
                 occurrences = [
@@ -403,7 +407,7 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if not is_ux_reference and targets and not any(
+            if not requires_anchors and targets and not any(
                 literal in "\n".join(lines) for _, lines, _, _ in targets
             ):
                 errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
