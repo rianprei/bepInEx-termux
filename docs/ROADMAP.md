@@ -141,7 +141,7 @@ reescrito, só uma segunda porta de entrada ao lado dele).
   `Java_*` mesmo sem motor reconhecido — cobre "qualquer jogo C++", não
   só Cocos2d-x.
 - **`jni/bc_generic_allowlist.h`** — allowlist de pacote
-  (`/data/local/tmp/bc_generic_allowlist.conf`). Detecção genérica só
+  (/data/adb/bepinex/bc_generic_allowlist.conf). Detecção genérica só
   escaneia/atua em pacote explicitamente listado — escanear TODO app do
   device custaria latência de boot em apps que não interessam.
 - **`jni/bc_generic_hook.h`** — hook de LOG via `DobbyInstrument` (não

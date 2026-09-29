@@ -39,7 +39,9 @@ fi
 # O post-fs-data.sh tambem cria estas no boot (e aplica o chcon do tipo novo,
 # que so existe DEPOIS que a politica do modulo foi aplicada). Aqui e so para
 # o usuario ja ter a pasta assim que termina a instalacao.
-mkdir -p /data/local/tmp/mods /data/local/tmp/bc_mods
-chmod 755 /data/local/tmp/mods /data/local/tmp/bc_mods
+# Raiz root-only: /data/adb e 0700 root:root, entao so o root escreve aqui.
+# A arvore antiga (/data/local/tmp) e migrada uma vez pelo post-fs-data.
+mkdir -p /data/adb/bepinex/mods /data/adb/bepinex/bc_mods
+chmod 755 /data/adb/bepinex/mods /data/adb/bepinex/bc_mods
 
 ui_print "Reinicie o celular para o Zygisk carregar o modulo."

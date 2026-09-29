@@ -17,7 +17,15 @@
 #define BC_PATH_DECIDE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
+
+// Identidade canônica do Battle Cats — a MESMA constante do bc_signal.h, sem
+// literal repetido. O include é de bloco #ifdef para não criar dependência
+// circular (bc_signal.h inclui coisas do Android que o host não tem).
+#ifndef BC_BC_PKG
+#define BC_BC_PKG "jp.co.ponos.battlecatsen"
+#endif
 
 typedef enum {
     BC_PATH_BC = 0,    // Battle Cats
@@ -26,11 +34,25 @@ typedef enum {
     BC_PATH_NONE,      // nada a fazer
 } bc_path_kind;
 
-// BC casa por substring (o nome do processo pode vir com sufixo de processo
-// auxiliar) — era o is_bc() de main.cpp, morou aqui pra ter cópia única: o
-// harness testa exatamente o matcher que roda no device.
+// BC casa por IGUALDADE EXATA com a constante — nunca substring (F1/X1,
+// reprovado pelo kimi: com.evil.jp.co.ponos.battlecatsen passava no strstr
+// e lia a árvore root-only bc_mods: lista, FD dos .so, conf).
+// O lado in-process (nice_name do zygote) aceita "BC_BC_PKG:processo" porque
+// o Android registra subprocessos como "pkg:svc" — o limite É o ':' e o
+// prefixo tem que ser O pacote inteiro. O lado peer (packages.list) só tem
+// nomes de pacote puros, então o ':' lá é no-op.
 static inline bool bc_path_is_bc(const char *pkg) {
-    return pkg && strstr(pkg, "jp.co.ponos.battlecatsen") != NULL;
+    if (pkg == NULL) return false;
+    const size_t len = strlen(pkg);
+    const size_t canon = sizeof(BC_BC_PKG) - 1;  // sem o NUL
+    if (len != canon) {
+        // "pkg:svc" (processo): o prefixo é o pacote EXATO e o ':' vem logo
+        // depois. "com.evil.jp.co.ponos.battlecatsen" (len > canon) e
+        // "jp.co.ponos.battlecatsenx" (len > canon) caem aqui e são RECUSADOS.
+        return len > canon && pkg[canon] == ':' &&
+               memcmp(pkg, BC_BC_PKG, canon) == 0;
+    }
+    return memcmp(pkg, BC_BC_PKG, canon) == 0;
 }
 
 static inline bc_path_kind bc_decide_path(const char *pkg, bool dir_exists, bool in_allowlist) {

@@ -17,14 +17,17 @@ public class CrashGuardStateTest {
     }
 
     private static void testPaths() {
-        // O loader grava no state dir do JOGO (o jogo nao escreve em
-        // /data/local/tmp); mods/<pkg>/ e conferido por compatibilidade.
+        // O loader grava no state dir do JOGO (o jogo nao escreve na arvore de
+        // mods); mods/<pkg>/ e conferido por compatibilidade — e essa arvore
+        // foi de /data/local/tmp para /data/adb/bepinex (raiz root-only, revisao
+        // de seguranca do freebuff).
         check("contador no state dir",
                 CrashGuardState.counterPath("com.foo").equals("/data/data/com.foo/files/bepinex/crashguard"));
         check("marcador no state dir",
                 CrashGuardState.markerPath("com.foo").equals("/data/data/com.foo/files/bepinex/disabled_by_crashguard"));
         check("marcador alternativo em mods/",
-                CrashGuardState.modsMarkerPath("com.foo").equals("/data/local/tmp/mods/com.foo/disabled_by_crashguard"));
+                CrashGuardState.modsMarkerPath("com.foo")
+                        .equals("/data/adb/bepinex/mods/com.foo/disabled_by_crashguard"));
     }
 
     private static void testParseCounter() {

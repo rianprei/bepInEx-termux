@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include "../../jni/bc_loader.h"  // BC_GENERIC_MODS_DIR: a raiz root-only da arvore de mods
 #include "../../jni/bc_process.h"
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -67,12 +68,14 @@ static inline const char *mod_pkg(void) {
 
 // ---- dir de mods (C1) ----
 
-// /data/local/tmp/mods/<pkg>/ em out. false se o pacote ainda não é conhecido
+// BC_GENERIC_MODS_DIR/<pkg>/ em out. O caminho e root-only e o JOGO nao o
+// abre: pede a lista e o FD de cada .so ao companion. false se o pacote ainda
+// nao e conhecido
 // (constructor sem env, antes do specialize — chame da thread de trabalho).
 static inline bool mod_dir(char *out, size_t size) {
     const char *pkg = mod_pkg();
     if (!pkg) return false;
-    int n = snprintf(out, size, "/data/local/tmp/mods/%s", pkg);
+    int n = snprintf(out, size, "%s/%s", BC_GENERIC_MODS_DIR, pkg);
     return n > 0 && (size_t)n < size;
 }
 

@@ -97,9 +97,9 @@ ATÉ ONDE O LOADER CHEGOU (feat/generic-pkg-mods, 2026-09-26)
 ## Contratos (fixos — todos os agentes seguem)
 
 ### C1. Diretórios no device
-- Mods: `/data/local/tmp/mods/<pkg>/` (dono root, `755`; arquivos `644`). Escrito **só pelo Manager (via su) ou adb**.
+- Mods: `/data/adb/bepinex/mods/<pkg>/` (pai root-only `0700`; a pasta `755`, arquivos `644`). Escrito **só pelo Manager (via su) ou adb**.
 - Mod desligado: sufixo `.off` (`foo.so.off`, `foo.bpatch.off`). O loader só carrega `*.so` (`bc_loader_is_mod_filename`).
-- Saída do processo do jogo (o jogo não escreve em `/data/local/tmp`): `/data/data/<pkg>/files/bepinex/`
+- Saída do processo do jogo (log e snapshot): `/data/data/<pkg>/files/bepinex/`, derivado do `app_data_dir` que o zygote entrega (multiusuário: `/data/user/N/<pkg>`). O jogo também não escreve na árvore de mods.
   - `log.txt`: log de todos os mods (append, 1 linha = `HH:MM:SS [mod] msg`, corta em 256KB).
   - `dump.tsv`: saída do u_dump.
   - Descobrir `<pkg>` dentro do mod: `getenv("BEPINEX_PKG")`, que o loader seta antes do `dlopen`. **Não** use `/proc/self/cmdline` no constructor: no device ele ainda vale `zygote64` nesse momento (achado 2026-09-26, u_patch leu `mods/zygote64`). Fallback só se a env faltar: cmdline, esperando sair de `zygote*`.
@@ -225,7 +225,7 @@ Nenhum caminho modifica arquivo do jogo: tudo é carregado no processo em runtim
 ### F1c — SELinux Enforcing (obrigatório pra gente normal)
 Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso que o zygote lê `/data/local/tmp` e o jogo faz `dlopen` de lá (o logcat mostra `avc: denied ... permissive=1`). Num celular comum (Enforcing) nada disso carrega.
 - [x] `module/sepolicy.rule` (Magisk/KernelSU aplicam no boot): tipo próprio `bepinex_mod_file` + allow mínimo (zygote: `getattr`/`search` na pasta; app: `read`/`open`/`getattr`/`map`/`execute` nos arquivos). Nada de liberar `shell_data_file` inteiro pra todo app. (`b510b1e` + etapa `sepolicy grammar` do gate; device: v0.4.0 com `setenforce 1`, SA2 + BC 4/4, zero `avc` do nosso caminho.)
-- [x] `module/post-fs-data.sh`: cria `/data/local/tmp/mods` e aplica `chcon -R` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
+- [x] `module/post-fs-data.sh`: cria `/data/adb/bepinex/mods` (árvore root-only, ver `docs/DEVICE-ROUND-2.md` passo 7) e aplica `chcon` com o tipo novo. O Manager aplica o mesmo `chcon` depois de instalar cada arquivo. (`e5d16a4`; `SuHelper.installFile` faz cp+chmod 644+chcon, coberto por `SuHelperTest`.)
 - [x] Allowlist legada: ler só se o arquivo existir, e sem erro barulhento. (**sem cobertura no host**: `bc_generic_allowlist_contains` é `#ifdef __ANDROID__` — `access`+`fopen` do arquivo, que o host não tem como exercitar. O Caso 62 cobre só o parser puro do buffer, `bc_generic_allowlist_contains_buf`; a leitura do arquivo em si é verificada no device.)
 - **Verifica:** `setenforce 1` no device de teste → SA2 carrega os mods e o u_patch aplica; `dmesg`/logcat sem `avc: denied` do nosso caminho → `setenforce 0` de volta.
 
@@ -270,7 +270,7 @@ Achado 2026-09-26: o device de teste está em **Permissive**, e é só por isso 
 - **Verifica:** no SA2, recriar o `HasAmmo=true` só pela UI, sem adb.
 
 ### F7 — Empacotamento Magisk (1 zip)
-- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/local/tmp/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
+- [~] `tools/build_module.sh`: `module.prop`, `customize.sh` (instala o Manager APK com `pm install`, cria `/data/adb/bepinex/mods`), `zygisk/arm64-v8a.so`, `uninstall.sh`. `tools/build_release.sh` gera também APK, módulos de exemplo, `SHA256SUMS` e `BUILD-INFO.txt`, conferindo dependências pinadas. (host OK: `f36c650` e builds reproduzíveis; device: pendente — zip e APK não instalados em celular.)
 - [~] Compatível com Magisk (Zygisk nativo) e KernelSU + ZygiskNext (documentar). (host OK: README e `module/*.sh` citam os três; device: pendente — só Magisk foi exercitado, e nem isso desde o formato novo.)
 - **Verifica:** zip instalado pelo app Magisk → reboot → Manager no launcher → SA2 com mod funciona.
 
@@ -334,7 +334,7 @@ F3, F4 e F5 andam em paralelo contra os contratos. F2 dá `mod_common.h`: até e
 
 - `il2cpp_domain_get` antes do `il2cpp_init` crasha o jogo (sa2ammo). Todo mod usa `il2cpp_boot()`: biblioteca e runtime compartilham um deadline de 240s, com polling a cada 200ms e logs periódicos/motivo explícito ao desistir. `u_frida` usa 10s e carrega o gadget mesmo sem runtime; scripts que dependem de `Il2Cpp.*` podem não funcionar nesse caso. A rota usada para abrir a biblioteca (`__loader_dlopen` ou fallback `dlopen`) também fica no log.
 - Patch de instrução (F4 `return`): método minúsculo (< 8 bytes) ou inline → não patchar, logar.
-- SELinux: jogo lendo `/data/local/tmp/mods` já funciona (SA2); **escrever** `/data/data/<pkg>/files` é do próprio app, ok.
+- SELinux: o jogo **não** lê a árvore de mods por caminho — recebe o FD (SCM_RIGHTS) do companion, e o `getattr` do `fstat` do linker é o que a regra cobre. **Escrever** `/data/data/<pkg>/files` é do próprio app, ok.
 - Play Protect pode reclamar do APK do Manager sideloaded → documentar no FAQ.
 - Anti-tamper por jogo: fora do nosso controle; log claro se o jogo morrer logo depois de carregar mod.
 - APK Manager sem Gradle: build manual frágil → `build.sh` idempotente, testado limpo.

@@ -92,7 +92,7 @@ Log esperado:
 
 ## Deploy persistente
 
-É igual ao `sa2ammo`: coloque o `libsa2content.so` em `/data/local/tmp/mods/com.hyperdotstudios.swampattack2/`, com o pacote na allowlist genérica.
+É igual ao `sa2ammo`: coloque o `libsa2content.so` em `/data/adb/bepinex/mods/com.hyperdotstudios.swampattack2/`, com o pacote na allowlist genérica.
 
 ## Status
 

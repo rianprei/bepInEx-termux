@@ -97,8 +97,8 @@ python3 termux_client.py status
 Respostas literais do companion (a saída do cliente é resposta de protocolo,
 não `logcat`):
 
-- `pong` — `jni/companion.cpp:763-763` (anchor: `"pong"`).
-- `companion_active` — `jni/companion.cpp:788-788` (anchor: `"companion_active"`).
+- `pong` — `jni/companion.cpp:782-782` (anchor: `"pong"`).
+- `companion_active` — `jni/companion.cpp:807-807` (anchor: `"companion_active"`).
 
 **PASS:** cada comando termina com status 0 e imprime exatamente a resposta
 correspondente, sem `error:`/timeout. Qualquer outra resposta, traceback,
@@ -171,9 +171,9 @@ python3 termux_client.py push_mod /sdcard/Download/round3-noop.so
 A resposta e o log de entrega são:
 
 - `ok: %ld bytes written` (o `%ld` é o tamanho real da fixture) —
-  `jni/companion.cpp:723-724` (anchor: `"ok: %ld bytes written\n"`).
+  `jni/companion.cpp:724-725` (anchor: `"ok: %ld bytes written\n"`).
 - `push_mod: wrote %s (%ld bytes)` (caminho e tamanho reais) —
-  `jni/companion.cpp:726-726` (anchor: `"push_mod: wrote %s (%ld bytes)"`).
+  `jni/companion.cpp:727-727` (anchor: `"push_mod: wrote %s (%ld bytes)"`).
 
 Depois abra Battle Cats e confira:
 
@@ -187,7 +187,7 @@ LOCAL_SIZE="$(wc -c < /tmp/device-round3-noop.so | tr -d ' ')"
 test "$REMOTE_SIZE" = "$LOCAL_SIZE"
 ```
 
-O resultado esperado do loader é `mod loader: %s carregado mas inativo (entry retornou false)` — `jni/main.cpp:1353-1353` (anchor: `"mod loader: %s carregado mas inativo (entry retornou false)"`).
+O resultado esperado do loader é `mod loader: %s carregado mas inativo (entry retornou false)` — `jni/main.cpp:1612-1612` (anchor: `"mod loader: %s carregado mas inativo (entry retornou false)"`).
 
 **PASS:** resposta e log de entrega presentes; o tamanho no device é igual ao
 `wc -c` do `.so` stripped no host; build-id de origem e destino iguais;
@@ -234,14 +234,14 @@ jogo uma vez e procure as recusas literais:
 
 - `não suportado em 32-bit: o hook Dobby é AArch64 e não foi validado em aparelho 32-bit; nenhum hook foi instalado` — `mods/sa2ammo/jni/sa2ammo_mod.cpp:67-68` (anchor: `"não suportado em 32-bit: o hook Dobby é AArch64`).
 - A mesma recusa para `sa2content` — `mods/sa2content/jni/sa2content_mod.cpp:205-206` (anchor: `"não suportado em 32-bit: o hook Dobby é AArch64`).
-- `não suportado em 32-bit: o emissor C4 gera instruções AArch64; nenhuma regra foi aplicada` — `mods/u_patch/jni/u_patch_mod.cpp:792-793` (anchor: `"não suportado em 32-bit: o emissor C4 gera instruções AArch64;`).
+- `não suportado em 32-bit: o emissor C4 gera instruções AArch64; nenhuma regra foi aplicada` — `mods/u_patch/jni/u_patch_mod.cpp:795-796` (anchor: `"não suportado em 32-bit: o emissor C4 gera instruções AArch64;`).
 - `não suportado em 32-bit: a guarda de prólogo e o hook são AArch64; nenhum hook foi instalado` — `mods/u_noads/jni/u_noads_mod.cpp:169-170` (anchor: `"não suportado em 32-bit: a guarda de prólogo e o hook são AArch64;`).
 - O log do detector genérico não pertence ao teste dos quatro mods acima.
   Para testá-lo separadamente, use apenas um app ARM32 já instalado sem pasta
   `/data/local/tmp/mods/$PKG_GENERIC_ARM32`; se não houver, marque esse
   subteste **BLOQUEADO**. Confirme ABI e pasta ausente, abra o app uma vez e
   espere `detector/hook genérico ainda não suportado em 32-bit; ignorando` —
-  `jni/main.cpp:1914-1915` (anchor: `detector/hook genérico ainda não suportado em 32-bit; ignorando`).
+  `jni/main.cpp:2192-2193` (anchor: `detector/hook genérico ainda não suportado em 32-bit; ignorando`).
 
 ```bash
 adb shell dumpsys package "$PKG_GENERIC_ARM32" | grep -F 'primaryCpuAbi=armeabi-v7a'

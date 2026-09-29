@@ -3,7 +3,7 @@
 //                          rejeita zygote* e buffer que não cabe (C1)
 //   mod_pkg              — env BEPINEX_PKG primeiro; fallback cmdline
 //                          cacheado depois da 1ª leitura boa (C1)
-//   mod_dir              — /data/local/tmp/mods/<pkg> (C1)
+//   mod_dir              — /data/adb/bepinex/mods/<pkg> (árvore root-only, C1)
 //   mod_log_format_line  — a linha "HH:MM:SS [tag] msg" do log.txt (C1)
 //   mod_log_permission_warn — o aviso de log.txt sem permissão (dono errado)
 //   mod_conf_find        — parser key=value, '#' comenta, trim (C3)
@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
     {
         char dir[320];
         setenv("BEPINEX_PKG", "com.env.pkg", 1);
-        check("dir do mod com env", mod_dir(dir, sizeof(dir)) && strcmp(dir, "/data/local/tmp/mods/com.env.pkg") == 0);
+        check("dir do mod com env", mod_dir(dir, sizeof(dir)) && strcmp(dir, "/data/adb/bepinex/mods/com.env.pkg") == 0);
         check("buffer curto rejeitado", !mod_dir(out, 8));
         unsetenv("BEPINEX_PKG");
     }

@@ -11,7 +11,7 @@ MODDIR=${0%/*}
 # Standalone mode usa os applets do busybox; pm/am/getenforce são do system.
 PATH="$PATH:/system/bin"
 
-MODS=/data/local/tmp/mods
+MODS=/data/adb/bepinex/mods   # raiz root-only (ver post-fs-data.sh)
 MANAGER=io.github.rianprei.bepinex.manager
 
 # --- Manager instalado: abre ele e sai ----------------------------------------

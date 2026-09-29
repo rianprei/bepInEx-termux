@@ -99,7 +99,22 @@ public final class SuHelper {
     private static final Pattern ACTIVITY_CLASS_RE =
             Pattern.compile("^\\.?[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*$");
 
-    public static final String MODS_ROOT = "/data/local/tmp/mods/";
+    // RAIZ DOS MODS — fonte unica em Java (revisao de seguranca do freebuff).
+    //
+    // Saiu de /data/local/tmp porque o PAI nao era controlado pelo root:
+    // /data/local/tmp e 0777 e /data/local e 0771 shell:shell, entao o shell e
+    // qualquer appuid podiam trocar o diretorio por um link simbolico antes de
+    // o root (companion, este Manager via su) tocar nele. /data/adb e
+    // root:root 0700: o SO ROOT escreve.
+    //
+    // O Manager escreve aqui via su, entao ele PRECISA deste caminho — e e o
+    // unico escritor de fora do root. O processo do JOGO nao abre este caminho
+    // (nao tem acesso a /data/adb); o companion entrega o FD dele.
+    //
+    // Use modsDir(pkg), nunca concatene MODS_ROOT na mao: foram 9
+    // concatenacoes e cada uma e uma chance de a extensao antiga voltar.
+    public static final String MODS_ROOT = "/data/adb/bepinex/mods/";
+
 
     // Pacote Android: comeca com letra, ponto separa segmentos, sem espaco.
     public static void requirePkg(String pkg) {

@@ -19,7 +19,8 @@
 // selftest_harness passa stubs. A LÓGICA (discovery por sufixo, decisão de
 // load, chamada do entry) é o MESMO código nos dois.
 //
-// Diretório: /data/local/tmp/bc_mods (mesma área do bc_mods.conf). Só a
+// Diretório: BC_MODS_DIR (/data/adb/bepinex/bc_mods — pai root-only, ver
+// a constante e o bloco de segurança mais abaixo). Só a
 // raiz, arquivos terminando em ".so", sem oculto. Ordem de carga: o readdir
 // é imprevisível → o CALLER deve sort por nome antes de carregar (prefixo
 // numérico no nome garante ordem: "01_core.so" antes de "02_extra.so").
@@ -45,7 +46,35 @@
 extern "C" {
 #endif
 
-#define BC_MODS_DIR "/data/local/tmp/bc_mods"
+// ============================================================================
+// RAIZ DOS MODS — fonte unica em C++ (revisao de seguranca do freebuff, ALTA)
+// ============================================================================
+// A arvore saiu de /data/local/tmp por causa do PAI: /data/local/tmp e 0777
+// (o AOSP cria 0771 shell:shell e o companion fazia chmod 0777), e
+// /data/local e 0771 shell:shell tambem — nos dois o shell e qualquer appuid
+// podem trocar o diretorio por um link simbolico antes de o root tocar nele.
+// /data/adb e root:root 0700 (Magisk/KernelSU): o SO ROOT escreve.
+//
+// O PROCESSO DO JOGO NAO ABRE MAIS ESSE CAMINHO. Ele nao tem, nem deve ter,
+// acesso a /data/adb. O que o jogo recebe:
+//   - .so    -> o FD, entregue pelo companion (root) via SCM_RIGHTS no socket
+//               que ja existe (g_stream_fd em main.cpp), aberto com
+//               android_dlopen_ext(..., ANDROID_DLEXT_USE_LIBRARY_FD, fd);
+//   - .conf / .bpatch / allowlist -> o CONTEUDO, pelo mesmo socket.
+// Ver jni/bc_mods_fd.h para o protocolo e o par open-por-fd.
+//
+// Os paths antigos viram o que o migrador consome uma unica vez no boot
+// (module/migrate-mods-tree.sh), e nada mais.
+#define BC_MODS_ROOT "/data/adb/bepinex"
+// SEM parenteses de proposito: estes macros sao usados tambem em
+// concatenacao de literal (companion.cpp: char tmp[] = BC_MODS_CONF_PATH
+// ".tmp.XXXXXX";) e `(...) "sufixo"` nao concatena.
+#define BC_MODS_DIR BC_MODS_ROOT "/bc_mods"
+#define BC_GENERIC_MODS_DIR BC_MODS_ROOT "/mods"
+#define BC_MODS_CONF_FILE BC_MODS_ROOT "/bc_mods.conf"
+#define BC_GENERIC_ALLOWLIST_FILE BC_MODS_ROOT "/bc_generic_allowlist.conf"
+// Raiz antiga, so para o migrador e para o log de "o que ficou para tras".
+#define BC_MODS_OLD_ROOT "/data/local/tmp"
 
 // Primitivas de DL injetáveis (device: reais; harness: stubs).
 typedef void *(*bc_dlopen_fn)(const char *path, int flags);

@@ -193,7 +193,7 @@ def main():
     check("o cliente esta versionado em tools/termux_client.py", True)
 
     root = tempfile.mkdtemp(prefix="bepin-termux-home-")
-    dest_rel = "battlecats-mods/zygisk-bc-poc/termux_client.py"
+    dest_rel = "termux-console/termux_client.py"
     r = subprocess.run(["bash", INSTALLER, root], capture_output=True, text=True)
     check("o instalador roda", r.returncode == 0)
     dest = os.path.join(root, dest_rel)
@@ -245,15 +245,16 @@ def main():
           "NameError" not in (err_s or "") and "Traceback" not in (err_s or "")
           and "ModuleNotFoundError" not in (out_s or ""))
 
-    # e o console aponta para ESSE caminho
-    expect_rel = None
-    for line in open(CONSOLE, encoding="utf-8").read().splitlines():
-        if line.strip().startswith("CLIENT="):
-            v = line.split("=", 1)[1].strip()
-            expect_rel = v[2:] if v.startswith("~/") else v.lstrip("/")
-            break
-    check("o console aponta para o MESMO caminho que o staging instala (%s)" % expect_rel,
-          expect_rel == dest_rel)
+    # e o console deriva o cliente do PRÓPRIO diretório (MODULE_DIR), no mesmo
+    # layout que o stage do módulo instala — o nome relativo bate e ninguém
+    # aponta mais para home pessoal de outra máquina
+    console_text = open(CONSOLE, encoding="utf-8").read()
+    derived = 'MODULE_DIR=${0%/*}' in console_text
+    client_beside = 'CLIENT="$MODULE_DIR/termux_client.py"' in console_text
+    check("o console acha o cliente BESIDE SI (MODULE_DIR), não em home pessoal",
+          derived and client_beside)
+    check("...e o layout é o MESMO do stage do módulo (%s)" % dest_rel,
+          dest_rel.endswith("/termux_client.py"))
 
     # --- 0b. symlink plantado no caminho: RECUSA e nada escrito fora -------
     # Achado do hermes em 7d084a5: o instalador seguia symlink sob DEST_ROOT e
@@ -267,7 +268,7 @@ def main():
     # planta no MEIO do caminho, que e o caso perigoso: com um diretorio real
     # no lugar, o caminho inteiro PARECE legitimo e o cp grava em /sdcard. Nao
     # basta checar o destino final.
-    planta = os.path.join(root_sym, "battlecats-mods")
+    planta = os.path.join(root_sym, "termux-console")
     os.symlink(fora, planta)
     antes = set()
     for dp, _dn, fn in os.walk(fora):
@@ -299,10 +300,8 @@ def main():
     destino2 = os.path.join(fora2, "arquivo_vitima.py")
     with open(destino2, "wb") as f:          # EXISTE, fora da arvore de destino
         f.write(SENTINELA)
-    os.makedirs(os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc"))
-    os.symlink(destino2,
-               os.path.join(root_fin, "battlecats-mods", "zygisk-bc-poc",
-                            "termux_client.py"))
+    os.makedirs(os.path.join(root_fin, "termux-console"))
+    os.symlink(destino2, os.path.join(root_fin, "termux-console", "termux_client.py"))
     r3 = subprocess.run(["bash", INSTALLER, root_fin], capture_output=True, text=True)
     check("symlink no DESTINO final: o instalador RECUSA (rc 1, viu %d)" % r3.returncode,
           r3.returncode == 1)

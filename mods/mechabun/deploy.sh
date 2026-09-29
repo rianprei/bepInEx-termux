@@ -137,9 +137,16 @@ ICON2="$ASSETS_DIR/udi426_s.png"
 if [ -f "$ICON1" ] && [ -f "$ICON2" ]; then
     read -r -p "Tambem enviar os 2 icons (D16.1) pro path do redirect? (digite 'sim') " CONFIRM_ICONS
     if [ "$CONFIRM_ICONS" = "sim" ]; then
-        adb shell "mkdir -p /data/local/tmp/bc_mods/mechabun_assets"
-        adb push "$ICON1" "/data/local/tmp/bc_mods/mechabun_assets/uni426_s00.png"
-        adb push "$ICON2" "/data/local/tmp/bc_mods/mechabun_assets/udi426_s.png"
+        # O adb nao le/escreve /data/adb (root:root 0700). Entao o push vai
+        # para /data/local/tmp (TRANSITO) e um su -c mv coloca na arvore nova,
+        # que e onde o MECHABUN_ASSET_DIR aponta agora.
+        adb shell "mkdir -p /data/local/tmp/mechabun-assets-stage"
+        adb push "$ICON1" "/data/local/tmp/mechabun-assets-stage/uni426_s00.png"
+        adb push "$ICON2" "/data/local/tmp/mechabun-assets-stage/udi426_s.png"
+        adb shell "su -c 'mkdir -p /data/adb/bepinex/bc_mods/mechabun_assets && \
+            mv /data/local/tmp/mechabun-assets-stage/*.png /data/adb/bepinex/bc_mods/mechabun_assets/ && \
+            rmdir /data/local/tmp/mechabun-assets-stage && \
+            chcon -R u:object_r:bepinex_mod_file:s0 /data/adb/bepinex/bc_mods/mechabun_assets'"
         echo "Icons enviados."
     else
         echo "Icons nao enviados (opcional, mod funciona igual sem eles)."
@@ -164,7 +171,10 @@ if [ -n "$PACK_SRC_ORIGINAL" ] && [ -f "$PACK_SRC_ORIGINAL" ]; then
         mkdir -p "$(dirname "$PACK_BUILD")"
         python3 "$(dirname "$0")/tools/d12_transform.py" "$PACK_BUILD"
         adb push "$PACK_BUILD" "/data/local/tmp/pack_d12_tmp"
-        adb shell "su -c 'mv /data/local/tmp/pack_d12_tmp /data/local/tmp/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack && chmod 666 /data/local/tmp/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack'"
+        # mesmo caminho: TRANSITO em /data/local/tmp, destino na arvore nova
+        adb shell "su -c 'mkdir -p /data/adb/bepinex/bc_mods/mechabun_assets && \
+            mv /data/local/tmp/pack_d12_tmp /data/adb/bepinex/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack && \
+            chcon u:object_r:bepinex_mod_file:s0 /data/adb/bepinex/bc_mods/mechabun_assets/ImageDataServer_100600_00_en.pack'"
         echo "Pack D12 enviado."
     else
         echo "Pack D12 nao enviado (fallback do hook usa pack original, sem redirect)."
