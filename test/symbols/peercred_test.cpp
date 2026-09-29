@@ -94,8 +94,11 @@ int main() {
               strcmp(pkg, "com.brave.browser") == 0);
         // 1000 e o system: dois pacotes com o MESMO uid. O primeiro vence, e
         // isso e o comportamento documentado: uid de system nao e uid de app.
-        check("uid 1000 (system) mapeia para algum pacote (primeiro do grupo)",
-              resolve_one(1000, pkg, sizeof(pkg)) && pkg[0] != '\0');
+        // (T3-adjacente, classe "twin": a versão anterior dizia "primeiro do
+        // grupo" sem provar QUAL — a asserção agora confere o nome.)
+        check("uid 1000 (system) mapeia para o PRIMEIRO do grupo (gms)",
+              resolve_one(1000, pkg, sizeof(pkg)) &&
+              strcmp(pkg, "com.google.android.gms") == 0);
         check("uid inexistente NAO mapeia (fail-closed)", !resolve_one(999999, pkg, sizeof(pkg)));
         check("uid negativo NAO mapeia", !resolve_one(-1, pkg, sizeof(pkg)));
     }
@@ -157,16 +160,31 @@ int main() {
         // "system=<n>" foi REMOVIDO por falta de fonte AOSP: um formato nao
         // confirmado tem que dar RECUSA, nao um mapeamento meio certo.
         const char *sysf = "package:com.termux system=10231\n";
-        // T3 (identidade, userId!=0): uid do perfil 10 (1010123) com pacote BC
-        // válido no packages.list: a RECUSA tem que ser EXPLÍCITA (não serve)
+        // T3 (identidade, userId!=0): o VERBO recusa o perfil ≠0 mesmo com o
+        // pacote BC mapeado no packages.list. A recusa é a FUNÇÃO REAL que o
+        // companion chama (bc_peercred_bc_denied_user_id — ponto único),
+        // exercitada com o uid INTEIRO que o SO_PEERCRED entrega. A versão
+        // anterior deste caso só reafirmava o mapeamento (n10>=1) e dizia
+        // "o VERBO recusa" — promessa sem asserção: a sabotagem B (remover
+        // a recusa do companion) passava por aqui verde (achado do kimi).
         {
             const char *list10 = "jp.co.ponos.battlecatsen 10123 /data/user/10/jp.co.ponos.battlecatsen\n";
             char pkgs[BC_PEERCRED_PKG_MAX][BC_PEERCRED_PKG_CAP];
             int n10 = bc_peercred_packages(list10, strlen(list10), 1010123, pkgs, BC_PEERCRED_PKG_MAX);
             check("T3: uid 1010123 (perfil 10) MAPEIA o pacote BC no packages.list",
                   n10 >= 1 && strcmp(pkgs[0], "jp.co.ponos.battlecatsen") == 0);
-            check("T3: ...e o VERBO recusa mesmo mapeando (userId != 0 fail-closed)",
-                  n10 >= 1);  // o verbo usa bc_peer_is_bc_game com SO_PEERCRED
+            check("T3: o VERBO RECUSA uid 1010123 (userId 10) — fail-closed",
+                  bc_peercred_bc_denied_user_id(1010123));
+            check("T3: o VERBO RECUSA uid 110000 (userId 1, work profile)",
+                  bc_peercred_bc_denied_user_id(110000));
+            check("T3: o VERBO RECUSA uid 99999999 (userId 999, teto de perfil)",
+                  bc_peercred_bc_denied_user_id(99999999));
+            check("T3: o VERBO ACEITA uid 10123 (userId 0 — o dono)",
+                  !bc_peercred_bc_denied_user_id(10123));
+            check("T3: o VERBO ACEITA uid 10077 (o jogo BC, perfil 0)",
+                  !bc_peercred_bc_denied_user_id(10077));
+            check("T3: o VERBO RECUSA uid inválido (-1) — fail-closed",
+                  bc_peercred_bc_denied_user_id(-1));
         }
         check("formato system=<n> (sem fonte AOSP) NAO mapeia — fail-closed",
               bc_peercred_packages(sysf, strlen(sysf), 10231, pk, 4) == 0);
@@ -219,6 +237,12 @@ int main() {
             check("falha de identificacao RECUSA (fail-closed)",
                   limpo.find("bc_fd_deny(client_fd, \"peer nao identificavel\")") !=
                           std::string::npos);
+            // T3, a outra ponta: o VERBO chama o gate de userId (a decisão é
+            // a função pura; se o companion deixar de CHAMÁ-LA — sabotagem B
+            // revertendo para inline, ou apagando o if — este check falha,
+            // porque a recusa deixa de existir no caminho real do pedido).
+            check("T3: o companion CHAMA o gate de userId do verbo BC",
+                  limpo.find("bc_peercred_bc_denied_user_id") != std::string::npos);
         }
     }
 

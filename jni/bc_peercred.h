@@ -50,6 +50,24 @@ static inline int bc_peercred_app_id(int uid) {
 }
 
 // ============================================================================
+// O GATE DE userId DO VERBO BC — ponto ÚNICO, puro, host-testável (T3)
+// ============================================================================
+// O verbo BC (bc_peer_is_bc_game no companion) recusa userId≠0 fail-closed
+// (multiuser-audit a153b33, F2): a árvore de mods é por pacote, sem dimensão
+// de usuário — servir do perfil 0 para o app do perfil 10 seria o oposto de
+// isolamento. A DECISÃO mora AQUI porque o companion não compila no host:
+// o verbo CHAMA isto, o teste EXERCITA isto. Sabotar a função é pego pelo
+// teste dinâmico (T3 chama a função REAL); sabotar a chamada no companion,
+// pelo check estático da seção 4 do peercred_test. Antes da extração, o
+// `uid / 100000 != 0` vivia inline no companion e NENHUM teste conseguia
+// exercitá-lo — o T3 dizia "o VERBO recusa" e só reafirmava o mapeamento
+// (achado do kimi no followups-3).
+static inline bool bc_peercred_bc_denied_user_id(int uid) {
+    if (uid < 0) return true;  // uid inválido: fail-closed, sempre recusa
+    return uid / 100000 != 0;
+}
+
+// ============================================================================
 // appId -> PACOTES (plural), a partir de /data/system/packages.list
 // ============================================================================
 // PLURAL E O PONTO: varios pacotes podem compartilhar o MESMO appId (sharedUserId

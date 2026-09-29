@@ -1188,12 +1188,14 @@ static bool bc_peer_is_bc_game(int client_fd) {
     // é por pacote, sem dimensão de usuário (multiuser-audit F2); enquanto
     // não houver árvore por (userId, pacote), servir do perfil 0 é o oposto
     // de isolamento. O canal REQ já recusa na ABERTURA (bc_req_session.h);
-    // aqui é a defesa dupla: o VERBO também recusa.
+    // aqui é a defesa dupla: o VERBO também recusa. A DECISÃO é a função
+    // pura bc_peercred_bc_denied_user_id — ponto único, testada no host
+    // (T3 do peercred_test).
     struct ucred uid_check;
     socklen_t uid_len = sizeof(uid_check);
     memset(&uid_check, 0, sizeof(uid_check));
     if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &uid_check, &uid_len) != 0 ||
-        uid_check.uid / 100000 != 0) {
+        bc_peercred_bc_denied_user_id((int)uid_check.uid)) {
         LOGE("verbos BC recusados: userId != 0 (uid %d) — perfis de usuário "
              "ainda sem suporte (fail-closed)", (int)uid_check.uid);
         return false;
