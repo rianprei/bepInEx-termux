@@ -204,6 +204,70 @@ class Axml:
         a_size, a_res, a_type = struct.unpack_from("<HBB", self.data, off - 4)
         return a_type, struct.unpack_from("<I", self.data, off)[0]
 
+    def set_attr_enum(self, element, attr_name, value, expected=None):
+        """Troca um atributo enum (android:installLocation e afins).
+
+        No manifest do TABS o installLocation NÃO é string: é um enum
+        (tipo 0x10, data=2 = preferExternal). Trocar por string exigiria mexer
+        na pool de strings por um valor que não existe lá; trocar o DWORD é o
+        patch de 4 bytes certo. MEDIDO: sem esta opção o installd falha com
+        "Failed to override installation location" num aparelho com /data
+        apertado (2026-09-28, POCO C75), e com ela o APK de 1,4 GB instala.
+        """
+        d = self.data
+        off = 8
+        end = len(d)
+        while off < end - 8:
+            ctype, csize = struct.unpack_from("<II", d, off)
+            if ctype == CHUNK_START_ELEMENT:
+                name_idx = struct.unpack_from("<I", d, off + 20)[0]
+                attr_start, attr_size, attr_count = struct.unpack_from("<HHH", d, off + 24)
+                if self._string(name_idx) == element:
+                    a = off + 16 + attr_start
+                    for _ in range(attr_count):
+                        a_name = struct.unpack_from("<I", d, a + 4)[0]
+                        a_size, a_res, a_type = struct.unpack_from("<HBB", d, a + 12)
+                        if self._string(a_name) == attr_name:
+                            if a_type != 0x10:
+                                raise AxmlError("%s/%s não é enum (tipo 0x%02x)"
+                                                % (element, attr_name, a_type))
+                            old = struct.unpack_from("<I", d, a + 16)[0]
+                            if expected is not None and old != expected:
+                                raise AxmlError("%s/%s é %d, esperava %d: o APK de "
+                                                "entrada não é o esperado"
+                                                % (element, attr_name, old, expected))
+                            struct.pack_into("<I", d, a + 16, value)
+                            back = struct.unpack_from("<I", d, a + 16)[0]
+                            if back != value:
+                                raise AxmlError("escrita de %s/%s não confirmada"
+                                                % (element, attr_name))
+                            return old
+                        a += attr_size
+            if csize <= 0:
+                break
+            off += csize
+        raise AxmlError("atributo %s de <%s> não encontrado" % (attr_name, element))
+
+    def read_attr_enum(self, element, attr_name):
+        d = self.data
+        off = 8
+        while off < len(d) - 8:
+            ctype, csize = struct.unpack_from("<II", d, off)
+            if ctype == CHUNK_START_ELEMENT:
+                name_idx = struct.unpack_from("<I", d, off + 20)[0]
+                attr_start, attr_size, attr_count = struct.unpack_from("<HHH", d, off + 24)
+                if self._string(name_idx) == element:
+                    a = off + 16 + attr_start
+                    for _ in range(attr_count):
+                        a_name = struct.unpack_from("<I", d, a + 4)[0]
+                        if self._string(a_name) == attr_name:
+                            return struct.unpack_from("<I", d, a + 16)[0]
+                        a += attr_size
+            if csize <= 0:
+                break
+            off += csize
+        raise AxmlError("atributo %s de <%s> não encontrado" % (attr_name, element))
+
     def set_meta_data_boolean(self, meta_name, value):
         """true→false (0xFFFFFFFF→0) ou o inverso. Devolve o valor antigo."""
         off = self.meta_data_value_offset(meta_name)
@@ -559,6 +623,13 @@ def main():
                     help="só confere o lock e mostra o que seria mudado")
     ap.add_argument("--list-stages", action="store_true")
     ap.add_argument("--report", help="grava o relatório de mudanças em JSON")
+    ap.add_argument("--install-location", choices=("keep", "internal"),
+                    default="keep",
+                    help="mantém o installLocation do APK (keep) ou força "
+                         "internal. NÃO é mod: é opção de instalação local. O "
+                         "original pede preferExternal e, num aparelho com "
+                         "/data apertado, o installd falha com 'Failed to "
+                         "override installation location'.")
     ap.add_argument("--ignore-lock", action="store_true",
                     help="confere mesmo assim (só para APK de teste)")
     args = ap.parse_args()
@@ -644,6 +715,13 @@ def main():
                 "sha256_after": hashlib.sha256(data).hexdigest(),
                 "bytes": len(data), "why": why,
             })
+    if args.install_location == "internal":
+        cur = replacements.get(MANIFEST)
+        ax = Axml(cur if cur is not None else zf.read(MANIFEST))
+        old = ax.set_attr_enum("manifest", "installLocation", 1, expected=2)
+        replacements[MANIFEST] = bytes(ax.data)
+        report["install_location"] = {"from": old, "to": 1}
+        print("opção de instalação: android:installLocation %d -> 1 (internal)" % old)
     zf.close()
 
     stats = rewrite_zip(args.apk, args.out, replacements)

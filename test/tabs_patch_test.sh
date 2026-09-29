@@ -191,6 +191,70 @@ print("ok metades: config toca 1, plugins toca 1, track-plugin só o "
       "atribuição (TapDB fica true), união toca os 2")
 PY2
 
+# ---------------------------------------- installLocation (opção, não mod) ---
+python3 - "$PATCHER" "$FIX" <<'PY3'
+import importlib.util, json, os, subprocess, sys, zipfile
+
+spec = importlib.util.spec_from_file_location("tabs_patch", sys.argv[1])
+tp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tp)
+FIX = sys.argv[2]
+PATCHER = sys.argv[1]
+
+def die(m):
+    print("tabs_patch_test: %s" % m, file=sys.stderr)
+    sys.exit(1)
+
+raw = open(os.path.join(FIX, "AndroidManifest.xml"), "rb").read()
+ax = tp.Axml(raw)
+if ax.read_attr_enum("manifest", "installLocation") != 2:
+    die("o fixture não tem installLocation=2 (preferExternal): o APK mudou")
+# 1 byte só: o DWORD 0x00000002 -> 0x00000001
+n_before = sum(1 for x, y in zip(raw, bytes(ax.set_attr_enum and tp.Axml(raw).data)) if x != y)
+ax2 = tp.Axml(raw)
+ax2.set_attr_enum("manifest", "installLocation", 1, expected=2)
+changed = sum(1 for x, y in zip(raw, bytes(ax2.data)) if x != y)
+if changed != 1:
+    die("trocar installLocation mexeu em %d bytes, esperava 1" % changed)
+if len(raw) != len(ax2.data):
+    die("trocar installLocation mudou o tamanho do manifest")
+# E o original tem que continuar recusado: se o APK de entrada já vier com
+# internal, o lock/expected=2 tem que reclamar em vez de "consertar" calado.
+try:
+    tp.Axml(bytes(ax2.data)).set_attr_enum("manifest", "installLocation", 1, expected=2)
+except tp.AxmlError:
+    print("ok installLocation: 2->internal é 1 byte, e expected=2 recusa o já-trocado")
+else:
+    die("expected=2 aceitou um manifest já interno: a opção passaria calada em "
+        "APK de outra geração")
+
+# A opção pela CLI tem que existir E não pode virar etapa: relatório sem
+# mudança de telemetria, e o valor interno no manifest final.
+import tempfile
+work = tempfile.mkdtemp()
+src = os.path.join(work, "in.apk")
+with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("AndroidManifest.xml", raw)
+    z.writestr("assets/XDConfig.json", open(os.path.join(FIX, "XDConfig.json"), "rb").read())
+rep = os.path.join(work, "r.json")
+out = os.path.join(work, "o.apk")
+p = subprocess.run([sys.executable, PATCHER, "--apk", src, "--out", out,
+                    "--stages", "telemetry-track-plugin", "--install-location",
+                    "internal", "--ignore-lock", "--report", rep],
+                   capture_output=True, text=True)
+if p.returncode != 0:
+    die("CLI com --install-location falhou: %s" % p.stderr.strip()[:200])
+d = json.load(open(rep))
+if d.get("install_location", {}).get("to") != 1:
+    die("relatório não registrou a opção de instalação: %s" % d)
+if len(d["changes"]) != 1 or d["changes"][0]["entry"] != "AndroidManifest.xml":
+    die("a opção de installs contaminou a lista de mudanças: %s" % d["changes"])
+zout = zipfile.ZipFile(out)
+if tp.Axml(zout.read("AndroidManifest.xml")).read_attr_enum("manifest", "installLocation") != 1:
+    die("o APK final não ficou com installLocation interno")
+print("ok installLocation: opção separada das etapas e presente no APK final")
+PY3
+
 # --------------------------------------------------------------- 4, 5, 6 ---
 python3 - "$PATCHER" "$FIX" "$WORK" <<'PY'
 import hashlib, importlib.util, json, os, subprocess, sys, zipfile
