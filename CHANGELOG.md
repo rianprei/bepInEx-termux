@@ -6,6 +6,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
+- `44151e5` — uni/tabs-notelemetry-2 — o estado do iptables é por binário e a regra é contada por família; o delivered-sha256 do APK entregue passa a ser conferido em formato e em valor; o rótulo que prometia mais que a asserção virou `texto:familias`
 - `1d84933` — uni/companion-followups-5 — o mods-reloc inteiro (árvore por (userId,pkg), entrega de .so por descritor, log no diretório de estado do app), S2/S3/O2 com teste de caminho real e exceção tipada no old_mods_path_check
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
@@ -66,6 +67,7 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `2ff69a1` — merge da base 72e0dd1 (gate-wiring: manifesto tools/gate_tests.list) na branch config-leak
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
+- `ee9e47e` — uni/tabs-notelemetry-2 — patcher do APK do TABS: telemetria cortada por config/manifest (XDConfig.json tapsdk.db_config + meta-data dos loaders), não por Frida; lock com sha256 do original E do entregue (formato e valor travados no gate); filtro offline v4+v6 com drop_uid_rules sem o off-by-one do -P do -S e verificação que pode aprovar; teste com fake fiel (estado POR FAMÍLIA, invariante 1 regra por (uid,família)) e checks de texto rotulados separados dos de execução. MEDIDO: offline e jogar são mutuamente exclusivos (o app não boota sem a rede da empresa); o login do TapTap falha igual com e sem patch (controle medido — ver _relatorios/tabs-mobile-recon.md §14)
 ### Pendente (não mergeado, sem hash de merge)
 - `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
 - `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe

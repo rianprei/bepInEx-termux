@@ -1,0 +1,30 @@
+{
+    "client_id": "u0m5lrcpyznrbe7pc7",
+    "region_type": "Global",
+    "app_id": "2053001",
+    "bundle_id": "com.xd.tabs.google",
+    "idfa_enabled": false,
+    "tapsdk": {
+        "client_id": "u0m5lrcpyznrbe7pc7",
+        "client_token": "vV0bRWhZ2kLfeecCvfpU6K7Ix4GvpDMvBMPpAdm9",
+        "server_url": "https://u0m5lrcp.cloud.ap-sg.tapapis.com",
+        "db_config": {
+            "enable": true,
+            "channel": "Google"
+        },
+        "permissions": [
+            "public_profile",
+            "user_friends"
+        ]
+    },
+    "logout_url": "https://logout-xdsdk.xd.cn/",
+    "report_url": "https://www.taptap.com/xxxx",
+    "logos": [
+        "https://res.xdcdn.net/TDS/Global/res/xd_logo.png",
+        "https://res.xdcdn.net/TDS/Global/res/xd_logo.png",
+        "https://res.xdcdn.net/TDS/Global/res/xd_logo.png"
+    ],
+    "google": {
+        "CLIENT_ID_FOR_ANDROID": "100682746013-3se4iglo33mf3j1ac2akndnrgaf1822j.apps.googleusercontent.com"
+    }
+}

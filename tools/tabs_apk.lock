@@ -1,0 +1,39 @@
+# tools/tabs_apk.lock — entrada do patcher do APK do TABS (tabs-notelemetry).
+#
+# O patcher é reprodutível: parte do APK original, confere o sha256 deste
+# arquivo e escreve as saídas. O APK NÃO vai para o git (1,4 GB e é do
+# Google's Play); o que fica versionado é o lock, o patcher e o relatório de
+# mudanças. Backup do original: ~/Documentos/mods/_backups/tabs-apk-original-1.1.05/
+#
+# package=com.xd.tabs.google
+# versionName=1.1.05
+# versionCode=81
+# platformBuildVersionCode=35
+# sourceDate=2026-09-28
+# measuredBy=adb 192.168.0.120:5555, /data/app/~~RVT-T_VNwSVVXsmY0hKHKQ==/com.xd.tabs.google-k9yKL9TSlsP746KBcfy9ZA==/base.apk
+# note=ÚNICO APK: `pm path` devolve só base.apk, sem splits.
+apk-sha256=fe23f5e96a82c122038bbf22d46fa778e583a5c1e1d73026b71bd2c6d2e3d3d4
+apk-bytes=1448349401
+apk-entries=863
+
+# Entradas que a etapa `telemetry` toca, com o sha256 do ORIGINAL. O patcher
+# confere o arquivo de entrada inteiro; estes hashes são a segunda trava, e
+# servem para o relatório dizer "o que mudou" sem diff de 1,4 GB.
+# assets/XDConfig.json — 1006 bytes, deflate. As chaves que importam:
+#   tapsdk.server_url = https://u0m5lrcp.cloud.ap-sg.tapapis.com (telemetria)
+#   tapsdk.db_config.enable = true  (TapDB: o interruptor)
+entry-assets/XDConfig.json=9ed1fc0f9a74db5bb0a96c8098111059c04b895201e670ad84d490009cf82a9c
+# AndroidManifest.xml — 28576 bytes, AXML binário. Meta-data dos carregadores
+# de plugin do TapSDK/XDSDK (aapt2 dump xmltree): os de telemetria são
+# com.tapsdk.tapdb.loader (TapDB/analytics) e com.xd.third.track.loader
+# (atribuição/Adjust) — os dois true no original. Ao lado, e intocados:
+# antiaddiction, third.login, intl.payment, moment, intl.account,
+# achievement, billboard (anúncio), share.
+entry-AndroidManifest.xml=5e25308e0503d377d18026d228561aae235d01e6c64b02534cd751fee01b4031
+
+# APK entregue (assinado com keystore própria, instalado via adb install -r):
+# v5-offline-signed.apk com stages: did-local, telemetry-config, telemetry-plugins, noads
+delivered-sha256=f269964964435e44619dd49a6ad42812360b51cb8e4d11c5160bd2dd77120380
+delivered-bytes=1448349401
+delivered-entries=863
+

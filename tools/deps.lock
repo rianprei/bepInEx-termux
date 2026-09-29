@@ -18,3 +18,4 @@ frida-gadget-so|17.18.0|c87c53efc10a9b6f2f4259b7b962d403cac729d6ee6f6a83f679489f
 # a scrollback nobody reads. If upstream fixes it, the pin moves and the count
 # drops to zero on its own.
 dobby-arm32|e9fe7fbecae47a2287e761080f8b1133cc22e8fa|b5dddb530ae3b1abe8b61dd3a690eaf0ffe74900b0313c3d1bee0597691cf2d3|https://github.com/jmpews/Dobby/archive/e9fe7fbecae47a2287e761080f8b1133cc22e8fa.tar.gz
+apktool-jar-sha256|2.9.3|7956eb04194300ce0d0a84ad18771eebc94b89fb8d1ddcce8ea4c056818646f4|https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar|licenca Apache-2.0
