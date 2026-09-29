@@ -86,7 +86,7 @@ printf 'y\n' > "$D/y.txt"; git -C "$D" add -A; git -C "$D" commit -qm "branch-ru
 git -C "$D" checkout -q master
 git -C "$D" merge --no-ff branch-ruim -q -m "tmp"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
-if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "assunto de merge fora do padrao"; then
+if [ $rc -ne 0 ] && grep -q "assunto de merge fora do padrao" <<<"$out"; then
     ok "assunto 'tmp' é recusado, com a mensagem do padrão"
 else
     bad "assunto 'tmp' NÃO foi recusado (exit=$rc)"; printf '%s\n' "$out" | head -3 | sed 's/^/         /'
@@ -111,7 +111,7 @@ EOM
 )
 git -C "$D" update-ref refs/heads/master "$FAKE"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
-if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "arvore identica a de uma ponta de branch"; then
+if [ $rc -ne 0 ] && grep -q "arvore identica a de uma ponta de branch" <<<"$out"; then
     ok "commit de 1 pai com árvore de branch é recusado (o caso 72e0dd1)"
 else
     bad "commit de 1 pai com árvore de branch NÃO foi recusado (exit=$rc)"; printf '%s\n' "$out" | head -3 | sed 's/^/         /'
@@ -132,7 +132,7 @@ git -C "$D" checkout -q master
 # a branch some da base, mas a linha do CHANGELOG continua citando o hash dela
 printf '\n- `%s` — uni/branch-perdida — linha que sobrou de um rebase\n' "$PERDIDA" >> "$D/CHANGELOG.md"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
-if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "NAO e ancestral de HEAD"; then
+if [ $rc -ne 0 ] && grep -q "NAO e ancestral de HEAD" <<<"$out"; then
     ok "linha da v0.5.0 citando commit fora da base é recusada"
 else
     bad "citação fora da base NÃO foi recusada (exit=$rc)"; printf '%s\n' "$out" | head -3 | sed 's/^/         /'
@@ -187,7 +187,7 @@ git -C "$D" update-ref refs/heads/master "$FAKE"
 sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$FLOOR\"|" "$D/tools/merge_subject_check.sh"
 sed -i "s|^UNPAIRED_ALLOWED=.*|UNPAIRED_ALLOWED=\"$FAKE\"|" "$D/tools/merge_subject_check.sh"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
-if [ $rc -eq 0 ] && printf '%s' "$out" | grep -q "excecao declarada"; then
+if [ $rc -eq 0 ] && grep -q "excecao declarada" <<<"$out"; then
     ok "exceção declarada: o commit de 1 pai passa e sai listado"
 else
     bad "exceção declarada não funcionou (exit=$rc)"; printf '%s\n' "$out" | head -3 | sed 's/^/         /'
@@ -235,7 +235,7 @@ m3="$D/.msg3"; printf 'merge: uni/branch-fantasma — merge com autor de fila\n\
 # entra no historico com o nome do config local
 git -C "$D" -c user.name=f -c user.email=f@t merge --no-ff branch-fantasma -q -F "$m3"
 out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
-if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "config local sujo"; then
+if [ $rc -ne 0 ] && grep -q "config local sujo" <<<"$out"; then
     ok "autor 'f <f@t>' é recusado, e a mensagem aponta config local sujo"
 else
     bad "autor errado NÃO foi recusado (exit=$rc)"; printf '%s\n' "$out" | head -2 | sed 's/^/         /'

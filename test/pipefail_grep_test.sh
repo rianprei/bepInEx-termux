@@ -120,5 +120,56 @@ fi
 "$ROOT/tools/pipefail_grep_check.sh" >/dev/null 2>&1
 check $? "o lint passa na arvore limpa (nao se acusa)"
 
+
+# ------------------------------------------------------- 3. DETECCAO DE pipefail
+# ACHADO DO KIMI: a primeira versao do detector so casava `set -euo pipefail` e
+# `set -o pipefail`, e lia QUALQUER OUTRA FORMA como "sem pipefail" — 32 scripts
+# com `set -euo pipefail` e 17 com `set -uo pipefail` nunca eram varridos, e a
+# linha de sucesso era FALSA: ela anunciava uma limpeza que nao tinha verificado
+# nada. O detalhe que faz `-euo` casar e que essa e UMA flag so, e o `o` e a
+# ULTIMA letra dela.
+echo "--- (6) deteccao de pipefail: as formas de 'set' ---"
+for forma in "set -euo pipefail" "set -uo pipefail" "set -o pipefail" "set -x -o pipefail" "shopt -so pipefail" "set -euo pipefail -x"; do
+    D=$(mktemp -d); mkdir -p "$D/tools" "$D/test"
+    cp "$ROOT/tools/pipefail_grep_check.sh" "$D/tools/"
+    printf '#!/usr/bin/env bash\n%s\nif printf %%s "" "$X" | grep -q Z; then :; fi\n' "$forma" > "$D/test/alvo.sh"
+    out=$(cd "$D" && bash tools/pipefail_grep_check.sh 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then check 0 "'$forma' e reconhecido como pipefail"
+    else check 1 "'$forma' NAO foi reconhecido — o site escapou do lint"; fi
+    rm -rf "$D"
+done
+
+echo "--- (7) sem pipefail: o site e IGNORADO de proposito ---"
+D=$(mktemp -d); mkdir -p "$D/tools" "$D/test"
+cp "$ROOT/tools/pipefail_grep_check.sh" "$D/tools/"
+printf '#!/usr/bin/env bash\nset -eu\necho x\nif printf %%s "" "$X" | grep -q Z; then :; fi\n' > "$D/test/alvo.sh"
+out=$(cd "$D" && bash tools/pipefail_grep_check.sh 2>&1); rc=$?
+if [ $rc -eq 0 ]; then check 0 "sem pipefail: o site nao e erro (o 141 nao existe ali)"
+else check 1 "sem pipefail foi acusado"; fi
+rm -rf "$D"
+
+echo "--- (8) UM sitio conta UM, e nao seis ---"
+D=$(mktemp -d); mkdir -p "$D/tools" "$D/test"
+cp "$ROOT/tools/pipefail_grep_check.sh" "$D/tools/"
+printf '#!/usr/bin/env bash\nset -uo pipefail\nif printf %%s "" "$X" | grep -q Z; then :; fi\n' > "$D/test/alvo.sh"
+out=$(cd "$D" && bash tools/pipefail_grep_check.sh 2>&1)
+n_linhas=$(printf '%s\n' "$out" | grep -cE '^[^ ]+:[0-9]+: ')
+n_dito=$(printf '%s\n' "$out" | grep -oE '[0-9]+ sitio\(s\)' | grep -oE '^[0-9]+')
+if [ "$n_linhas" = "1" ] && [ "$n_dito" = "1" ]; then
+    check 0 "1 sitio -> 1 linha de erro e '1 sitio(s)' (antes saia 1/6)"
+else
+    check 1 "contagem errada: $n_linhas linha(s), dicendo '$n_dito'"; fi
+rm -rf "$D"
+
+echo "--- (9) a linha de sucesso e VERIFICAVEL de fora ---"
+  out=$(bash "$ROOT/tools/pipefail_grep_check.sh" 2>&1 | tail -1)
+  varridos=$(printf '%s\n' "$out" | sed -nE 's/.*varridos ([0-9]+)\/([0-9]+) scripts com pipefail.*/\1/p')
+  com_pipefail=$(printf '%s\n' "$out" | sed -nE 's/.*varridos ([0-9]+)\/([0-9]+) scripts com pipefail.*/\2/p')
+  if [ -n "$varridos" ] && [ -n "$com_pipefail" ] && [ "$varridos" = "$com_pipefail" ] && [ "$varridos" -gt 0 ]; then
+      check 0 "o sucesso informa a varredura e ela confere: $varridos/$com_pipefail scripts com pipefail"
+  else
+      check 1 "o sucesso nao informa uma varredura confiavel: $out"
+  fi
+
 echo "=== pipefail_grep_test: $fails falha(s) ==="
 [ "$fails" -eq 0 ]
