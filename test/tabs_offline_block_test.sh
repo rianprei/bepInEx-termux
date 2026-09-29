@@ -93,6 +93,7 @@ else
 fi
 
 # ── 7. O REVERT EXISTE E É DOCUMENTADO ─────────────────────────────────────
+# shellcheck disable=SC2016  # as crases aqui sao literais do cabecalho do script, nao-expansao de proposito
 if grep -qE 'offline\|sni\|off\)' "$SCRIPT" && grep -q 'REVERT: `sh tabs_offline_block.sh off`' "$SCRIPT"; then
   ok "revert" "modo off no case e documentado no cabecalho"
 else

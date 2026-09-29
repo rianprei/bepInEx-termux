@@ -98,7 +98,7 @@ DohPorts="53 80 443 853 784 8853"
 die() { echo "tabs_offline_block: $*" >&2; exit 1; }
 
 need_root() {
-  [ "$(id -u)" = 0 ] || die "precisa de root (su -c 'sh $0 $1')"
+  [ "$(id -u)" = 0 ] || die "precisa de root (su -c 'sh $0 <modo> <pacote>')"
   command -v iptables >/dev/null 2>&1 || die "iptables não encontrado"
 }
 
