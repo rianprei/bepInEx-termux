@@ -6,6 +6,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
+- `43d1335` — uni/deploy-requer-3 — os 10 sítios `| grep -q` sob pipefail materializados e `test/deploy_python_check.sh` declarado no manifesto; a pergunta de root por `su -c` e a validação do TERMUX_PY continuam como estavam
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
 cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
