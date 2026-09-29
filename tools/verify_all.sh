@@ -494,6 +494,19 @@ fi
 run_step "git: merge-subject-lint (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
     bash "$ROOT/test/merge_subject_check_test.sh"
 
+# A versao do projeto tem UMA fonte (VERSION na raiz) e o APK deriva dela. O
+# que nao deriva e o BC_LOADER_VERSION em jni/main.cpp, que e copia digitada a
+# mao: o VERSION sobe, o APK sobe, e o loader continua anunciando a versao
+# velha no device. Este check amarra as duas, e tambem o scheme do
+# versionCode (2o componente *100 + 3o, de v0.4.0=400 e v0.4.1=401).
+if [ -f "$ROOT/test/version_consistency_check.sh" ]; then
+    run_step "versao: VERSION, loader e CHANGELOG concordam" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/version_consistency_check.sh"
+else
+    record "versao: VERSION/loader/CHANGELOG concordam (check ausente)" FAIL 0 1
+    echo "test/version_consistency_check.sh ausente: a versao do loader pode divergir" >&2
+fi
+
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
     tools/check_sepolicy_rule.sh module/sepolicy.rule
