@@ -26,7 +26,7 @@ LINE="$(head -n 1 "${VERSION_FILE}" | tr -d '\r')"
 NAME="$(printf '%s' "${LINE}" | awk '{print $1}')"
 CODE="$(printf '%s' "${LINE}" | awk '{print $2}')"
 
-if ! printf '%s' "${NAME}" | grep -Eq '^v?[0-9]+(\.[0-9]+)*$' || ! printf '%s' "${CODE}" | grep -Eq '^[0-9]+$'; then
+if ! grep -Eq '^v?[0-9]+(\.[0-9]+)*$' <<<"${NAME}" || ! grep -Eq '^[0-9]+$' <<<"${CODE}"; then
     echo "ERRO: VERSION invalido: '${LINE}'" >&2
     echo "      Formato esperado: '<nome> <versionCode>', ex: 'v0.4.1 401'." >&2
     exit 1

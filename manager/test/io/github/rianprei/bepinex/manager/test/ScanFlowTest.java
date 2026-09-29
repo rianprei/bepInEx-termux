@@ -35,7 +35,7 @@ public class ScanFlowTest {
     }
 
     private static void check(String what, boolean value) {
-        if (!value) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, value);
     }
 
     private static final class FakeDevice implements ScanFlow.Device {

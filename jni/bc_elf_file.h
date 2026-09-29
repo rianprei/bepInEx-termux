@@ -74,7 +74,7 @@ static inline bc_elf_file_probe bc_elf_file_has_bc_mod_register(const char *path
 #else
     static const uint64_t max_section_bytes = 64 * 1024 * 1024;
     bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         result.error_number = errno;
         return result;
@@ -159,7 +159,7 @@ static inline bc_elf_file_probe bc_elf_file_read_soname32(const char *path,
                                                            size_t soname_size) {
     bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
     if (soname != nullptr && soname_size > 0) soname[0] = '\0';
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         result.error_number = errno;
         return result;
@@ -258,7 +258,7 @@ static inline bc_elf_file_probe bc_elf_file_read_soname(const char *path,
     static const uint64_t max_section_bytes = 64 * 1024 * 1024;
     bc_elf_file_probe result = {BC_ELF_FILE_ERROR, 0};
     if (soname != nullptr && soname_size > 0) soname[0] = '\0';
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         result.error_number = errno;
         return result;

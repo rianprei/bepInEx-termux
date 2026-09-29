@@ -51,7 +51,8 @@ set +e  # symbols.sh fonteado ativa set -e; aqui não queremos saída silenciosa
 OFFSET=""
 while IFS=' ' read -r addr name; do
   # Testa se este endereço resolve para arquivo:linha
-  if "$BINDIR/llvm-addr2line" -f -C -i -e "$SO" "0x$addr" 2>/dev/null | tail -1 | grep -qE '\.[ch]+:[0-9]+'; then
+  _al="$("$BINDIR/llvm-addr2line" -f -C -i -e "$SO" "0x$addr" 2>/dev/null | tail -1)"
+    if grep -qE '\.[ch]+:[0-9]+' <<<"$_al"; then
     OFFSET=$(printf '0x%x' $(( 0x$addr + 0x10 )) )
     echo "  função $name em 0x$addr, offset derivado: $OFFSET"
     break
@@ -90,7 +91,7 @@ check "imprime arquivo:linha (não só offset)" \
 # Um frame de libil2cpp.so NÃO pode virar função do u_patch: build-id vazio
 # caía no diretório raiz dos símbolos e o `find` devolvia o primeiro .so.
 check "não inventa símbolos para o app_process64" \
-    "$(grep '0000000000000000' <<<"$out" | grep -qE 'SEM BUILD-ID|SEM SÍMBOLOS' && echo 0 || echo 1)"
+    "$(grep -qE 'SEM BUILD-ID|SEM SÍMBOLOS' <<<"$(grep '0000000000000000' <<<"$out")" && echo 0 || echo 1)"
 
 # --- modo --offset ----------------------------------------------------------
 echo "symbolize_test: (1b) modo --offset"
@@ -148,7 +149,7 @@ check "e marca CADA linha como nao verificado" \
     "$(grep -q 'NAO VERIFICADO: sem BuildId, casado por nome' <<<"$out5" && echo 0 || echo 1)"
 check "a marca aparece na MESMA linha da funcao (nao numa nota solta)" \
     "$(grep -qE 'up_dedupe_mark|\.[ch]pp:[0-9]+|\S+ +\[NAO VERIFICADO' <<<"$out5" \
-        && grep 'NAO VERIFICADO' <<<"$out5" | grep -qE 'u_patch' && echo 0 || echo 1)"
+        && grep -qE 'u_patch' <<<"$(grep 'NAO VERIFICADO' <<<"$out5")" && echo 0 || echo 1)"
 
 # agora uma SEGUNDA build do mesmo nome: tem que recusar
 cp "$SO" "$WORK/segundo.so"
@@ -204,7 +205,8 @@ echo "symbolize_test: (4) cruzamento com o build real do crash ($BASE_COMMIT)"
         # Deriva o offset do .so histórico: busca função com debug info
         HOFFSET=""
         while IFS=' ' read -r addr name; do
-            if "$BINDIR/llvm-addr2line" -f -C -i -e "$HSO" "0x$addr" 2>/dev/null | tail -1 | grep -qE '\.[ch]+:[0-9]+'; then
+            _al="$("$BINDIR/llvm-addr2line" -f -C -i -e "$HSO" "0x$addr" 2>/dev/null | tail -1)"
+            if grep -qE '\.[ch]+:[0-9]+' <<<"$_al"; then
                 HOFFSET=$(printf '0x%x' $(( 0x$addr + 0x10 )) )
                 break
             fi

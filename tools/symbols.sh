@@ -56,11 +56,47 @@ symbols_addr2line() {
 # "sem build-id" em vez de "readelf falhou".
 symbols_readelf() {
     local p
+    # Costura de teste: o check precisa poder ser exercitado com um readelf que
+    # falha, para provar que "nao consegui ler" e "voltou a stripar" sao
+    # diagnosticos diferentes. Sem a costura, essa distinção só existe no
+    # comentario — que é onde ela morria antes.
+    if [ -n "${SYMBOLS_READELF:-}" ]; then printf '%s' "$SYMBOLS_READELF"; return 0; fi
     p="$(symbols_ndk)/llvm-readelf"
     if [ -x "$p" ]; then printf '%s' "$p"; return 0; fi
     p="$(command -v readelf 2>/dev/null || true)"
     [ -n "$p" ] || return 1
     printf '%s' "$p"
+}
+
+# A tabela de seções, com o estado da leitura. Uma tabela de seções que o
+# readelf não conseguiu produzir NÃO é a mesma coisa que uma tabela sem
+# `.symtab`, e a diferença é o que separa "o build voltou a stripar" de "não
+# consegui olhar". Antes, as duas viravam a mesma frase — e uma delas
+# aparecia quando o arquivo estava sendo reescrito embaixo da leitura, que é
+# quando o gate acusa o build de um defeito que ele não tem.
+#
+# Sai no stdout a tabela; o status vai no arquivo de status (segundo argumento),
+# porque a tabela pode ser legitimamente vazia. `attempts` é o número de
+# tentativas que deram leitura utilizável.
+symbols_sections() {
+    local so="$1" status_file="$2" r out rc attempt stamp
+    r="$(symbols_readelf)" || { printf 'sem readelf\n' >"$status_file"; return 1; }
+    for attempt in 1 2 3; do
+        # O arquivo pode estar sendo reescrito: se tamanho e mtime mudam entre
+        # duas leituras, a leitura pegou um estado intermediário e não vale.
+        stamp="$(stat -c '%s:%Y' "$so" 2>/dev/null || printf 'sem-stat')"
+        out="$("$r" -S "$so" 2>/dev/null)" && rc=0 || rc=$?
+        if [ "$rc" -eq 0 ] && [ -n "$out" ] \
+                && [ "$stamp" = "$(stat -c '%s:%Y' "$so" 2>/dev/null || printf 'sem-stat')" ]; then
+            printf '%s\n%s\n' "$out" "$attempt" >"$status_file"
+            printf '%s' "$out"
+            return 0
+        fi
+        sleep 0.2 2>/dev/null || true
+    done
+    printf 'readelf rc=%s, tentativas=3, arquivo instavel ou ilegivel\n' \
+        "${rc:-desconhecido}" >"$status_file"
+    return 1
 }
 
 # --- build-id ----------------------------------------------------------------
@@ -77,15 +113,27 @@ symbols_build_id() {
 # Falha (exit != 0) se o .so não tiver .symtab: é o sintoma do build-id que
 # mudou de volta, e descobrir isso aqui é melhor do que num crash de usuário.
 symbols_add() {
-    local so="$1" root="$2" name="$3" bid sections
+    local so="$1" root="$2" name="$3" bid sections status_file rc
     [ -f "$so" ] || { echo "symbols: .so ausente: $so" >&2; return 1; }
     bid="$(symbols_build_id "$so")"
     if [ -z "$bid" ] || [ "$bid" = "0" ]; then
         echo "symbols: sem NT_GNU_BUILD_ID em $so" >&2
         return 1
     fi
-    sections="$("$(symbols_readelf)" -S "$so" 2>/dev/null)"
-    if ! printf '%s' "$sections" | grep -q '\.symtab'; then
+
+    status_file="$(mktemp)"
+    if ! sections="$(symbols_sections "$so" "$status_file")"; then
+        echo "symbols: nao consegui ler as secoes de $name — e isso NAO e o build" >&2
+        echo "symbols: ter stripar. Detalhe: $(cat "$status_file")" >&2
+        echo "symbols: leia como falha de leitura (ferramenta, I/O, ou o .so ainda" >&2
+        echo "symbols: sendo reescrito por um build concorrente), e nao como" >&2
+        echo "symbols: defeito do build. Nada foi guardado." >&2
+        rm -f "$status_file"
+        return 1
+    fi
+    rm -f "$status_file"
+    if ! grep -q '\.symtab' <<<"$sections"; then
+
         echo "symbols: $name saiu sem .symtab — o build voltou a stripar e o" >&2
         echo "symbols: build-id não vai servir para nada. See jni/repro.mk." >&2
         return 1

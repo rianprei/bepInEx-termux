@@ -75,9 +75,9 @@ check "apksigner verify le o certificado do APK debug" "$([ -n "$DBG_CERT" ] && 
 # signer. `verify --verbose` é a forma canônica de ver isso.
 verify_verbose="$("$APKSIGNER" verify --verbose "$APK" 2>/dev/null)"
 check "APK verificável com o esquema v2 (minSdk 26)" \
-    "$(printf '%s' "$verify_verbose" | grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' && echo 1 || echo 0)"
+    "$(grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$verify_verbose" && echo 1 || echo 0)"
 check "exatamente 1 signer" \
-    "$(printf '%s' "$verify_verbose" | grep -q 'Number of signers: 1' && echo 1 || echo 0)"
+    "$(grep -q 'Number of signers: 1' <<<"$verify_verbose" && echo 1 || echo 0)"
 
 # 2) caminho de chave arbitrária com a senha no AMBIENTE (não interativo)
 echo "== caminho 2: chave arbitrária + MANAGER_KS_PASS no ambiente =="
@@ -113,11 +113,11 @@ echo "== caminho 3: senha nunca literal na linha de comando =="
 # de assinatura (não o todo: o pass:android da chave debug é intencional).
 sign_block="$(sed -n '/Chave debug/,/^fi$/p' "$ROOT/manager/build.sh")"
 check "o build.sh usa env:MANAGER_KS_PASS (não pass: literal)" \
-    "$(printf '%s' "$sign_block" | grep -q 'env:MANAGER_KS_PASS' && echo 1 || echo 0)"
+    "$(grep -q 'env:MANAGER_KS_PASS' <<<"$sign_block" && echo 1 || echo 0)"
 check "sem --ks-pass pass:<algo> no caminho de chave arbitrária" \
     "$(printf '%s' "$sign_block" | awk '/MANAGER_KEYSTORE"\)/{exit} /pass:/{found=1} END{exit found?1:0}' && echo 0 || echo 1)"
 check "o alias é configurável (MANAGER_KEY_ALIAS, default manager)" \
-    "$(printf '%s' "$sign_block" | grep -q 'MANAGER_KEY_ALIAS:-manager' && echo 1 || echo 0)"
+    "$(grep -q 'MANAGER_KEY_ALIAS:-manager' <<<"$sign_block" && echo 1 || echo 0)"
 
 # 4) build_release.sh acha a chave de release por padrão em $HOME
 echo "== caminho 4: build_release.sh usa ~/.config/bepinex-termux por padrão =="
@@ -151,9 +151,9 @@ check "build_release.sh tem a chave default antes do ramo UNSIGNED" \
     "$(printf '%s' "$rl" | awk '/RELEASE_KEY_DEFAULT.*\.jks/{d=NR} /UNSIGNED-DEBUG/{u=NR} END{exit (d>0 && u>0 && d<u)?0:1}' && echo 1 || echo 0)"
 # E o fingerprint sai do APK assinado, não do .jks.
 check "build_release.sh extrai o fingerprint com apksigner verify --print-certs" \
-    "$(printf '%s' "$rl" | grep -q 'verify --print-certs' && echo 1 || echo 0)"
+    "$(grep -q 'verify --print-certs' <<<"$rl" && echo 1 || echo 0)"
 check "build_release.sh nunca abre o .jks com keytool" \
-    "$(printf '%s' "$rl" | grep -q 'keytool' && echo 0 || echo 1)"
+    "$(grep -q 'keytool' <<<"$rl" && echo 0 || echo 1)"
 
 # 5) o .gitignore não pode deixar chave nem APK assinado entrarem
 echo "== chave e APK fora do git =="

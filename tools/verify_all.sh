@@ -12,6 +12,11 @@ TIMEOUT_TEST=${TIMEOUT_TEST:-120}
 # dos outros agentes: o timeout aqui existe para pegar TRAVA (deadlock, hook
 # esperando pra sempre), NÃO lentidão — por isso é bem maior que TIMEOUT_TEST.
 TIMEOUT_DEVICE_SIM=${TIMEOUT_DEVICE_SIM:-300}
+# Timeout dos testes ligados pelo manifesto (tools/gate_tests.list). Folgado de
+# propósito: o alvo é pegar TRAVA, não lentidão, e um teste de empacotamento
+# que dá timeout numa máquina carregada é vermelho sem motivo — o mesmo
+# critério de TIMEOUT_DEVICE_SIM.
+TIMEOUT_GATE_TESTS=${TIMEOUT_GATE_TESTS:-600}
 
 declare -a LABELS=()
 declare -a STATUSES=()
@@ -74,7 +79,7 @@ run_ndk() {
     fi
     end=$(date +%s)
     elapsed=$((end - start))
-    if [ "$status" -eq 0 ] && grep -E 'warning:' "$output" | grep -q .; then
+    if [ "$status" -eq 0 ] && grep -E 'warning:' <<<"$output" >/dev/null; then
         status=1
         echo "non-benign compiler warning:" >&2
     fi
@@ -87,6 +92,57 @@ run_ndk() {
 }
 
 echo "verify_all: $ROOT"
+
+# --- O manifesto de testes do gate --------------------------------------------
+# ESTE BLOCO É O PRIMEIRO DO GATE, e não por estética: a primeira linha do
+# manifesto é o check da ligação, e o manifesto é lido aqui, logo depois do
+# banner e ANTES de qualquer outra etapa (ndk-build, docs, fuzz). A versão
+# anterior deste bloco vivia na linha ~455, depois de dozens de etapas — o texto
+# prometia "roda antes de tudo" e o gate fazia o contrário; era mentira de
+# comentário, que é a pior espécie de mentira.
+#
+# A regra "o que o gate executa" mora em tools/gate_tests.list, e não num
+# padrão de nome de arquivo dentro deste script. Os dois laços que existiam
+# aqui (test/*_test.sh e a lista nomeada de device) deixavam a regra implícita:
+# quem acrescentasse um teste tinha que acertar o padrão sem saber que ele
+# existia, e teste que ninguém executa é opinião sobre o código que envelhece
+# calada. O manifesto é lido linha a linha e a ordem das linhas é a ordem de
+# execução — a primeira delas é o check da ligação, que reprova qualquer
+# arquivo de teste no disco sem destino declarado.
+#
+# FAIL é FAIL: teste ligado que quebra conserta o teste (ou o código), nunca
+# sai da lista. Desligar é decisão escrita em skip, com motivo, e o check
+# imprime a lista de exceções a cada execução.
+GATE_LIST="$ROOT/tools/gate_tests.list"
+if [ -f "$GATE_LIST" ]; then
+    # O terceiro campo (motivo) é lido e descartado aqui de propósito: quem
+    # julga o motivo é o check da ligação, e ele roda antes desta linha.
+    while IFS=$'\t' read -r gate_path gate_mode _gate_reason; do
+        case "${gate_path:-}" in
+            ""|\#*) continue ;;
+        esac
+        [ "${gate_mode:-run}" = "run" ] || continue
+        gate_file="$ROOT/$gate_path"
+        if [ ! -f "$gate_file" ]; then
+            record "manifesto: $gate_path (ausente)" FAIL 0 1
+            echo "tools/gate_tests.list cita $gate_path, que nao existe no disco" >&2
+            continue
+        fi
+        # TIMEOUT_DEVICE_SIM (não o dos testes): pega TRAVA, não lentidão —
+        # ver o comentário na definição da variável.
+        case "$gate_path" in
+            test/device/*) gate_timeout=$TIMEOUT_DEVICE_SIM ;;
+            *)              gate_timeout=$TIMEOUT_GATE_TESTS ;;
+        esac
+        case "$gate_file" in
+            *.py) run_step "teste $gate_path" "$gate_timeout" python3 "$gate_file" "$ROOT" ;;
+            *)    run_step "teste $gate_path" "$gate_timeout" bash "$gate_file" ;;
+        esac
+    done < "$GATE_LIST"
+else
+    record "manifesto de testes do gate" FAIL 0 1
+    echo "tools/gate_tests.list ausente: nenhum teste pode ser ligado sem ele" >&2
+fi
 
 if [ -x "$NDK_BUILD" ]; then
     run_ndk "ndk-build loader" "$ROOT"
@@ -209,28 +265,39 @@ while IFS= read -r test_file; do
     ' bash "$test_file" "$binary"
 done < <(find "$ROOT/mods" -type f \( -name 'test_targets.cpp' -o -name 'test_closers.cpp' \) -print | sort)
 
-run_step "harness case ids unicos" "$TIMEOUT_TEST" bash -c '
-    cd "$1"
-    # Varre todo .cpp do worktree (test/, mods/, selftest e demais raízes);
-    # só .git é podado, pois contém objetos/metadados, não arquivos-fonte.
-    labels=$(find . -path "./.git" -prune -o -type f -name "*.cpp" \
-        -exec grep -h -o -E "\[Caso [0-9]+\]" {} + || true)
-    [ -n "$labels" ] || {
-        echo "nenhum rótulo [Caso N] encontrado nos diretórios de teste" >&2
-        exit 1
-    }
-    duplicates=$(printf "%s\n" "$labels" | sort | uniq -d || true)
-    if [ -n "$duplicates" ]; then
-        printf "IDs de caso duplicados: %s\n" "$duplicates" >&2
-        exit 1
-    fi
-' bash "$ROOT"
+# Citação de caso tem que apontar para um caso que EXISTE. Os rótulos [Caso N]
+# vivem nos harnesses; um README, header ou script que aponta para um número
+# inexistente manda o leitor procurar uma prova que não existe — foi assim que
+# dois arquivos continuaram citando o caso de dump_core para assunto de
+# opcode arm64 (achado da revisão de uni/wiring-fixes-56).
+#
+# A FORMA DA DEFINIÇÃO. Só define o rótulo que inicia o primeiro literal de uma
+# chamada de saída num harness; o literal precisa estar na mesma linha da
+# chamada, ignorando espaços e escapes \n iniciais. Todos os outros rótulos
+# são citações, inclusive dentro de comentários, README e argumentos seguintes.
+# Um erro impresso cujo primeiro literal começa com um rótulo ainda o define;
+# se o ID já existir, a verificação de unicidade o rejeita como duplicata.
+#
+# O QUE ESTA ETAPA PROVA: a existência do número. Se o caso existe mas cobre
+# outro assunto, quem pega é quem lê o rótulo — automatizar isso exigiria
+# descrever o assunto de cada caso em máquina, e um resumo errado seria pior que
+# nenhum. Por isso a varredura de conteúdo é do revisor, e esta é de integridade.
+#
+# O QUE NÃO É: renumerar. Os IDs são fixos, ninguém renumera por causa de um
+# gate. Um número no meio de um buraco da sequência também é FAIL — se alguém
+# cita um número que nunca foi definido, o problema é da citação, não da
+# sequência.
+run_step "case refs sabotage regressions" "$TIMEOUT_TEST" \
+    python3 "$ROOT/test/case_refs_test.py"
+run_step "harness case IDs unique and citations exist" "$TIMEOUT_TEST" \
+    python3 "$ROOT/tools/check_case_refs.py" "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
-# UX-REFERENCE citations must each carry one exact source anchor. The anchor
-# must occur once in its target file, inside the cited range, and on code rather
-# than package/import/comment/license lines. This proves the quote can be found,
-# not that it semantically supports the prose; that remains a review judgment.
+# UX-REFERENCE and DEVICE-ROUND-3 citations must each carry one exact source
+# anchor. The anchor must occur once in its target file, inside the cited range,
+# and on code rather than package/import/comment/license lines. This proves the
+# quote can be found, not that it semantically supports the prose; that remains
+# a review judgment.
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"
 import re
@@ -257,9 +324,12 @@ for doc_name in files:
         refs = list(ref_re.finditer(line))
         if not refs:
             continue
-        is_ux_reference = doc_name == "docs/UX-REFERENCE.md"
-        anchors = anchor_re.findall(line) if is_ux_reference else []
-        if is_ux_reference and len(anchors) != len(refs):
+        requires_anchors = doc_name in {
+            "docs/UX-REFERENCE.md",
+            "docs/DEVICE-ROUND-3.md",
+        }
+        anchors = anchor_re.findall(line) if requires_anchors else []
+        if requires_anchors and len(anchors) != len(refs):
             errors.append(
                 f"{doc_name}:{line_no}: cada citação exige uma âncora explícita "
                 "no formato (anchor: `texto`)"
@@ -283,7 +353,7 @@ for doc_name in files:
                 continue
             targets.append((target, target_lines, start, end))
             checked += 1
-            if is_ux_reference and ref_index < len(anchors):
+            if requires_anchors and ref_index < len(anchors):
                 anchor = anchors[ref_index]
                 occurrence_count = sum(source_line.count(anchor) for source_line in target_lines)
                 occurrences = [
@@ -337,7 +407,7 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if not is_ux_reference and targets and not any(
+            if not requires_anchors and targets and not any(
                 literal in "\n".join(lines) for _, lines, _, _ in targets
             ):
                 errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
@@ -350,6 +420,79 @@ PY
 if [ -f "$DOC_REF_COUNT" ]; then
     cat "$DOC_REF_COUNT"
 fi
+
+# Hash citado como mesclado tem que existir e ser ancestral de HEAD. Sem
+# isso, um hash de branch fora da base escrito como 'merged' passa no gate
+# e a verdade só aparece na revisão humana.
+if [ -f "$ROOT/test/docs_hash_gate.sh" ]; then
+    run_step "docs: hash mesclado existe na base" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/docs_hash_gate.sh"
+  else
+      record "docs: hash mesclado existe na base (check ausente)" FAIL 0 1
+      echo "test/docs_hash_gate.sh ausente: hash fora da base pode posar de mesclado" >&2
+  fi
+
+# CHANGELOG v0.5.0 cobre os merges: todo merge first-parent desde o sync
+# tem linha (hash do merge ou do 2º pai), nenhum Pendente entrou na base e
+# toda linha de merge tem descrição. O próximo merge que esquecer o
+# CHANGELOG quebra aqui.
+if [ -f "$ROOT/test/release_notes_check.sh" ]; then
+    run_step "docs: CHANGELOG cobre os merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/release_notes_check.sh"
+else
+    record "docs: CHANGELOG cobre os merges (check ausente)" FAIL 0 1
+    echo "test/release_notes_check.sh ausente: merge sem linha no CHANGELOG passa" >&2
+fi
+
+  # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
+  # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
+  # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
+  # linha ali seria conferida. A fixture e o que prova. O config_leak_check
+  # roda a fixture e falha se o config LOCAL do repo real mudar no caminho
+  # (user.name=t parou aqui uma vez; nunca mais).
+  if [ -f "$ROOT/test/config_leak_check.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/config_leak_check.sh"
+  elif [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/docs_hash_gate_fixture.sh"
+  else
+      record "docs: fixture do hash-gate (ausente)" FAIL 0 1
+      echo "test/docs_hash_gate_fixture.sh ausente: a cobertura do CHANGELOG fica so estrutural" >&2
+  fi
+
+
+# Nenhum "| grep -q" sobrevive num script que usa `set -o pipefail`. Com
+# pipefail, `produtor | grep -q` devolve o 141 do produtor (SIGPIPE, porque o
+# grep -q sai assim que acha) mesmo com o elemento presente — medido em
+# 100 de 100 execucoes com um produtor externo. A forma materializada nunca
+# falha. O lint cobre o repo inteiro e a lista de excecao, com motivo, sai
+# impressa a cada execucao. Ver tools/pipefail_grep.exceptions.
+if [ -f "$ROOT/tools/pipefail_grep_check.sh" ]; then
+    run_step "scripts: nenhum pipe com grep -q sob pipefail" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/pipefail_grep_check.sh"
+else
+    record "scripts: pipe com grep -q sob pipefail (check ausente)" FAIL 0 1
+    echo "tools/pipefail_grep_check.sh ausente: a corrida do pipefail nao e conferida" >&2
+fi
+
+run_step "scripts: pipefail-grep (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/pipefail_grep_test.sh"
+
+# A forma do merge conta, e conferida. Um merge feito com `git commit-tree` a
+# partir da arvore de uma branch, em vez de `git merge --no-ff`, tem UM PAI SO
+# e nao aparece no historico como merge — foi assim que 72e0dd1 carregou a
+# arvore de 016640a sem trazer a branch, e o gate inteiro passou. O check
+# cobra assunto, dois pais, e hash citado na v0.5.0 que e ancestral de HEAD.
+if [ -f "$ROOT/tools/merge_subject_check.sh" ]; then
+    run_step "git: assunto, dois pais e citacao de hash dos merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/merge_subject_check.sh"
+else
+    record "git: assunto, dois pais e citacao de hash dos merges (check ausente)" FAIL 0 1
+    echo "tools/merge_subject_check.sh ausente: um merge de 1 pai com arvore de branch passa" >&2
+fi
+run_step "git: merge-subject-lint (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/merge_subject_check_test.sh"
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
@@ -375,6 +518,10 @@ fi
 
 while IFS= read -r script; do
     rel=${script#"$ROOT"/}
+    # Excecao declarada em tools/pipefail_grep.exceptions: `head -n 1` escreve
+    # UMA linha, que nao passa do buffer do pipe, entao o grep nunca mata o head
+    # por SIGPIPE. Nao ha corrida aqui — a regra e estrita de proposito, e este
+    # sitio e uma excecao COM MOTIVO, nao um esquecimento.
     if head -n 1 "$script" | grep -q bash; then
         run_step "bash -n $rel" "$TIMEOUT_TEST" bash -n "$script"
     else
@@ -401,20 +548,6 @@ else
     echo "ShellCheck could not be downloaded or verified" >&2
 fi
 
-while IFS= read -r test_script; do
-    run_step "shell test ${test_script#"$ROOT"/}" "$TIMEOUT_TEST" bash "$test_script"
-done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
-
-for device_script in restore-sim.sh quoting-check.sh device-round2-host-test.sh; do
-    path="$ROOT/test/device/$device_script"
-    if [ -f "$path" ]; then
-        # TIMEOUT_DEVICE_SIM (não TIMEOUT_TEST): pega TRAVA, não lentidão —
-        # ver o comentário na definição da variável.
-        run_step "device test test/device/$device_script" "$TIMEOUT_DEVICE_SIM" bash "$path"
-    else
-        record "device test test/device/$device_script (not present)" SKIP 0 0
-    fi
-done
 
 if [ -f "$ROOT/manager/build.sh" ]; then
     if [ -x "$ROOT/manager/run_tests.sh" ]; then
@@ -466,11 +599,13 @@ else
     echo "AVISO: mods/u_patch ausente; encoding arm64 ignorado"
 fi
 
-# Fuzzing com sanitizers dos 4 parsers que recebem DADO DO USUÁRIO dentro do
-# processo do jogo: linhas .bpatch/.conf do u_patch, o preflight de ELF (com a
-# guarda de SONAME do frida-gadget), o validador do config do frida e o resto
-# da superfície de string do selftest. Um crash de parser aqui derruba o jogo,
-# e 2 mortes em 20sShut ele inteiro pelo crashguard.
+# Fuzzing com sanitizers dos parsers que recebem DADO DO USUÁRIO dentro do
+# processo do jogo (ver TARGETS em test/fuzz/run_fuzz_gate.sh): linhas
+# .bpatch/.conf do u_patch, o preflight de ELF (com a guarda de SONAME do
+# frida-gadget), o validador do config do frida, o resto da superfície de
+# string do selftest e o emissor de thunk arm64 do u_patch. Um crash de
+# parser aqui derruba o jogo, e 2 mortes em 20s travam ele inteiro pelo
+# crashguard.
 #
 # A etapa é curta e DETERMINÍSTICA (seed fixa, contagem de execs fixa, ~25s):
 # ela não substitui as rodadas longas de 10 min por alvo, que são o trabalho
@@ -478,7 +613,7 @@ fi
 # clang ou sanitizer ausente é FAIL, porque um gate que pula o fuzzing quando
 # o host não tem toolchain volta a ser "PASS" sem exercitar parser nenhum.
 if [ -f "$ROOT/test/fuzz/run_fuzz_gate.sh" ]; then
-    # TIMEOUT_FUZZ, e não TIMEOUT_TEST: o limite aqui é o de 4 alvos com
+    # TIMEOUT_FUZZ, e não TIMEOUT_TEST: o limite aqui é o dos alvos com
     # sanitizer (build + execs), não o de um binário de teste.
     run_step "fuzz parsers (ASan+UBSan, seed fixa)" "${TIMEOUT_FUZZ:-300}" \
         bash "$ROOT/test/fuzz/run_fuzz_gate.sh"
@@ -643,6 +778,20 @@ if [ -f "$ROOT/test/arm32_hook_guard_check.py" ]; then
 else
     record "hooks ARM32 recusam 32-bit (check ausente)" FAIL 0 1
     echo "test/arm32_hook_guard_check.py ausente: um hook pode rodar em 32-bit sem validacao"
+fi
+
+# O cliente do REPL do Termux (achado A4 do wiring-audit): 11 dos 12 verbos do
+# companion tm como UNICO sender esse cliente, e o console apontava para um
+# arquivo que NINGUEM instalava. O teste sobe um abstract socket (como o
+# companion) e fala com ele pelo cliente REAL, verbo por verbo — incluindo o
+# multi-linha de list_mods e o keep-alive de stream, que sao os dois jeitos
+# classicos de o cliente quebrar.
+if [ -f "$ROOT/test/termux_client_test.py" ]; then
+    run_step "cliente do REPL do Termux (12 verbos)" "$TIMEOUT_TEST" \
+        python3 "$ROOT/test/termux_client_test.py"
+else
+    record "cliente do REPL do Termux (teste ausente)" FAIL 0 1
+    echo "test/termux_client_test.py ausente: o lado que envia o protocolo nao e testado"
 fi
 
 printf '\n| Etapa | Resultado | Exit | Tempo (s) |\n|---|---:|---:|---:|\n'
