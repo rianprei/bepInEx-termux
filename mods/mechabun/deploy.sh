@@ -40,7 +40,7 @@ case "$TERMUX_PY" in
     /*) ;;
     *) echo "erro: TERMUX_PY tem que ser caminho absoluto: $TERMUX_PY" >&2; exit 1 ;;
 esac
-printf '%s' "$TERMUX_PY" | grep -qE '^/[A-Za-z0-9._/+-]+$' || {
+grep -qE '^/[A-Za-z0-9._/+-]+$' <<<"$TERMUX_PY" || {
     echo "erro: TERMUX_PY tem caractere fora de [A-Za-z0-9._/+-]: $TERMUX_PY" >&2
     echo "      o caminho entra num su -c como root; aspas, espaco ou ; viram comando." >&2
     exit 1

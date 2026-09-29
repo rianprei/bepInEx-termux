@@ -67,7 +67,7 @@ if [ "${1:-}" = "shell" ]; then
             *"test -x "*python3*) [ "${FAKE_PYTHON_PRESENT:-0}" = "1" ] && exit 0; exit 1 ;;
         esac
         # caminho de ENVIO: exercitado de verdade, com o su -c real
-        if printf '%s' "$*" | grep -q 'push_mod_emit\.py'; then
+        if grep -q 'push_mod_emit\.py' <<<"$*"; then
             echo "ok: 1234 bytes written"; exit 0
         fi
         echo "ok"; exit 0
@@ -75,7 +75,7 @@ if [ "${1:-}" = "shell" ]; then
     # sem su: uid 2000 não atravessa /data/data/
     case "$2" in
         "test -x "*python3*)
-            if printf '%s' "$2" | grep -q '/data/data/'; then
+            if grep -q '/data/data/' <<<"$2"; then
                 echo "test: /data/data/com.termux/files/usr/bin/python3: Permission denied" >&2
                 exit 1
             fi
@@ -113,9 +113,9 @@ ensure_built kungfux
 out="$(cd "$ROOT/mods/kungfux" && FAKE_PYTHON_PRESENT=0 TERMUX_PY=/data/data/com.termux/files/usr/bin/python3 \
     ./deploy.sh </dev/null 2>&1)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "deploy aceitou rodar com o python ausente (exit 0)"
-printf '%s' "$out" | grep -q 'pkg install python' ||
+grep -q 'pkg install python' <<<"$out" ||
     die "a falha nao diz como instalar: $out"
-printf '%s' "$out" | grep -qi 'python' ||
+grep -qi 'python' <<<"$out" ||
     die "a falha nao diz QUE dependencia falta: $out"
 if grep -q '^adb push' "$ADB_LOG"; then
     die "empurrou algo com o python ausente: $(grep '^adb push' "$ADB_LOG")"
@@ -152,11 +152,12 @@ for mod in kungfux mechabun; do
     # `adb root` e proibido em CODIGO; no comentario ele aparece o tempo todo,
     # porque e a raza de nao usa-lo. Daí o filtro de comentario: sem ele a
     # prova casaria com o proprio texto que explica a proibicao.
-    sed 's/^[[:space:]]*#.*//' "$f" | grep -q 'adb root' &&
+    _sem_comentario=$(sed 's/^[[:space:]]*#.*//' "$f")
+    grep -q 'adb root' <<<"$_sem_comentario" &&
         die "mods/$mod/deploy.sh: chama 'adb root' no codigo; em build de producao o adbd recusa ('adbd cannot run as root in production builds') e o deploy aborta sem nunca tentar o su, que e o caminho que funciona"
     grep -q 'adb shell su -c id' "$f" ||
         die "mods/$mod/deploy.sh: a pergunta de root nao e 'su -c id' respondendo uid=0"
-    head -20 "$f" | grep -q 'pkg install python' ||
+    head -20 "$f" | grep 'pkg install python' >/dev/null ||
         die "mods/$mod/deploy.sh: o bloco Requer nao cita 'pkg install python'"
 done
 echo "deploy_python_check: (3) preflight em su -c, mensagem de root propria, Requer cita o python"
@@ -165,7 +166,7 @@ echo "deploy_python_check: (3) preflight em su -c, mensagem de root propria, Req
 : > "$ADB_LOG"
 out="$(cd "$ROOT/mods/kungfux" && TERMUX_PY="/x' ; echo INJETADO ; '" ./deploy.sh </dev/null 2>&1)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "aceitou TERMUX_PY com metacaractere (exit 0): o caminho entra num su -c como root"
-printf '%s' "$out" | grep -q 'su -c' ||
+grep -q 'su -c' <<<"$out" ||
     die "a recusa do TERMUX_PY nao explica o risco: $out"
 [ ! -s "$ADB_LOG" ] || die "validou o caminho DEPOIS de chamar adb: $(cat "$ADB_LOG")"
 echo "deploy_python_check: (4) TERMUX_PY com aspa/ponto e virgula recusado antes de qualquer adb"
@@ -177,7 +178,7 @@ echo "deploy_python_check: (4) TERMUX_PY com aspa/ponto e virgula recusado antes
 out="$(cd "$ROOT/mods/kungfux" && printf 'sim\n' | FAKE_NO_ROOT=1 FAKE_PYTHON_PRESENT=1 \
     TERMUX_PY=/data/data/com.termux/files/usr/bin/python3 ./deploy.sh 2>&1)" && rc=0 || rc=$?
 [ "$rc" -ne 0 ] || die "deploy aceitou rodar sem su nenhum (exit 0)"
-printf '%s' "$out" | grep -q 'root necessario: o aparelho precisa de su (Magisk/KernelSU)' ||
+grep -q 'root necessario: o aparelho precisa de su (Magisk/KernelSU)' <<<"$out" ||
     die "a falha sem su nao diz o que resolver: $out"
 if grep -q '^adb push' "$ADB_LOG"; then
     die "empurrou algo sem root: $(grep '^adb push' "$ADB_LOG")"
