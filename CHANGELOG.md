@@ -6,6 +6,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
+- `975ac87` — chore(version): VERSION v0.4.1 401 -> v0.5.0 500, BC_LOADER_VERSION acompanhado, e check novo que amarra os três
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
 cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
