@@ -22,8 +22,8 @@ novo_repo() {
     mkdir -p "$d/tools"
     cp "$CHECK" "$d/tools/"
     git -C "$d" init -q .
-    git -C "$d" config user.email s@t
-    git -C "$d" config user.name s
+    git -C "$d" config user.email lucaguerian@gmail.com
+    git -C "$d" config user.name rianprei
     git -C "$d" config commit.gpgsign false
     printf '## v0.5.0\n' > "$d/CHANGELOG.md"
     printf 'base\n' > "$d/f.txt"
@@ -41,7 +41,7 @@ merge_legit() {
     git -C "$d" checkout -q master
     local m; m="$d/.msg"
     printf 'merge: uni/%s — resumo legitimo\n\nCo-Authored-By: OpenCode <noreply@opencode.ai>\n' "$branch" > "$m"
-    git -C "$d" merge --no-ff "$branch" -q -F "$m"
+    git -C "$d" -c user.name=rianprei -c user.email=lucaguerian@gmail.com merge --no-ff "$branch" -q -F "$m"
     rm -f "$m"
     git -C "$d" rev-parse HEAD
 }
@@ -165,6 +165,56 @@ if [ $rc -eq 0 ] && printf '%s' "$out" | grep -q "excecao declarada"; then
     ok "exceção declarada: o commit de 1 pai passa e sai listado"
 else
     bad "exceção declarada não funcionou (exit=$rc)"; printf '%s\n' "$out" | head -3 | sed 's/^/         /'
+fi
+rm -rf "$D"
+
+
+# ---------------------------------------------------------------- cenário 7
+# AUTOR LEGITIMO depois do piso tem que PASSAR. Este cenario é a regressão do
+# 9b5df31: com ESPERADO_AUTHOR deduzido do piso (cujo autor era "f <f@t>"), um
+# merge legítimo do rianprei era RECUSADO — a regra ficava invertida, aceitava o
+# commit corrompido e recusava o certo.
+echo "--- (7) autor legitimo depois do piso passa ---"
+D=$(mktemp -d); novo_repo "$D"
+FLOOR=$(merge_legit "$D" branch-piso)
+sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$FLOOR\"|" "$D/tools/merge_subject_check.sh"
+sed -i "s|^UNPAIRED_ALLOWED=.*|UNPAIRED_ALLOWED=\"\"|" "$D/tools/merge_subject_check.sh"
+sed -i "s|^ESPERADO_AUTHOR=.*|ESPERADO_AUTHOR=\"rianprei <lucaguerian@gmail.com>\"|" "$D/tools/merge_subject_check.sh"
+git -C "$D" checkout -q -b branch-rianprei
+printf 'r\n' > "$D/r.txt"; git -C "$D" add -A
+git -C "$D" -c user.name=rianprei -c user.email=lucaguerian@gmail.com commit -qm "branch-rianprei: trabalho"
+git -C "$D" checkout -q master
+m2="$D/.msg2"; printf 'merge: uni/branch-rianprei — merge legitimo de rianprei\n\nCo-Authored-By: OpenCode <noreply@opencode.ai>\n' > "$m2"
+git -C "$D" -c user.name=rianprei -c user.email=lucaguerian@gmail.com merge --no-ff branch-rianprei -q -F "$m2"
+out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
+if [ $rc -eq 0 ]; then
+    ok "merge legítimo do autor esperado PASSA (o piso não define mais o autor)"
+else
+    bad "merge legítimo foi RECUSADO — a regra de autor está invertida"; printf '%s\n' "$out" | head -2 | sed 's/^/         /'
+fi
+rm -rf "$D"
+
+# ---------------------------------------------------------------- cenário 8
+# AUTOR ERRADO tem que ser recusado, e recusado pelo motivo certo.
+echo "--- (8) autor errado é recusado ---"
+D=$(mktemp -d); novo_repo "$D"
+FLOOR=$(merge_legit "$D" branch-ok)
+sed -i "s|^MERGE_FLOOR=\".*\"|MERGE_FLOOR=\"$FLOOR\"|" "$D/tools/merge_subject_check.sh"
+sed -i "s|^UNPAIRED_ALLOWED=.*|UNPAIRED_ALLOWED=\"\"|" "$D/tools/merge_subject_check.sh"
+sed -i "s|^ESPERADO_AUTHOR=.*|ESPERADO_AUTHOR=\"rianprei <lucaguerian@gmail.com>\"|" "$D/tools/merge_subject_check.sh"
+git -C "$D" checkout -q -b branch-fantasma
+printf 'f\n' > "$D/f.txt"; git -C "$D" add -A
+git -C "$D" -c user.name=f -c user.email=f@t commit -qm "branch-fantasma: trabalho"
+git -C "$D" checkout -q master
+m3="$D/.msg3"; printf 'merge: uni/branch-fantasma — merge com autor de fila\n\nCo-Authored-By: OpenCode <noreply@opencode.ai>\n' > "$m3"
+# o AUTOR CORRETO E O DO MERGE, nao o do commit da branch: e o merge que
+# entra no historico com o nome do config local
+git -C "$D" -c user.name=f -c user.email=f@t merge --no-ff branch-fantasma -q -F "$m3"
+out=$(cd "$D" && bash tools/merge_subject_check.sh 2>&1); rc=$?
+if [ $rc -ne 0 ] && printf '%s' "$out" | grep -q "config local sujo"; then
+    ok "autor 'f <f@t>' é recusado, e a mensagem aponta config local sujo"
+else
+    bad "autor errado NÃO foi recusado (exit=$rc)"; printf '%s\n' "$out" | head -2 | sed 's/^/         /'
 fi
 rm -rf "$D"
 

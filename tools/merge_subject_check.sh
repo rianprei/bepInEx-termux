@@ -52,7 +52,17 @@ UNPAIRED_ALLOWED="72e0dd1"
 # entao o estrago alcança o repo principal mesmo com a fixture num worktree. Nao da
 # para reescrever o que ja foi publicado, entao ele fica listado.
 AUTHOR_ALLOWED="791966d"
-ESPERADO_AUTHOR=$(git log -1 --format='%an <%ae>' "$MERGE_FLOOR" 2>/dev/null || echo "")
+
+# O AUTOR ESPERADO E CONSTANTE, E NAO DEDUZIDO DO PISO. A primeira versao desta
+# regra tirava o autor esperado do proprio MERGE_FLOOR — e o piso era o 791966d,
+# cujo autor e "f <f@t>". Resultado medido: com o piso assim, um merge LEGITIMO
+# do rianprei era RECUSADO (exit 1, "autor rianprei <...> diferente do autor do
+# piso (f <f@t>)"), enquanto o commit corrompido passava, por estar na excecao.
+# A regra ficava exatamente invertida: aceitava o errado e recusava o certo.
+# A razao de fundo e a mesma que justifica a excecao: nao se pode usar como
+# referencia de confianca um commit que existe justamente porque a confianca
+# nele falhou. O autor esperado e a identidade do dono do repo, escrita aqui.
+ESPERADO_AUTHOR="rianprei <lucaguerian@gmail.com>"
 
 errors=()
 
