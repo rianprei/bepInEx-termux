@@ -6,6 +6,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
+- `975ac87` — chore(version): VERSION v0.4.1 401 -> v0.5.0 500, BC_LOADER_VERSION acompanhado, e check novo que amarra os três
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
 cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
@@ -15,6 +16,7 @@ todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
+- `bd39831` — uni/version-0.5.0 — bump para v0.5.0 (500): VERSION, loader, CHANGELOG alinhados; check novo de consistência amarra tudo
 - `b4dfe16` — uni/pipefail-grep — pipefail-grep lint cobre todos os `set -o pipefail` / `set -euo pipefail` / `set -uo pipefail` / `shopt -so pipefail`; contagem 1 por sítio; teste de comportamento com produtor externo 100% reproduzível; exceções declaradas com motivo; gate PASS SKIP=0
 - `74fa673` — uni/test-runner-accum-2 — contrato do TestRunner JVM validado no gate: resumo com checks/falhas, baseline derivado de manager/test_checks_baseline (deriva por igualdade, não apodrece), e o runner REAL rodado com um teste que falha de propósito (exit != 0, acúmulo conferido); os dois testes declarados em tools/gate_tests.list
 - `5333113` — uni/device-round3 — roteiro de verificação da rodada 3 no aparelho (recusas ARM32 com âncora de arquivo:linha conferida pelo gate); a âncora do u_patch corrigida para a faixa 792-793

@@ -59,7 +59,7 @@ using zygisk::AppSpecializeArgs;
 using zygisk::Option;
 
 #define LOG_TAG "BCPOC"
-#define BC_LOADER_VERSION "v0.4.1"
+#define BC_LOADER_VERSION "v0.5.0"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
