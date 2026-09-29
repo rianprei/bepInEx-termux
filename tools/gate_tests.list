@@ -58,6 +58,7 @@ test/device/restore-sim.sh	run
 # execução do gate, que é o que esta lista existe para evitar.
 test/case_refs_test.py	wired
 test/release_notes_check.sh	wired
+test/config_leak_check.sh	wired
 test/fuzz/check_no_stale_counts.py	wired
 test/fuzz/stale_counts_vocab_test.py	wired
 test/arm32_hook_guard_check.py	wired

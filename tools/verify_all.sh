@@ -443,8 +443,13 @@ fi
   # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
   # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
   # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
-  # linha ali seria conferida. A fixture e o que prova.
-  if [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+  # linha ali seria conferida. A fixture e o que prova. O config_leak_check
+  # roda a fixture e falha se o config LOCAL do repo real mudar no caminho
+  # (user.name=t parou aqui uma vez; nunca mais).
+  if [ -f "$ROOT/test/config_leak_check.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/config_leak_check.sh"
+  elif [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
       run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
           bash "$ROOT/test/docs_hash_gate_fixture.sh"
   else
