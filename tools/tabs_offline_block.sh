@@ -137,10 +137,16 @@ drop_uid_rules() {
   _i=0
   while [ "$_i" -lt 64 ]; do
     _i=$((_i + 1))
-    # -S OUTPUT lista só as regras (sem a policy), então o número da linha
-    # no grep (1-indexed) É o número da regra na chain (1-indexed).
-    n="$($_bin -S OUTPUT 2>/dev/null | grep -n "^-A OUTPUT" \
-         | grep -- "--uid-owner $_uid" | head -1 | cut -d: -f1)"
+    # O `-S OUTPUT` real imprime a POLICY ("-P OUTPUT ACCEPT") na primeira
+    # linha, e um grep -n direto nessa saída conta a regra k na LINHA k+1 —
+    # o -D apagaria a regra SEGUINTE à do uid (a de outro app). O número
+    # que o -D aceita é o de REGRA, então o -n numera a lista JÁ FILTRADA
+    # pelas regras: primeiro grep remove o -P da saída, o grep -n conta a
+    # partir de 1 na lista que sobrou. (Foi o off-by-one que nem o fake nem
+    # a produção acertavam: o fake não imprimia o -P e somava +1 no -D —
+    # as duas pontas erradas se anulavam só no teste.)
+    n="$($_bin -S OUTPUT 2>/dev/null | grep '^-A OUTPUT' \
+         | grep -n -- "--uid-owner $_uid" | head -1 | cut -d: -f1)"
     [ -n "$n" ] || break
     $_bin -D OUTPUT "$n" 2>/dev/null || break
   done
@@ -187,7 +193,11 @@ apply() {
       "$bin" -I OUTPUT 1 -m owner --uid-owner "$uid" -j "$chain"
     fi
   done
-  ok=falhou
+  # ok=ok: a verificação começa APROVADA e FALHA se qualquer família não
+  # achou a regra. A versão anterior começava "falhou" e o -C com sucesso
+  # não tinha o que fazer — só o `|| ok=falhou` existia — e o script
+  # imprimia "verificacao: falhou" mesmo com tudo instalado.
+  ok=ok
   for fam in 4 6; do
     if [ "$fam" = 4 ]; then bin=iptables; chain=$CHAIN; rej=icmp-port-unreachable
     else bin=ip6tables; chain=$CHAIN6; rej=icmp6-port-unreachable; fi
