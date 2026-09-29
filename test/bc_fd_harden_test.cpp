@@ -105,6 +105,26 @@ int main() {
         close(fa); close(fb); close(sp[0]); close(sp[1]);
     }
 
+    // ---- O2b: ZERO cmsg é a RECUSA LEGÍTIMA (payload de erro, sem FD) ------
+    // O protocolo responde recusa como "<errno>\n" SEM cmsg nenhum; quem
+    // recebe tem que devolver o payload (r > 0) com out_fd = -1, não erro
+    // — é o caminho que o bc_fd_parse_error do cliente lê. Devolver -1 aqui
+    // matava a recusa na mão (o jogo lia "companion mudo").
+    {
+        int sp[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sp) != 0) { perror("socketpair0"); return 1; }
+        const char *err_reply = "E13\n";
+        if (write(sp[1], err_reply, strlen(err_reply)) !=
+            (ssize_t)strlen(err_reply)) { perror("write E13"); return 1; }
+        int got = 99;  // lixo de propósito: o recv tem que sobrescrever
+        char buf[16];
+        ssize_t r = bc_fd_recv_fd(sp[0], buf, sizeof(buf), &got);
+        check("O2b: 0 cmsg -> payload entregue (r > 0)", r == 4);
+        check("O2b: ...e out_fd = -1 (sem FD, sem mentira)", got == -1);
+        check("O2b: ...e o payload é a recusa intacta", r == 4 && memcmp(buf, "E13\n", 4) == 0);
+        close(sp[0]); close(sp[1]);
+    }
+
     // ---- O3: linha longa descarta até '\n' e ERRA; a válida seguinte boa ----
     {
         int sp[2];

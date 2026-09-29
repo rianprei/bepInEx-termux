@@ -35,6 +35,7 @@
 #include "bc_generic_allowlist.h"  // PATH <pkg>: a allowlist mora na árvore root-only, quem lê é o root
 #include "bc_path_decide.h"  // bc_path_is_bc: o gate dos verbos BC (chamador É o jogo BC)
 #include "bc_push_io.h"  // transporte do push_mod: exatamente SIZE + EOF (testado no host)
+#include "bc_dir_list.h"  // listagem da árvore: filtro nome+lstat+S_ISREG em UM ponto (S2 do kilo)
 #include "bc_launch_check.h"  // root só executa arquivo regular, do root, sem escrita de app
 #include "bc_req_session.h"  // canal REQ como recurso limitado: gate na abertura + teto (P1)
 #include "bc_signal.h"  // contrato dos sinais: property com seq (root escreve, jogo só lê)
@@ -1258,30 +1259,36 @@ static void handle_bc_so(int fd, const char *name) {
 // "BL" -> lista de .so da árvore BC. Mesmo formato de fio do mod_list
 // (nomes, total no fim) — o loader do jogo ordena a lista dele (qsort por
 // nome, para o grafo de dependências); o companion não inventa ordem.
+// O FILTRO (nome + lstat + S_ISREG) é o núcleo bc_dir_list_regular_mods —
+// o MESMO código do mod_list e do teste de host (S2 do kilo: o bloco
+// duplicado não tinha cobertura e o S_ISREG saiu sem ninguém ver).
+struct bc_list_ctx {
+    int fd;
+    int err;
+};
+
+static int bc_list_emit(void *p, const char *name) {
+    struct bc_list_ctx *c = (struct bc_list_ctx *)p;
+    char line[512];
+    int n = snprintf(line, sizeof(line), "%s\n", name);
+    if (n <= 0) return -1;
+    if (bc_fd_send_data(c->fd, line, (size_t)n) < 0) {
+        c->err = 1;
+        return -1;  // cliente sumiu: para de enumerar
+    }
+    return 0;
+}
+
 static void handle_bc_list(int fd) {
     if (!bc_peer_bc_gate(fd, true)) return;
-    DIR *d = opendir(BC_MODS_DIR);
-    if (d == nullptr) {
+    struct bc_list_ctx ctx = { fd, 0 };
+    int total = bc_dir_list_regular_mods(BC_MODS_DIR, bc_list_emit, &ctx);
+    if (total < 0) {
         // Sem árvore BC não é erro: o jogo só não carrega nada.
         bc_fd_send_data(fd, "0\n", 2);
         return;
     }
-    char line[512];
-    int total = 0;
-    struct dirent *de;
-    while ((de = readdir(d)) != nullptr) {
-        if (de->d_name[0] == '.') continue;
-        if (!bc_loader_is_mod_filename(de->d_name)) continue;
-        char full[1024];
-        int fw = snprintf(full, sizeof(full), "%s/%s", BC_MODS_DIR, de->d_name);
-        if (fw <= 0 || (size_t)fw >= sizeof(full)) continue;
-        struct stat st;
-        if (lstat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
-        int n = snprintf(line, sizeof(line), "%s\n", de->d_name);
-        if (n > 0 && bc_fd_send_data(fd, line, (size_t)n) < 0) break;
-        total++;
-    }
-    closedir(d);
+    char line[32];
     snprintf(line, sizeof(line), "%d\n", total);
     bc_fd_send_data(fd, line, strlen(line));
 }
@@ -1352,30 +1359,18 @@ static void handle_mod_list(int fd, const char *pkg) {
         bc_fd_deny_txt(fd, "mod_list: caminho montado grande demais");
         return;
     }
+    // O FILTRO é o núcleo bc_dir_list_regular_mods — o MESMO código do BL e
+    // do teste de host (S2 do kilo: o bloco duplicado não tinha cobertura).
     // lstat pelo root: um link dentro da arvore nao e seguido, e um item que
     // nao for arquivo regular NAO entra na lista (o jogo nao tem como abrir).
-    DIR *d = opendir(path);
-    if (d == nullptr) {
+    struct bc_list_ctx ctx = { fd, 0 };
+    int total = bc_dir_list_regular_mods(path, bc_list_emit, &ctx);
+    if (total < 0) {
         // Sem mods nao e erro: o jogo so nao carrega nada.
         bc_fd_send_data(fd, "0\n", 2);
         return;
     }
-    char line[512];
-    int total = 0;
-    struct dirent *de;
-    while ((de = readdir(d)) != nullptr) {
-        if (de->d_name[0] == '.') continue;
-        if (!bc_loader_is_mod_filename(de->d_name)) continue;
-        char full[1024];
-        int fw = snprintf(full, sizeof(full), "%s/%s", path, de->d_name);
-        if (fw <= 0 || (size_t)fw >= sizeof(full)) continue;
-        struct stat st;
-        if (lstat(full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
-        int n = snprintf(line, sizeof(line), "%s\n", de->d_name);
-        if (n > 0 && bc_fd_send_data(fd, line, (size_t)n) < 0) break;
-        total++;
-    }
-    closedir(d);
+    char line[32];
     snprintf(line, sizeof(line), "%d\n", total);
     bc_fd_send_data(fd, line, strlen(line));
 }
