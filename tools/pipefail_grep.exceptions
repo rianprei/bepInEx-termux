@@ -31,7 +31,7 @@
 # antes de o grep poder sair: nao ha produtor com bytes pendentes, logo nao ha
 # SIGPIPE. Race impossivel por construcao, nao por sorte. Corrigir exigiria ler
 # o arquivo duas vezes para trocar um pipe que ja e seguro.
-tools/verify_all.sh 525
+tools/verify_all.sh 538
 
 # mods/kungfux/deploy.sh e mods/mechabun/deploy.sh: sites do freebuff, em
 # uni/deploy-requer-3, que ja estao sendo corrigidos la. Este branch NAO toca
