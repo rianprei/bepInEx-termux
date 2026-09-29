@@ -115,6 +115,13 @@ while IFS='|' read -r sha parents subject; do
             *)
                 is_branch_tree=0
                 for ref in $(git for-each-ref --format='%(objectname)' refs/heads refs/remotes); do
+                    # Um ref que APONTA PARA o proprio commit nao prova nada: e a
+                    # ponta da branch em que se esta, e a arvore dela e a arvore
+                    # dele por definicao. Sem esta guarda, o ultimo commit de
+                    # qualquer branch em trabalho e acusado de merge disfarcado
+                    # — foi o que aconteceu com o meu proprio commit de
+                    # CHANGELOG, que o check apontou na primeira rodada.
+                    [ "$ref" = "$sha" ] && continue
                     if [ "$(git rev-parse "$sha^{tree}")" = "$(git rev-parse "$ref^{tree}")" ]; then
                         is_branch_tree=1
                         break
