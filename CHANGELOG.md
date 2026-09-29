@@ -15,6 +15,8 @@ todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
+- `74fa673` — uni/test-runner-accum-2 — contrato do TestRunner JVM validado no gate: resumo com checks/falhas, baseline derivado de manager/test_checks_baseline (deriva por igualdade, não apodrece), e o runner REAL rodado com um teste que falha de propósito (exit != 0, acúmulo conferido); os dois testes declarados em tools/gate_tests.list
+- `5333113` — uni/device-round3 — roteiro de verificação da rodada 3 no aparelho (recusas ARM32 com âncora de arquivo:linha conferida pelo gate); a âncora do u_patch corrigida para a faixa 792-793
 
 - `02c501a` — uni/modtypes — detector de tipo de mod testado com corpus real e textos honestos
 - `672eed2` — uni/install-path — instalar mod funciona mesmo quando o seletor do sistema falha
@@ -49,10 +51,16 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `03eac87` — uni/termux-client4 — contrato de saída do cliente
 - `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
 - `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
+- `864f555` — uni/merge-subject-lint-3 — o teste do lint lia o ESPERADO_AUTHOR do script copiado, e nao o do repo: media o valor que o teste escolhia, entao os 8 cenarios passavam com o bug da deducao pelo piso de volta
+- `96f8550` — uni/config-leak-4 — o check anti-vazamento tambem vigia HEAD, refs e arvore: sem o cd "$TREE" a fixture nao so escreve config, ela COMPRA no repo de verdade (medido: HEAD 3124554 -> 562534e "lado"), e um check que so olha config passa por cima disso
+- `ccd8a11` — uni/config-leak — fixture do hash-gate com git config preso ao repo temporário (-C) + check que falha se o config local do repo mudar (linha cita o 1º commit da branch)
+- `2b0dd51` — merge da base atual (c233647, audit3-hardening) na branch config-leak
+- `2ff69a1` — merge da base 72e0dd1 (gate-wiring: manifesto tools/gate_tests.list) na branch config-leak
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
 - `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
+- `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
 - deploy-requer — python do Termux como requisito checado antes de qualquer envio

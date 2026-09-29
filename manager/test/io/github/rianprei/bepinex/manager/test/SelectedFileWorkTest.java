@@ -89,6 +89,6 @@ public final class SelectedFileWorkTest {
     }
 
     private static void check(String what, boolean condition) {
-        if (!condition) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, condition);
     }
 }

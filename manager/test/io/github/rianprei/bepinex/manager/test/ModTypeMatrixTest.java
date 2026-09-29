@@ -333,6 +333,6 @@ public class ModTypeMatrixTest {
     private static File soZip(File d) { return f(d, "compactado_mentiroso.so"); }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 }

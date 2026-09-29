@@ -316,9 +316,18 @@ DOBBY_SO="$ROOT/mods/$DOBBY_MOD/libs/arm64-v8a/lib$DOBBY_MOD.so"
 # .so de build anterior quando o mtime do fonte era mais velho — o que acontecia
 # numa worktree copiada — e o check (5c) acusava um vazamento que já não
 # existia. Gate de 10s nao é custo; verificar que o build é o de agora, é.
+#
+# O marcador com um minuto de idade é a DEPENDENCIA explicita: um build pode
+# falhar sem reescrever o .so, e ai o (5c) mediria um artefato velho e acusaria
+# um defeito que nao existe. Sem o marcador essa leitura errada e indistinguivel
+# de um build ruim — que e a forma como um gate verde virou vermelho uma vez,
+# com "libu_noads saiu sem .symtab" e o .so com .symtab inteiro na mao.
+touch -d '1 minute ago' "$WORK/marcador-build-dobby"
 ( cd "$ROOT/mods/$DOBBY_MOD" && "$NDK/ndk-build" -B -j4 ) >"$WORK/dobby.log" 2>&1 ||
     { tail -5 "$WORK/dobby.log" >&2; die "build de mods/$DOBBY_MOD (que usa Dobby) falhou"; }
 [ -f "$DOBBY_SO" ] || die "mods/$DOBBY_MOD nao gerou $DOBBY_SO: o check (5c) nao prova nada"
+[ "$DOBBY_SO" -nt "$WORK/marcador-build-dobby" ] ||
+    die "o libso de mods/$DOBBY_MOD e mais velho que o build desta etapa: o (5c) mediria um artefato antigo, nao o build de agora"
 # e o símbolo guardado DESTE .so, que é o arquivo que sai na release
 DOBBY_SYM="$WORK/symbols-dobby"
 # symbols_add imprime o build-id no stdout; aqui o que importa e que ele

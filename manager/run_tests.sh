@@ -32,7 +32,53 @@ javac --release 17 -d "${BUILD_DIR}" \
     "${SCRIPT_DIR}"/test/io/github/rianprei/bepinex/manager/test/*.java
 
 echo "[*] Rodando TestRunner..."
-java -cp "${BUILD_DIR}" io.github.rianprei.bepinex.manager.test.TestRunner
+RUNNER_LOG="$(mktemp)"
+trap 'rm -f "${RUNNER_LOG}"' EXIT
+if java -cp "${BUILD_DIR}" io.github.rianprei.bepinex.manager.test.TestRunner 2>&1 \
+    | tee "${RUNNER_LOG}"; then
+    RUNNER_STATUS=0
+else
+    RUNNER_STATUS=$?
+fi
+
+SUMMARY_COUNT="$(grep -Ec '^RUNNER: checks=[0-9]+ falhas=[0-9]+$' "${RUNNER_LOG}" || true)"
+if [ "${SUMMARY_COUNT}" -ne 1 ]; then
+    echo "ERRO: resumo RUNNER ausente ou duplicado" >&2
+    exit 1
+fi
+SUMMARY="$(grep -E '^RUNNER: checks=[0-9]+ falhas=[0-9]+$' "${RUNNER_LOG}")"
+CHECKS="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=([0-9]+) falhas=[0-9]+$/\1/')"
+FAILURES="$(printf '%s\n' "${SUMMARY}" | sed -E 's/^RUNNER: checks=[0-9]+ falhas=([0-9]+)$/\1/')"
+# Baseline vem de manager/test_checks_baseline, nao de um numero escrito aqui:
+# a comparacao e por IGUALDADE, entao suite que cresce ou encolhe sem
+# atualizar o arquivo no mesmo commit quebra o gate em vez de passar calada.
+BASELINE_FILE="${SCRIPT_DIR}/test_checks_baseline"
+if [ ! -f "${BASELINE_FILE}" ]; then
+    echo "ERRO: ${BASELINE_FILE} ausente: sem baseline nao ha como validar a suite" >&2
+    exit 1
+fi
+MIN_CHECKS="$(grep -Eo '[0-9]+' "${BASELINE_FILE}" | head -1)"
+if [ -z "${MIN_CHECKS}" ]; then
+    echo "ERRO: ${BASELINE_FILE} sem numero de checks" >&2
+    exit 1
+fi
+
+if grep -Fq '[RUNNER FAIL]' "${RUNNER_LOG}"; then
+    echo "ERRO: TestRunner registrou falha por teste" >&2
+    exit 1
+fi
+if [ "${FAILURES}" -ne 0 ]; then
+    echo "ERRO: TestRunner reportou ${FAILURES} falha(s)" >&2
+    exit 1
+fi
+if [ "${CHECKS}" -ne "${MIN_CHECKS}" ]; then
+    echo "ERRO: TestRunner executou ${CHECKS} checks; baseline ${MIN_CHECKS}. Atualize manager/test_checks_baseline no MESMO commit do teste novo (ou do teste removido)." >&2
+    exit 1
+fi
+if [ "${RUNNER_STATUS}" -ne 0 ]; then
+    echo "ERRO: TestRunner terminou com status ${RUNNER_STATUS}" >&2
+    exit 1
+fi
 
 # --- (f) APK e keystore fora do git ---------------------------------------
 # O build gera manager/bepinex-manager.apk, o .idsig e o .debug.keystore. Se
