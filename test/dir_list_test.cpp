@@ -138,11 +138,16 @@ int main() {
     // listagens. Mesmo padrão da seção 4 do peercred_test: ler o fonte,
     // tirar comentário e CONTAR. Inline de opendir de volta = sem cobertura
     // de novo, e é aqui que pega.
+    // O caminho do companion: o gate compila com cwd=test e __FILE__ relativo
+    // (glob do verify_all), mas também pode rodar standalone do repo —
+    // tento os dois.
     {
-        std::string self = __FILE__;
-        size_t b = self.rfind('/');
-        if (b != std::string::npos) self = self.substr(0, b);
-        FILE *c = fopen((self + "/../jni/companion.cpp").c_str(), "r");
+        const char *candidatos[] = {
+            "../jni/companion.cpp",   // cwd=test (o caso do verify_all)
+            "jni/companion.cpp",      // cwd=repo (standalone)
+        };
+        FILE *c = NULL;
+        for (int i = 0; i < 2 && c == NULL; i++) c = fopen(candidatos[i], "r");
         if (c == nullptr) {
             check("abri jni/companion.cpp", false);
         } else {

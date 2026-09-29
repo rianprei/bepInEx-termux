@@ -97,8 +97,8 @@ python3 termux_client.py status
 Respostas literais do companion (a saída do cliente é resposta de protocolo,
 não `logcat`):
 
-- `pong` — `jni/companion.cpp:781-781` (anchor: `"pong"`).
-- `companion_active` — `jni/companion.cpp:806-806` (anchor: `"companion_active"`).
+- `pong` — `jni/companion.cpp:782-782` (anchor: `"pong"`).
+- `companion_active` — `jni/companion.cpp:807-807` (anchor: `"companion_active"`).
 
 **PASS:** cada comando termina com status 0 e imprime exatamente a resposta
 correspondente, sem `error:`/timeout. Qualquer outra resposta, traceback,
@@ -171,9 +171,9 @@ python3 termux_client.py push_mod /sdcard/Download/round3-noop.so
 A resposta e o log de entrega são:
 
 - `ok: %ld bytes written` (o `%ld` é o tamanho real da fixture) —
-  `jni/companion.cpp:723-724` (anchor: `"ok: %ld bytes written\n"`).
+  `jni/companion.cpp:724-725` (anchor: `"ok: %ld bytes written\n"`).
 - `push_mod: wrote %s (%ld bytes)` (caminho e tamanho reais) —
-  `jni/companion.cpp:726-726` (anchor: `"push_mod: wrote %s (%ld bytes)"`).
+  `jni/companion.cpp:727-727` (anchor: `"push_mod: wrote %s (%ld bytes)"`).
 
 Depois abra Battle Cats e confira:
 
