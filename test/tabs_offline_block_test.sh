@@ -129,7 +129,9 @@ fi
 # descreveria um APK que não é o instalado, e o patcher "reproduzível"
 # reproduziria qualquer coisa. Trava = formato de 64 hex E o valor medido.
 lock_sha=$(sed -n 's/^delivered-sha256=//p' "$LOCK" 2>/dev/null)
-if [ -n "$lock_sha" ] && printf '%s' "$lock_sha" | grep -qE '^[0-9a-f]{64}$'; then
+# pipefail-grep: here-string, nao `printf | grep -q` — o -q sai cedo e o
+# produtor leva SIGPIPE sob pipefail.
+if [ -n "$lock_sha" ] && grep -qE '^[0-9a-f]{64}$' <<<"$lock_sha"; then
   ok "lock:formato" "delivered-sha256 é um sha256 (64 hex)"
 else
   fail "delivered-sha256 do lock não é um sha256 (64 hex): '$lock_sha'"
