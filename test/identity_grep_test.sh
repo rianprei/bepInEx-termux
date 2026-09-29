@@ -38,7 +38,9 @@ while IFS= read -r hit; do
     case "$stripped" in
         "//"*|"#"*|"*"*) ok=1 ;;  # comentário
     esac
-    if [ "$ok" = 0 ] && echo "$content" | grep -qE 'strstr.*"[a-z]+\.[a-z]+'; then
+    # pipefail-grep: here-string em vez de `echo | grep -q` — o -q sai cedo,
+    # o produtor leva SIGPIPE (141) e o pipefail vira falso-negativo.
+    if [ "$ok" = 0 ] && grep -qE 'strstr.*"[a-z]+\.[a-z]+' <<<"$content"; then
         ok=0
     fi
     if [ "$ok" = 0 ]; then

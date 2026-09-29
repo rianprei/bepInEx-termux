@@ -24,6 +24,10 @@ cd "$ROOT"
 #                                    da árvore nova) cita o caminho velho só
 #                                    para dizer o que o device_test.sh antigo
 #                                    não prova mais.
+#   docs/DEVICE-ROUND-3.md        — idem rodada 3 (smoke pós-rodada-2):
+#                                    as menções são `test ! -e/-L` — o
+#                                    roteiro PROVA que o caminho velho
+#                                    AUSENTA; nenhuma é instrução de uso.
 #   CHANGELOG.md                  — registro histórico de releases: diz o que
 #                                    ERA em cada versão; reescrever mudaria a
 #                                    história do que foi lançado.
@@ -51,6 +55,7 @@ EXCEPTIONS=(
     "module/migrate-mods-tree.sh"
     "docs/DEVICE-ROUND.md"
     "docs/DEVICE-ROUND-2.md"
+    "docs/DEVICE-ROUND-3.md"
     "CHANGELOG.md"
     "manager/test/io/github/rianprei/bepinex/manager/test/RootInjectionTableTest.java"
     "test/device/restore-sim.sh"
