@@ -255,6 +255,271 @@ if tp.Axml(zout.read("AndroidManifest.xml")).read_attr_enum("manifest", "install
 print("ok installLocation: opção separada das etapas e presente no APK final")
 PY3
 
+
+# ------------------------------------------- did-local (smali, funcao pura) ---
+python3 - "$PATCHER" <<'PY5'
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location("tabs_patch", sys.argv[1])
+tp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tp)
+
+def die(m):
+    print("tabs_patch_test: %s" % m, file=sys.stderr)
+    sys.exit(1)
+
+# O smali do método real, como o baksmali escreve. O gate não roda java nem
+# precisa do jar (o jar vive em out/, fora do git): o que se testa aqui é a
+# TRANSFORMAÇÃO de texto, que é a parte que pode estar errada. O
+# desmontar/remontar de verdade é testado no device, e está no README do
+# did-restore-wip.
+smali_real = """.class public Lcom/xd/intl/common/utils/DeviceUtils;
+.super Ljava/lang/Object;
+
+.method public static makeUniqueDeviceIdByManual()Ljava/lang/String;
+    .locals 7
+
+    :try_start_0
+    sget-object v0, Landroid/os/Build;->SERIAL:Ljava/lang/String;
+    invoke-static {}, Lcom/xd/intl/common/utils/DeviceUtils;->getLocalMacAddress()Ljava/lang/String;
+    move-result-object v1
+    new-instance v2, Ljava/util/UUID;
+    invoke-virtual {v0}, Ljava/lang/String;->hashCode()I
+    move-result v0
+    :try_end_0
+    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+
+    goto :goto_0
+
+    :catch_0
+    move-exception v0
+    const-string v0, ""
+    :goto_0
+    return-object v0
+.end method
+
+.method public static getAndroidId(Landroid/content/Context;)Ljava/lang/String;
+    .registers 2
+    const-string v0, ""
+    return-object v0
+.end method
+"""
+novo = tp.patch_device_utils_smali(smali_real, tp.DID_UUID_DEFAULT)
+if novo.count(tp.DID_METHOD_HEAD) != 1:
+    die("a transformação duplicou ou apagou o método")
+corpo = novo[novo.index(tp.DID_METHOD_HEAD):novo.index(tp.DID_METHOD_HEAD) + 2000]
+corpo = corpo[:corpo.index(".end method")]
+if "const-string v0, \"%s\"" % tp.DID_UUID_DEFAULT not in corpo:
+    die("o did não entrou no método: %s" % corpo[:200])
+if "return-object v0" not in corpo:
+    die("o método novo não devolve o objeto")
+if ":try_start_0" in corpo or "Build;->SERIAL" in corpo:
+    die("o corpo do NPE (Build.SERIAL/MAC) continua no método")
+# e o resto do arquivo tem que ficar igual: o getAndroidId é stub e ninguém mexeu nele
+if 'getAndroidId' not in novo or 'const-string v0, ""' not in novo.split('.method public static getAndroidId')[1]:
+    die("a transformação mexeu em outro método")
+# o did tem que ser um UUID, e não o userId da conta (que é o que o patches
+# anterior escrevia por engano — o servidor trata os dois como coisas diferentes)
+if len(tp.DID_UUID_DEFAULT) != 36 or tp.DID_UUID_DEFAULT.count("-") != 4:
+    die("DID_UUID_DEFAULT não é um UUID: %r" % tp.DID_UUID_DEFAULT)
+for ruim in ("933914692236345345", "nao-e-uuid", ""):
+    try:
+        tp.patch_device_utils_smali(smali_real, ruim)
+        die("a transformação aceitou um did inválido: %r" % ruim)
+    except ValueError:
+        pass
+# e o método tem que aparecer uma vez só: duas, o patch trocaria a errada
+try:
+    tp.patch_device_utils_smali(smali_real + smali_real, tp.DID_UUID_DEFAULT)
+    die("a transformação aceitou um smali com o método duplicado")
+except ValueError:
+    pass
+print("ok did-local: corpo virou const-string UUID + return-object, resto do "
+      "arquivo intacto, entrada invalida e duplicada recusadas")
+PY5
+
+# ------------------------------------------- guest-local (smali, 2 metodos) ---
+python3 - "$PATCHER" <<'PY6B'
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location("tabs_patch", sys.argv[1])
+tp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tp)
+
+def die(m):
+    print("tabs_patch_test: %s" % m, file=sys.stderr)
+    sys.exit(1)
+
+def corpo(texto, head):
+    i = texto.index(head)
+    c = texto[i:]
+    return c[:c.index(".end method")]
+
+# --- 1) GlobalUserStore.init(): semeia a sessao local, preservando o init real
+store = """.class public final Lcom/xd/intl/common/global/GlobalUserStore;
+.super Ljava/lang/Object;
+
+.method public init()V
+    .locals 1
+
+    new-instance v0, Lcom/xd/intl/common/model/AccountPreferenceImpl;
+
+    invoke-direct {v0}, Lcom/xd/intl/common/model/AccountPreferenceImpl;-><init>()V
+
+    iput-object v0, p0, Lcom/xd/intl/common/global/GlobalUserStore;->mAccountPreference:Lcom/xd/intl/common/model/IAccountPreference;
+
+    return-void
+.end method
+
+.method public clearToken()V
+    .locals 1
+    return-void
+.end method
+"""
+novo = tp.patch_guest_local_smali(store, "store")
+c = corpo(novo, tp.GLOBAL_STORE_INIT_HEAD)
+# o que o init original fazia tem que continuar fazendo, senao o SDK de conta
+# perde o IAccountPreference e quebra tudo que vem depois
+if "AccountPreferenceImpl" not in c or "mAccountPreference" not in c:
+    die("o init original foi perdido: %s" % c[:300])
+for precisa in ('setId', 'setNickName', 'setLoginType', 'setExpired', 'setExpiresIn',
+                'setAccessToken', 'currentUser', 'currentAccessToken'):
+    if precisa not in c:
+        die("a sessao local nao tem %s: %s" % (precisa, c[:300]))
+if '"%s"' % tp.GUEST_ID not in c:
+    die("o id local nao entrou: %s" % c[:300])
+# expired=false: se o autoLogin ver isExpired()==true, ele aborta com
+# XD_TOKEN_EXPIRED e o jogo volta a cair no login. E o -100 (DEFAULT_UNKNOWN_
+# LOGIN_TYPE) e o que faz o autoLogin pular isTokenActiveWithType.
+if "const/4 v2, 0x0\n\n    invoke-virtual {v1, v2}, Lcom/xd/intl/common/bean/XDAccessToken;->setExpired(Z)V" not in c:
+    die("setExpired nao recebe false: %s" % c[:400])
+if "const v2, -0x64" not in c:
+    die("loginType nao e DEFAULT_UNKNOWN_LOGIN_TYPE(-100): %s" % c[:400])
+# .locals tem que caber o maior v usado (v0,v1,v2 + p0) -> no minimo 3
+locals_n = int(c.split(".locals ")[1].split("\n")[0].strip())
+if locals_n < 3:
+    die(".locals %d nao comporta v2" % locals_n)
+# e o outro metodo do arquivo tem que ficar igual
+if "clearToken" not in novo or len(novo) < len(store):
+    die("a transformação mexeu em outro metodo")
+
+# --- 2) XDAccountCore.fetchUserInfo(): sucesso local, sem rede
+core = """.class public final Lcom/xd/intl/account/XDAccountCore;
+.super Ljava/lang/Object;
+
+.method private final fetchUserInfo(Lcom/xd/intl/common/bean/XDGUser;Lcom/xd/intl/common/callback/Callback;)V
+    .locals 3
+
+    sget-object v0, Lcom/xd/intl/account/impl/TDSGlobalAccountComponent;->INSTANCE:Lcom/xd/intl/account/impl/TDSGlobalAccountComponent;
+
+    invoke-virtual {v0}, Lcom/xd/intl/account/impl/TDSGlobalAccountComponent;->getUserInfo()Lio/reactivex/Observable;
+
+    move-result-object v0
+
+    invoke-virtual {v0, v1}, Lio/reactivex/Observable;->subscribe(Lio/reactivex/Observer;)V
+
+    return-void
+.end method
+
+.method private final fetchAreaCodeInfos()V
+    .locals 1
+    return-void
+.end method
+"""
+novo_c = tp.patch_guest_local_smali(core, "fetch")
+cf = corpo(novo_c, tp.FETCH_USER_INFO_HEAD)
+# o corpo tem comentarios que NOMEIAM o que foi removido (e isso e util), entao
+# a rede e procurada so nas linhas de instrucao
+instrucoes = "\n".join(l for l in cf.split("\n") if not l.strip().startswith("#"))
+# a cadeia Rx era a rede; se qualquer resto dela sobrar, o patch e inerte
+for proibido in ("TDSGlobalAccountComponent", "Observable", "NetRespObserver",
+                 "Schedulers", "subscribe"):
+    if proibido in instrucoes:
+        die("fetchUserInfo ainda tem rede (%s): %s" % (proibido, instrucoes[:300]))
+# resposta: callback com o MESMO usuario (p1) e erro nulo, e null-safe no cb
+if "invoke-interface {p2, p1, v0}" not in cf:
+    die("o callback nao recebe o usuario: %s" % cf[:300])
+if "if-eqz p2" not in cf:
+    die("o callback nulo nao e tratado: %s" % cf[:300])
+if "return-void" not in cf:
+    die("fetchUserInfo nao volta: %s" % cf[:300])
+if "fetchAreaCodeInfos" not in novo_c:
+    die("a transformação mexeu em outro metodo")
+
+# --- 3) as guardas de unicidade valem para os dois alvos
+for head, qual in ((tp.GLOBAL_STORE_INIT_HEAD, "store"), (tp.FETCH_USER_INFO_HEAD, "fetch")):
+    if "==V" not in head and ")V" not in head:
+        die("cabecalho de teste estranho: %r" % head)
+    try:
+        tp.patch_guest_local_smali(head + "\n.end method\n" + head + "\n.end method\n", qual)
+        die("aceitou smali com %s duplicado" % qual)
+    except ValueError:
+        pass
+    try:
+        tp.patch_guest_local_smali(".class public final Lcom/xd/intl/common/global/GlobalUserStore;\n.super Ljava/lang/Object;\n", qual)
+        die("aceitou smali sem o metodo %s" % qual)
+    except ValueError:
+        pass
+try:
+    tp.patch_guest_local_smali(store, "qual-que-nao-existe")
+    die("aceitou qual desconhecido")
+except ValueError:
+    pass
+
+# --- 4) o corpo novo precisa fechar o metodo, senao o smali nao assembla
+if ".end method" not in tp.smali_guest_store_init():
+    die("o corpo do init nao fecha o metodo")
+if ".end method" not in tp.smali_fetch_user_info_local():
+    die("o corpo do fetchUserInfo nao fecha o metodo")
+# const/high16 exige os 16 bits baixos zerados: um expiresIn com cauda nao
+# assembla (ja falhou assim uma vez)
+if "0x3b9a0000" not in tp.smali_guest_store_init():
+    die("o expiresIn nao e um const/high16 valido")
+if "const/high16 v2, 0x3b9aca00" in tp.smali_guest_store_init():
+    die("expiresIn com os 16 bits baixos nao zerados")
+print("ok guest-local: init semeia user+token local preservando o init real, "
+      "fetchUserInfo fica sem rede e null-safe, guardas de unicidade e "
+      "const/high16 ok")
+PY6B
+
+# --------------------------------------------------- noads (so o manifest) ---
+python3 - "$PATCHER" "$FIX" <<'PY6'
+import importlib.util, json, os, subprocess, sys, zipfile
+
+spec = importlib.util.spec_from_file_location("tabs_patch", sys.argv[1])
+tp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tp)
+FIX = sys.argv[2]
+
+def die(m):
+    print("tabs_patch_test: %s" % m, file=sys.stderr)
+    sys.exit(1)
+
+def read(name):
+    with open(os.path.join(FIX, os.path.basename(name)), "rb") as f:
+        return f.read()
+
+out = tp.stage_noads(read)
+if [e for e, _, _ in out] != ["AndroidManifest.xml"]:
+    die("noads tem que tocar só o manifest")
+ax = tp.Axml(dict((e, d) for e, d, _ in out)["AndroidManifest.xml"])
+if ax.read_meta_data_value("com.tapsdk.billboard.loader")[1] & 0xFFFFFFFF:
+    die("noads não desligou o loader de billboard")
+# e o resto continua: conta, pagamento, anti-addiction, login, conteúdo
+for loader in tp.LOADERS_PARA_NUNCA_TOCAR:
+    if not (ax.read_meta_data_value(loader)[1] & 0xFFFFFFFF):
+        die("noads mexeu em %s, que é login/conta/pagamento/conteúdo" % loader)
+# telemetria e anúncio são etapas DIFERENTES (uma não pode vir no lugar da
+# outra): se alguém somar as duas, a trava de "uma etapa por arquivo" recusa
+try:
+    tp.stage_noads(read) + tp.stage_telemetry_config(read)
+    # a união acima é só teste de que as chaves não se misturam
+except ValueError as e:
+    die("união artificial de noads+telemetry falhou de forma inesperada: %s" % e)
+print("ok noads: só o loader de billboard desligado, %d loaders críticos intactos"
+      % len(tp.LOADERS_PARA_NUNCA_TOCAR))
+PY6
+
 # --------------------------------------------------------------- 4, 5, 6 ---
 python3 - "$PATCHER" "$FIX" "$WORK" <<'PY'
 import hashlib, importlib.util, json, os, subprocess, sys, zipfile
@@ -321,14 +586,20 @@ for c in rep["changes"]:
         die("relatório diz que %s não mudou" % c["entry"])
 print("ok relatório: 2 mudanças com sha256 antes/depois")
 
-# Etapa inexistente não pode ser "--stages noads" fingindo que rodou: hoje
-# noads/perf são pendentes e o patcher tem que dizer isso.
+# Etapa pendente não pode fingir que rodou, e nome inventado tem que ser
+# recusado por nome. `perf` ainda não existe; `--ignore-lock` porque aqui a
+# recusa tem que ser a da etapa, não a do sha256 do APK de teste.
 p = subprocess.run([sys.executable, sys.argv[1], "--apk", src, "--out",
-                    os.path.join(WORK, "x.apk"), "--stages", "noads"],
+                    os.path.join(WORK, "x.apk"), "--stages", "perf", "--ignore-lock"],
                    capture_output=True, text=True)
 if p.returncode == 0 or "não implementada" not in p.stderr:
-    die("etapa pendente não foi recusada com 'não implementada': %s" % p.stderr[:120])
-print("ok etapas: pendente recusada por nome")
+    die("etapa pendente (perf) não foi recusada com 'não implementada': %s" % p.stderr[:140])
+p = subprocess.run([sys.executable, sys.argv[1], "--apk", src, "--out",
+                    os.path.join(WORK, "y.apk"), "--stages", "telemetria", "--ignore-lock"],
+                   capture_output=True, text=True)
+if p.returncode == 0 or "desconhecida" not in p.stderr:
+    die("nome de etapa inexistente não foi recusado: %s" % p.stderr[:140])
+print("ok etapas: perf recusada como pendente, nome inexistente recusado")
 
 # (6) SABOTAGEM: patcher sem a edição do db_config tem que reprovar no (1).
 mutant = os.path.join(WORK, "mutant.py")

@@ -56,12 +56,16 @@ USO
 """
 import argparse
 import binascii
+import re
+import glob
 import hashlib
 import json
 import os
 import struct
+import subprocess
 import sys
 import zlib
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK_PATH = os.path.join(ROOT, "tools", "tabs_apk.lock")
@@ -285,6 +289,420 @@ class Axml:
         return bool(old)
 
 
+
+
+# ------------------------------------------------------------- anúncios ----
+BILLBOARD_LOADER = "com.tapsdk.billboard.loader"
+
+
+def stage_noads(read_entry, ctx=None):
+    """Etapa `noads`: não carrega o plugin de anúncio do TapTap.
+
+    MEDIDO no APK: `com.tapsdk.billboard.loader` é o meta-data que carrega o
+    plugin de billboard (o mesmo `TDSBillboardService` que o logcat mostra
+    chamando `init`, `registerMarqueeListener`, `startFetchMarqueeData`,
+    `openSplashPanel`, `queryBadgeDetails`). Sem o plugin, nenhuma requisição a
+    `u0m5lrcp.billboard.ap-sg.tapapis.com` e nenhum painel/marquee aparece.
+
+    O que a etapa NÃO faz, por regra: não toca em IAP/moeda, não forja
+    `ADReportComplete` e não concede nada. Um anúncio recompensado que deixasse
+    de existir é só isso: indisponível. Se aparecer botão de recompensa sem
+    anúncio, ele falha normalmente.
+    """
+    if BILLBOARD_LOADER in LOADERS_PARA_NUNCA_TOCAR:
+        raise ValueError("billboard entrou na lista de nunca tocar")
+    ax = Axml(read_entry(MANIFEST))
+    if ax.set_meta_data_boolean(BILLBOARD_LOADER, False) is not True:
+        raise ValueError("meta-data %s já não era true: o APK de entrada não é "
+                         "o esperado" % BILLBOARD_LOADER)
+    return [(MANIFEST, bytes(ax.data),
+             "meta-data %s true->false (plugin de anúncio não carrega: sem "
+             "marquee, sem splash panel, sem requisição ao billboard)" % BILLBOARD_LOADER)]
+
+
+# ------------------------------------------------------- did local (smali) --
+# A menor etapa possível para o did, feita em smali de verdade (baksmali ->
+# edicao de texto -> smali) e nao por patch de bytes. O motivo do caminho
+# longo: trocar o texto de uma string na pool do dex sem remontar a pool
+# deixa buraco no string_data e o verificador do AOSP (o `dexdump` oficial)
+# recusa o arquivo. Remontar com smali reescreve pool e offsets corretamente,
+# e o dex passa no dexdump (medido: rc=0).
+#
+# O metodo alvo e o unico lugar onde o did nasce neste build:
+# `DeviceUtils.makeUniqueDeviceIdByManual()` — ver o smali original no
+# README do did-restore-wip. O valor default e o UUID que ESTE aparelho ja
+# tinha, lido de `files/.tds_GUIDHelper/GUID` no backup do data dir.
+DID_UUID_DEFAULT = "9dd8d53e-f26d-4f51-be2c-a07f92f79c77"
+DEVICE_UTILS_SMALI = "com/xd/intl/common/utils/DeviceUtils.smali"
+DID_METHOD_HEAD = ".method public static makeUniqueDeviceIdByManual()Ljava/lang/String;"
+DEVICE_UTILS_CLASS = "com.xd.intl.common.utils.DeviceUtils"
+DID_METHOD_NAME = "makeUniqueDeviceIdByManual"
+
+
+def smali_did_body(did):
+    """Corpo novo do metodo: uma string e um return. smallest patch possivel."""
+    return ("%s\n"
+            "    .locals 1\n"
+            "\n"
+            "    # tabs-offline: did local ESTÁVEL, sem rede.\n"
+            "    # O original faz hash de Build.SERIAL (null no Android 10+) e do\n"
+            "    # MAC (getHardwareAddress() devolve null no Android 15) -> NPE ->\n"
+            "    # devolve \"\", e a conta TDS e recusada com 'did: did can not be\n"
+            "    # empty'. Este valor e o UUID que este aparelho ja tinha (backup do\n"
+            "    # data dir, files/.tds_GUIDHelper/GUID) — mesmo formato que\n"
+            "    # UUID.toString() devolve. Identidade de dispositivo, nao IAP.\n"
+            "    const-string v0, \"%s\"\n"
+            "\n"
+            "    return-object v0\n"
+            ".end method\n") % (DID_METHOD_HEAD, did)
+
+
+def replace_method_body(smali_text, method_head, new_body, what):
+    """Troca SÓ o corpo do método cujo cabeçalho é `method_head`.
+
+    `new_body` precisa ser o método INTEIRO, cabeçalho e `.end method`
+    inclusos — quem chama monta isso.
+
+    Falha alto se o cabeçalho não aparecer exatamente uma vez: um patch que
+    acha o alvo errado é pior do que um patch que não roda.
+    """
+    n = smali_text.count(method_head)
+    if n != 1:
+        raise ValueError("%s: cabeçalho %r aparece %d vezes (tem que ser 1)"
+                         % (what, method_head, n))
+    if ".end method" not in new_body:
+        raise ValueError("%s: corpo novo não tem .end method" % what)
+    i = smali_text.index(method_head)
+    j = smali_text.index(".end method", i) + len(".end method\n")
+    return smali_text[:i] + new_body + smali_text[j:]
+
+
+def patch_device_utils_smali(smali_text, did):
+    """did local em DeviceUtils. Função pura de texto."""
+    if not re.match(r"^[0-9A-Fa-f-]{36}$", did):
+        raise ValueError("did tem que ser um UUID: %r" % did)
+    return replace_method_body(smali_text, DID_METHOD_HEAD, smali_did_body(did),
+                              "did-local")
+
+
+# ------------------------------------------------------- guest-local ------
+# Objetivo: o C# pede loginByType(LoginEntryType.DEFAULT) ao SDK de conta.
+# No caminho DEFAULT, se não houver usuário corrente, o Java responde
+# XDGError(0x270f, "user token is empty") -> onLoginFailed -> loginFailEvent
+# -> o C# abre a tela de login. Não existe tipo de entrada realmente offline
+# (PHONE/TAP_TAP/APPLE/STEAM/EMAIL vão todos para AccountSignInPresenterImpl
+# ou LoginModel, que exigem conta e rede).
+#
+# A correção é uma sessão LOCAL de convidado: o mesmo resultado que um login
+# válido produziria, sem servidor, sem token emitido pela TDS e sem IAP.
+# Dois pontos, ambos offline por construção:
+#   1) GlobalUserStore.init() semeia usuário + accessToken em memória;
+#   2) fetchUserInfo (que é 100% rede) responde sucesso direto.
+# onLoginSuccess NÃO é chamado de propósito: ele dispara
+# checkIncompleteTransaction4Upload (ISC de pagamento), uploadAgreementConfirm
+# e LoginLogger — todos rede/telemetria, inúteis numa sessão local.
+GLOBAL_USER_STORE_SMALI = "com/xd/intl/common/global/GlobalUserStore.smali"
+GLOBAL_USER_STORE_CLASS = "com.xd.intl.common.global.GlobalUserStore"
+GLOBAL_STORE_INIT_HEAD = ".method public init()V"
+ACCOUNT_CORE_SMALI = "com/xd/intl/account/XDAccountCore.smali"
+ACCOUNT_CORE_CLASS = "com.xd.intl.account.XDAccountCore"
+FETCH_USER_INFO_HEAD = (".method private final fetchUserInfo"
+                        "(Lcom/xd/intl/common/bean/XDGUser;"
+                        "Lcom/xd/intl/common/callback/Callback;)V")
+GUEST_ID = "local-guest"
+
+
+def smali_guest_store_init():
+    """GlobalUserStore.init() original + semeia a sessão local.
+
+    Os getters (getCurrentXDUser/getCurrentAccessToken) preferem o campo e
+    só caem para o IAccountPreference quando ele é null, então basta escrever
+    os campos: nada é serializado em disco e a semeadura é refeita a cada
+    start do processo, o que mantém o comportamento determinístico.
+    """
+    return (GLOBAL_STORE_INIT_HEAD + "\n"
+            "    .locals 3\n"
+            "\n"
+            "    new-instance v0, Lcom/xd/intl/common/model/AccountPreferenceImpl;\n"
+            "\n"
+            "    invoke-direct {v0}, Lcom/xd/intl/common/model/AccountPreferenceImpl;-><init>()V\n"
+            "\n"
+            "    iput-object v0, p0, Lcom/xd/intl/common/global/GlobalUserStore;->mAccountPreference:Lcom/xd/intl/common/model/IAccountPreference;\n"
+            "\n"
+            "    # tabs-offline: sessão local de convidado. Identidade de sessão\n"
+            "    # local, NÃO licença, NÃO IAP, NÃO token emitido pelo servidor.\n"
+            "    new-instance v0, Lcom/xd/intl/common/bean/XDGUser;\n"
+            "\n"
+            "    invoke-direct {v0}, Lcom/xd/intl/common/bean/XDGUser;-><init>()V\n"
+            "\n"
+            "    const-string v2, \"%s\"\n"
+            "\n"
+            "    invoke-virtual {v0, v2}, Lcom/xd/intl/common/bean/XDGUser;->setId(Ljava/lang/String;)V\n"
+            "\n"
+            "    invoke-virtual {v0, v2}, Lcom/xd/intl/common/bean/XDGUser;->setName(Ljava/lang/String;)V\n"
+            "\n"
+            "    const-string v2, \"Guest\"\n"
+            "\n"
+            "    invoke-virtual {v0, v2}, Lcom/xd/intl/common/bean/XDGUser;->setNickName(Ljava/lang/String;)V\n"
+            "\n"
+            "    invoke-virtual {v0, v2}, Lcom/xd/intl/common/bean/XDGUser;->setLoginTypeEntryName(Ljava/lang/String;)V\n"
+            "\n"
+            "    # loginType = DEFAULT_UNKNOWN_LOGIN_TYPE (-100): é o valor que\n"
+            "    # faz autoLogin pular a checagem de token de terceiro\n"
+            "    # (isTokenActiveWithType) e cair direto no passo seguinte.\n"
+            "    const v2, -0x64\n"
+            "\n"
+            "    invoke-virtual {v0, v2}, Lcom/xd/intl/common/bean/XDGUser;->setLoginType(I)V\n"
+            "\n"
+            "    new-instance v1, Lcom/xd/intl/common/bean/XDAccessToken;\n"
+            "\n"
+            "    invoke-direct {v1}, Lcom/xd/intl/common/bean/XDAccessToken;-><init>()V\n"
+            "\n"
+            "    # expired=false e expiresIn alto: autoLogin aborta com\n"
+            "    # XD_TOKEN_EXPIRED se isExpired() for verdadeiro.\n"
+            "    const/4 v2, 0x0\n"
+            "\n"
+            "    invoke-virtual {v1, v2}, Lcom/xd/intl/common/bean/XDAccessToken;->setExpired(Z)V\n"
+            "\n"
+            "    # 0x3b9a0000 (~999.948.288s): const/high16 exige os 16 bits\n"
+            "    # baixos zerados, daí o 0x0000 no fim.\n"
+            "    const/high16 v2, 0x3b9a0000\n"
+            "\n"
+            "    invoke-virtual {v1, v2}, Lcom/xd/intl/common/bean/XDAccessToken;->setExpiresIn(I)V\n"
+            "\n"
+            "    const-string v2, \"bearer\"\n"
+            "\n"
+            "    invoke-virtual {v1, v2}, Lcom/xd/intl/common/bean/XDAccessToken;->setTokenType(Ljava/lang/String;)V\n"
+            "\n"
+            "    const-string v2, \"offline-local\"\n"
+            "\n"
+            "    invoke-virtual {v1, v2}, Lcom/xd/intl/common/bean/XDAccessToken;->setKid(Ljava/lang/String;)V\n"
+            "\n"
+            "    invoke-virtual {v0, v1}, Lcom/xd/intl/common/bean/XDGUser;->setAccessToken(Lcom/xd/intl/common/bean/XDAccessToken;)V\n"
+            "\n"
+            "    iput-object v0, p0, Lcom/xd/intl/common/global/GlobalUserStore;->currentUser:Lcom/xd/intl/common/bean/XDGUser;\n"
+            "\n"
+            "    iput-object v1, p0, Lcom/xd/intl/common/global/GlobalUserStore;->currentAccessToken:Lcom/xd/intl/common/bean/XDAccessToken;\n"
+            "\n"
+            "    return-void\n"
+            ".end method\n") % GUEST_ID
+
+
+def smali_fetch_user_info_local():
+    """fetchUserInfo local: sucesso imediato, sem cadeia Rx e sem rede."""
+    return (FETCH_USER_INFO_HEAD + "\n"
+            "    .locals 1\n"
+            "\n"
+            "    # tabs-offline: o original monta uma cadeia Rx sobre\n"
+            "    # TDSGlobalAccountComponent.getUserInfo() (rede) e entrega o\n"
+            "    # resultado por NetRespObserver. Numa sessão local não há o que\n"
+            "    # buscar: responde sucesso com o mesmo usuário, que é o que o\n"
+            "    # caminho de rede faria num login válido.\n"
+            "    if-eqz p2, :fim\n"
+            "\n"
+            "    const/4 v0, 0x0\n"
+            "\n"
+            "    invoke-interface {p2, p1, v0}, Lcom/xd/intl/common/callback/Callback;->onCallback(Ljava/lang/Object;Lcom/xd/intl/common/base/XDGError;)V\n"
+            "\n"
+            "    :fim\n"
+            "    return-void\n"
+            ".end method\n")
+
+
+def patch_guest_local_smali(smali_text, qual):
+    """Aplica o patch de guest-local que pertence a este arquivo smali."""
+    if qual == "store":
+        return replace_method_body(smali_text, GLOBAL_STORE_INIT_HEAD,
+                                  smali_guest_store_init(), "guest-local store")
+    if qual == "fetch":
+        return replace_method_body(smali_text, FETCH_USER_INFO_HEAD,
+                                  smali_fetch_user_info_local(), "guest-local fetch")
+    raise ValueError("qual desconhecido: %r" % qual)
+
+
+def dexdump_binary():
+    bt = os.environ.get("ANDROID_BUILD_TOOLS")
+    if not bt:
+        for cand in sorted(glob.glob(os.path.expanduser("~/Android/Sdk/build-tools/*")), reverse=True):
+            if os.path.isfile(os.path.join(cand, "dexdump")):
+                bt = cand
+                break
+    if not bt or not os.path.isfile(os.path.join(bt, "dexdump")):
+        raise SystemExit("ERRO: dexdump não encontrado (defina ANDROID_BUILD_TOOLS)")
+    return os.path.join(bt, "dexdump")
+
+
+def dexdump_bytes(data, flags="-d"):
+    """dexdump só lê ARQUIVO (ReadFileToString), não stdin."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(prefix="tabs-dex-", suffix=".dex", delete=False) as f:
+        f.write(bytes(data))
+        path = f.name
+    try:
+        r = subprocess.run([dexdump_binary(), flags, path], capture_output=True)
+    finally:
+        os.unlink(path)
+    return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+
+
+def apktool_jar(ctx):
+    jar = (ctx or {}).get("apktool")
+    if jar:
+        return jar
+    if os.environ.get("APKTOOL_JAR"):
+        return os.environ["APKTOOL_JAR"]
+    # o jar baixado por tools/fetch_apktool.sh
+    for cand in sorted(glob.glob(os.path.join(os.path.dirname(__file__), "..", "out", "apktool", "apktool-*.jar"))):
+        return cand
+    raise SystemExit("ERRO: apktool.jar não encontrado — rode sh tools/fetch_apktool.sh")
+
+
+def smali_roundtrip(read_entry, dex_name, edits, verifica, ctx=None):
+    """Aplica vários edits de smali num dex com UMA ida e volta do apktool.
+
+    `edits` mapeia caminho relativo do smali -> função(smali_text) -> texto
+    novo. `verifica(stdout_do_dexdump)` valida o dex remontado: a prova é o
+    dexdump, não o texto do smali, porque quem consome é o ART.
+
+    Falha alto se um edit não mudar nada: edit que não casa com o alvo é um
+    patch silenciosamente inócuo, que é pior do que um patch que não roda.
+    """
+    import tempfile
+    ctx = ctx or {}
+    jar = apktool_jar(ctx)
+    dexdump = dexdump_binary()
+    with tempfile.TemporaryDirectory(prefix="tabs-smali-") as work:
+        dex_in = os.path.join(work, "classes.dex")
+        with open(dex_in, "wb") as f:
+            f.write(read_entry(dex_name))
+        mini = os.path.join(work, "mini.apk")
+        with zipfile.ZipFile(mini, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(dex_in, "classes.dex")
+        out = os.path.join(work, "apk")
+        r = subprocess.run(["java", "-jar", jar, "d", "--no-res", "-f", "-o", out, mini],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise ValueError("baksmali falhou: %s" % (r.stderr or r.stdout)[-300:])
+        for rel, edita in edits.items():
+            alvo = os.path.join(out, "smali", rel)
+            if not os.path.exists(alvo):
+                raise ValueError("%s não encontrado no smali extraído" % rel)
+            with open(alvo, encoding="utf-8") as f:
+                smali = f.read()
+            novo = edita(smali)
+            if novo == smali:
+                raise ValueError("edit não mudou nada em %s (alvo não casou?)" % rel)
+            with open(alvo, "w", encoding="utf-8") as f:
+                f.write(novo)
+        rebuilt = os.path.join(work, "rebuilt.apk")
+        r2 = subprocess.run(["java", "-jar", jar, "b", "--no-res", "-o", rebuilt, out],
+                            capture_output=True, text=True)
+        if r2.returncode != 0 or not os.path.exists(rebuilt):
+            raise ValueError("smali falhou: %s" % (r2.stderr or r2.stdout)[-300:])
+        with zipfile.ZipFile(rebuilt) as z:
+            dex_novo = z.read("classes.dex")
+        # prova: o dexdump tem que ler o dex remontado
+        tmpdex = os.path.join(work, "check.dex")
+        with open(tmpdex, "wb") as f:
+            f.write(dex_novo)
+        r3 = subprocess.run([dexdump, "-d", tmpdex], capture_output=True, text=True)
+        if r3.returncode != 0:
+            raise ValueError("dexdump reprovou o dex remontado: %s" % r3.stderr.strip()[-300:])
+        verifica(r3.stdout)
+        return dex_novo
+
+
+def _corpo_do_metodo(dump, rotulo, janela=4000):
+    """Recorta a disassembly de um método a partir do rótulo do dexdump."""
+    if rotulo not in dump:
+        raise ValueError("o dex remontado não tem o método %s" % rotulo)
+    p = dump.index(rotulo)
+    return dump[p:p + janela]
+
+
+def edits_did(did):
+    """Smali edits do did-local."""
+    return {DEVICE_UTILS_SMALI: lambda s: patch_device_utils_smali(s, did)}
+
+
+def edits_guest():
+    """Smali edits do guest-local (2 arquivos, mesmo dex)."""
+    return {GLOBAL_USER_STORE_SMALI: lambda s: patch_guest_local_smali(s, "store"),
+            ACCOUNT_CORE_SMALI: lambda s: patch_guest_local_smali(s, "fetch")}
+
+
+def verifica_did(did, dump):
+    # A prova é o dexdump: o rótulo do método no dump é
+    # "<classe>.<metodo>:<retorno>" (NÃO o cabeçalho .method do smali), e
+    # o did tem que estar NA DISASSEMBLY desse método.
+    corpo = _corpo_do_metodo(
+        dump, "%s.%s:()Ljava/lang/String;" % (DEVICE_UTILS_CLASS, DID_METHOD_NAME))
+    if ('"%s"' % did) not in corpo or "return-object" not in corpo:
+        raise ValueError("o método não ficou devolvendo o did:\n%s" % corpo[:400])
+
+
+def verifica_guest(dump):
+    store = _corpo_do_metodo(dump, "%s.init:()V" % GLOBAL_USER_STORE_CLASS)
+    if ('"%s"' % GUEST_ID) not in store or "setExpired" not in store:
+        raise ValueError("GlobalUserStore.init não semeia a sessão local:\n%s"
+                         % store[:600])
+    if "currentUser" not in store:
+        raise ValueError("GlobalUserStore.init não escreve currentUser:\n%s"
+                         % store[:600])
+    fetch = _corpo_do_metodo(
+        dump, "%s.fetchUserInfo:(Lcom/xd/intl/common/bean/XDGUser;"
+              "Lcom/xd/intl/common/callback/Callback;)V" % ACCOUNT_CORE_CLASS)
+    if "onCallback" not in fetch:
+        raise ValueError("fetchUserInfo não responde mais o callback:\n%s"
+                         % fetch[:600])
+    if "TDSGlobalAccountComponent" in fetch:
+        raise ValueError("fetchUserInfo ainda chama a rede (TDSGlobalAccountComponent)")
+
+
+def stage_did_local(read_entry, ctx=None):
+    """Etapa `did-local`: did local estável via smali (remonta o dex)."""
+    ctx = ctx or {}
+    did = ctx.get("did_uuid") or DID_UUID_DEFAULT
+    dex_novo = smali_roundtrip(read_entry, "classes2.dex", edits_did(did),
+                               lambda d: verifica_did(did, d), ctx=ctx)
+    return [("classes2.dex", dex_novo,
+             "makeUniqueDeviceIdByManual -> did local %s (remontado com smali; "
+             "dexdump rc=0)" % did)]
+
+
+def stage_guest_local(read_entry, ctx=None):
+    """Etapa `guest-local`: sessão local de convidado, sem login e sem rede."""
+    dex_novo = smali_roundtrip(read_entry, "classes2.dex", edits_guest(),
+                               verifica_guest, ctx=ctx)
+    return [("classes2.dex", dex_novo,
+             "sessão local de convidado: GlobalUserStore.init semeia usuário+%s "
+             "accessToken não expirado e fetchUserInfo responde local "
+             "(sem TDS, sem token de servidor, sem IAP); dexdump rc=0" % GUEST_ID)]
+
+
+def stage_offline(read_entry, ctx=None):
+    """Etapa `offline`: did-local + guest-local num round-trip só.
+
+    Os dois mexem em classes2.dex, e o patcher recusa duas etapas que toquem a
+    mesma entrada. Aqui eles são UMA etapa: uma ida e volta do apktool, um dex
+    remontado, e a prova dos dois conjuntos de edits no mesmo dexdump.
+    """
+    ctx = ctx or {}
+    did = ctx.get("did_uuid") or DID_UUID_DEFAULT
+    edits = edits_did(did)
+    edits.update(edits_guest())
+
+    def verifica(dump):
+        verifica_did(did, dump)
+        verifica_guest(dump)
+
+    dex_novo = smali_roundtrip(read_entry, "classes2.dex", edits, verifica, ctx=ctx)
+    return [("classes2.dex", dex_novo,
+             "identidade local: did %s + sessão de convidado local (init semeia "
+             "user+accessToken não expirado, fetchUserInfo sem rede); 3 arquivos "
+             "de smali, um dex remontado, dexdump rc=0" % did)]
+
+
 # ----------------------------------------------------------------- ZIP ----
 LFH_SIG = 0x04034B50
 CDH_SIG = 0x02014B50
@@ -436,14 +854,13 @@ TELEMETRY_LOADERS = [
     "com.xd.third.track.loader",  # Adjust/AppsFlyer: atribuição
 ]
 # NUNCA tocar: o que quebraria o jogo ou a conta se sumisse.
-LOADERS_PARA_NUNCA_TOCAR = [
+LOADERS_PARA_NUNCA_TOCAR = [   # a etapa noads tira o billboard daqui de proposito
     "com.tapsdk.antiaddiction.loader",
     "com.xd.third.login.loader",
     "com.xd.intl.payment.loader",
     "com.tapsdk.moment.loader",
     "com.xd.intl.account.loader",
     "com.tapsdk.achievement.loader",
-    "com.tapsdk.billboard.loader",  # anúncio: isso é a etapa noads, não esta
     "com.xd.share.loader",
 ]
 
@@ -553,18 +970,59 @@ def stage_telemetry(read_entry):
 STAGES = {
     "telemetry-config": {
         "fn": stage_telemetry_config,
+        "claims": ["cfg:db_config.enable"],
         "doc": "SÓ assets/XDConfig.json: tapsdk.db_config.enable true->false. "
-               "Etapa isolada porque ela mexe no did da conta: no device, "
-               "together com a de plugins, o login parou (medido no device).",
+               "MEDIDO no device: o valor chega ao jogo (a resposta do bridge sai "
+               "enableTapDB:false). Não é a causa do did vazio — o controle sem "
+               "patch falha igual (ver §14 do relatório).",
     },
     "telemetry-plugins": {
         "fn": stage_telemetry_plugins,
+        "claims": ["manifest:com.tapsdk.tapdb.loader", "manifest:com.xd.third.track.loader"],
         "doc": "SÓ AndroidManifest.xml: com.tapsdk.tapdb.loader e "
                "com.xd.third.track.loader true->false (não carrega os plugins "
                "de analytics nem de atribuição).",
     },
+    "did-local": {
+        "fn": stage_did_local,
+        "claims": ["dex:classes2.dex"],
+        "doc": "classes2.dex remontado com smali: DeviceUtils.makeUniqueDeviceIdByManual "
+               "devolve um did local estável (o UUID que este aparelho já tinha). Sem isto o "
+               "SDK de conta não tem identidade e o login falha; com isto o did existe sem "
+               "rede. NÃO é IAP nem licença.",
+    },
+    "guest-local": {
+        "fn": stage_guest_local,
+        "claims": ["dex:classes2.dex"],
+        "doc": "classes2.dex remontado com smali: sessão local de convidado. "
+               "MEDIDO NO DEVICE e DEPOIS DEIXADO FORA DO BUILD: funciona até "
+               "demais. O C# pede loginByType(DEFAULT); sem usuário corrente o "
+               "Java responde 'user token is empty' e o jogo abre a tela de "
+               "login. A sessão local faz o login 'dar certo' (medido: o "
+               "bridge passa a emitir loginSuccessEvent em vez de "
+               "loginFailEvent) — e aí o C# avança para ativar a sessão de "
+               "nuvem e MORRE: NullReferenceException em "
+               "XDGAccountMobileImpl.ActiveLeanCloudToken -> "
+               "TapSDKHelp.ODSDKJob, uma vez só, e o jogo fica preso na "
+               "splash. O token de nuvem (LeanCloud/TapTap) é emitido pelo "
+               "servidor e não tem ponte no Java — a string 'leancloud' não "
+               "aparece em nenhum arquivo smali — então não há como "
+               "respondê-lo localmente sem forjar credencial, e forjar "
+               "credencial não se faz. Fica no código como etapa testada e "
+               "documentada fora do build.",
+    },
+    "offline": {
+        "fn": stage_offline,
+        "claims": ["dex:classes2.dex"],
+        "doc": "did-local + guest-local num round-trip só (3 arquivos de smali em "
+               "classes2.dex, um dex remontado): did local estável E sessão "
+               "local de convidado, para o loginByType(DEFAULT) do C# não "
+               "cair em 'user token is empty' nem na tela de login. "
+               "NÃO é licença, NÃO é IAP, nenhum token vem do servidor.",
+    },
     "telemetry-track-plugin": {
         "fn": stage_telemetry_track_plugin,
+        "claims": ["manifest:com.xd.third.track.loader"],
         "doc": "SÓ o meta-data com.xd.third.track.loader true->false: não "
                "carrega o plugin de atribuição (Adjust/AppsFlyer) e não toca o "
                "TapDB, que é quem dá o did da conta. Candidato a telemetria "
@@ -572,16 +1030,18 @@ STAGES = {
     },
     "telemetry": {
         "fn": stage_telemetry,
+        "claims": ["cfg:db_config.enable", "manifest:com.tapsdk.tapdb.loader", "manifest:com.xd.third.track.loader"],
         "doc": "UNião das duas metades (config + plugins). MEDIDO: juntas "
                "quebram o login (did vazio), porque o TapDB gera a identidade "
                "que a conta usa. Para uso real, use telemetry-config ou "
                "telemetry-plugins — o device diz qual delas o jogo aceita.",
     },
     "noads": {
-        "fn": None,
-        "doc": "PENDENTE (D3): desligar com.tapsdk.billboard.loader + o fetch do "
-               "marquee, sem conceder recompensa sem anúncio. Etapa própria, "
-               "testada sozinha.",
+        "fn": stage_noads,
+        "claims": ["manifest:com.tapsdk.billboard.loader"],
+        "doc": "SÓ AndroidManifest.xml: com.tapsdk.billboard.loader true->false, "
+               "o plugin de anúncio não carrega. Bloqueia exibição (marquee, "
+               "splash panel, badge); NÃO concede recompensa e NÃO toca IAP.",
     },
     "perf": {
         "fn": None,
@@ -687,9 +1147,20 @@ def main():
     replacements = {}
     zf = zipfile.ZipFile(args.apk)
 
-    def read_entry(name):
+    def orig_read(name):
         return zf.read(name)
 
+    def read_entry(name):
+        """Bytes ATUALES da entrada: se uma etapa anterior já trocou esta
+        entrada, a próxima etapa vê a versão trocada. É o que permite, por
+        exemplo, telemetry-plugins e noads mexerem no mesmo manifest sem que
+        uma apague a edição da outra. `orig_read` continua sendo o original,
+        para o relatório mostrar o sha256 de antes."""
+        if name in replacements:
+            return replacements[name]
+        return zf.read(name)
+
+    claimed = {}
     for n in names:
         try:
             stage_changes = STAGES[n]["fn"](read_entry)
@@ -699,19 +1170,23 @@ def main():
             # walk de zip não diz nada sobre o que ela fez de errado.
             print("ERRO na etapa %s: %s" % (n, e), file=sys.stderr)
             return 1
-        for entry, data, why in stage_changes:
-            # Trava de estágio: duas etapas no mesmo arquivo, cada uma tocando
-            # sua parte, é erro de projeto (uma depende da outra) — não uma
-            # merger de patch.
-            if entry in replacements:
-                print("ERRO: duas etapas mexem em %s; stages têm que ser "
-                      "independentes para poderem ser testadas sozinhas" % entry,
-                      file=sys.stderr)
+        # Trava de estágio: duas etapas editando a MESMA chave lógica é erro
+        # de projeto (uma depende da outra) — não uma merger de patch. Duas
+        # etapas no mesmo arquivo com chaves diferentes é legítimo e compõe,
+        # porque read_entry já devolve a versão corrente da entrada.
+        for claim in STAGES[n].get("claims", ()):
+            dono = claimed.get(claim)
+            if dono is not None and dono != n:
+                print("ERRO: as etapas %s e %s editam a mesma coisa (%s); stages "
+                      "têm que ser independentes para poderem ser testadas "
+                      "sozinhas" % (dono, n, claim), file=sys.stderr)
                 return 1
+            claimed[claim] = n
+        for entry, data, why in stage_changes:
             replacements[entry] = data
             report["changes"].append({
                 "stage": n, "entry": entry,
-                "sha256_before": hashlib.sha256(read_entry(entry)).hexdigest(),
+                "sha256_before": hashlib.sha256(orig_read(entry)).hexdigest(),
                 "sha256_after": hashlib.sha256(data).hexdigest(),
                 "bytes": len(data), "why": why,
             })

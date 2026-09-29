@@ -73,6 +73,7 @@ test/symbols/ship_routes_check.sh	wired
 test/symbols/ship_stripped_test.sh	wired
 test/symbols/symbolize_injection_test.sh	wired
 test/symbols/symbolize_test.sh	wired
+test/tabs_offline_block_test.sh	run
 test/tabs_patch_test.sh	run
 test/termux_client_test.py	wired
 #
