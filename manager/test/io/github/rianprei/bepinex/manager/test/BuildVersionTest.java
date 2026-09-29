@@ -10,7 +10,7 @@ public class BuildVersionTest {
     }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 
     // O ponto deste teste e um: nenhuma versao pode ficar solta no codigo.

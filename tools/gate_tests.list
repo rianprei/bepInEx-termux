@@ -43,6 +43,13 @@ test/push_mod_emit_test.sh	run
 test/release_key_test.sh	run
 test/symbols/symbols_read_check.sh	run
 test/sepolicy_rule_test.sh	run
+# Contrato do TestRunner JVM: o resumo tem de vir com checks e falhas, e o
+# baseline da suíte completa é conferido por IGUALDADE contra
+# manager/test_checks_baseline (deriva do real, não apodrece).
+test/manager_runner_contract_test.sh	run
+# O runner REAL acumulando: compila e roda o TestRunner de produção com um
+# teste que falha de propósito e exige status != 0 + a contagem acumulada.
+test/manager_runner_real_fail_test.sh	run
 #
 # ── simulações de device (antes num laço nomeado) ──
 test/device/device-round2-host-test.sh	run

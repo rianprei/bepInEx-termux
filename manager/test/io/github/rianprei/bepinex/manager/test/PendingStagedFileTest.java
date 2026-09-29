@@ -17,7 +17,7 @@ public final class PendingStagedFileTest {
     }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 
     private static void testHolderSemantica() {
