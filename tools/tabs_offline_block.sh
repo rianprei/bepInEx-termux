@@ -137,10 +137,12 @@ drop_uid_rules() {
   _i=0
   while [ "$_i" -lt 64 ]; do
     _i=$((_i + 1))
+    # -S OUTPUT lista só as regras (sem a policy), então o número da linha
+    # no grep (1-indexed) É o número da regra na chain (1-indexed).
     n="$($_bin -S OUTPUT 2>/dev/null | grep -n "^-A OUTPUT" \
          | grep -- "--uid-owner $_uid" | head -1 | cut -d: -f1)"
     [ -n "$n" ] || break
-    $_bin -D OUTPUT "$((n - 1))" 2>/dev/null || $_bin -D OUTPUT "$n" 2>/dev/null || break
+    $_bin -D OUTPUT "$n" 2>/dev/null || break
   done
 }
 
@@ -187,14 +189,14 @@ apply() {
   done
   ok=falhou
   for fam in 4 6; do
-    if [ "$fam" = 4 ]; then bin=iptables; chain=$CHAIN; else bin=ip6tables; chain=$CHAIN6; fi
+    if [ "$fam" = 4 ]; then bin=iptables; chain=$CHAIN; rej=icmp-port-unreachable
+    else bin=ip6tables; chain=$CHAIN6; rej=icmp6-port-unreachable; fi
     if [ "$mode" = off ]; then
       "$bin" -C OUTPUT -m owner --uid-owner "$uid" -j "$chain" 2>/dev/null && ok="sobrou regra"
       continue
     fi
     if [ "$mode" = offline ]; then
-      "$bin" -C OUTPUT -m owner --uid-owner "$uid" ! -o lo -j REJECT --reject-with icmp6-port-unreachable 2>/dev/null ||
-      "$bin" -C OUTPUT -m owner --uid-owner "$uid" ! -o lo -j REJECT --reject-with icmp-port-unreachable 2>/dev/null || ok=falhou
+      "$bin" -C OUTPUT -m owner --uid-owner "$uid" ! -o lo -j REJECT --reject-with "$rej" 2>/dev/null || ok=falhou
     else
       "$bin" -C OUTPUT -m owner --uid-owner "$uid" -j "$chain" 2>/dev/null || ok=falhou
     fi

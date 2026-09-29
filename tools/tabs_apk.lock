@@ -30,3 +30,10 @@ entry-assets/XDConfig.json=9ed1fc0f9a74db5bb0a96c8098111059c04b895201e670ad84d49
 # antiaddiction, third.login, intl.payment, moment, intl.account,
 # achievement, billboard (anúncio), share.
 entry-AndroidManifest.xml=5e25308e0503d377d18026d228561aae235d01e6c64b02534cd751fee01b4031
+
+# APK entregue (assinado com keystore própria, instalado via adb install -r):
+# v5-offline-signed.apk com stages: did-local, telemetry-config, telemetry-plugins, noads
+delivered-sha256=f269964964435e44619dd49a6ad42812360b51cb8e4d11c5160bd2dd77120380
+delivered-bytes=1448349401
+delivered-entries=863
+
