@@ -275,9 +275,12 @@ static ssize_t read_command(int fd, char *buf, size_t cap) {
         if (c == '\n') break;               // fim de mensagem
     }
     buf[used] = '\0';
-    // Descarta terminador '\n' se presente, pra strcmp funcionar direto
-    if (used > 0 && buf[used - 1] == '\n') buf[used - 1] = '\0';
-    return (ssize_t)used;
+    // Descarta terminador '\n' se presente, pra strcmp funcionar direto.
+    // O comprimento devolvido acompanha o buffer já normalizado: REQ\n deve
+    // chegar ao parser como 3 bytes, não como 4 bytes com um NUL no quarto.
+    bool terminated = used > 0 && buf[used - 1] == '\n';
+    if (terminated) buf[used - 1] = '\0';
+    return terminated ? (ssize_t)(used - 1) : (ssize_t)used;
 }
 
 // Envia resposta com verificação de retorno; loop cobre write() parcial em
