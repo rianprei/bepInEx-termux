@@ -12,6 +12,11 @@ TIMEOUT_TEST=${TIMEOUT_TEST:-120}
 # dos outros agentes: o timeout aqui existe para pegar TRAVA (deadlock, hook
 # esperando pra sempre), NÃO lentidão — por isso é bem maior que TIMEOUT_TEST.
 TIMEOUT_DEVICE_SIM=${TIMEOUT_DEVICE_SIM:-300}
+# Timeout dos testes ligados pelo manifesto (tools/gate_tests.list). Folgado de
+# propósito: o alvo é pegar TRAVA, não lentidão, e um teste de empacotamento
+# que dá timeout numa máquina carregada é vermelho sem motivo — o mesmo
+# critério de TIMEOUT_DEVICE_SIM.
+TIMEOUT_GATE_TESTS=${TIMEOUT_GATE_TESTS:-600}
 
 declare -a LABELS=()
 declare -a STATUSES=()
@@ -87,6 +92,57 @@ run_ndk() {
 }
 
 echo "verify_all: $ROOT"
+
+# --- O manifesto de testes do gate --------------------------------------------
+# ESTE BLOCO É O PRIMEIRO DO GATE, e não por estética: a primeira linha do
+# manifesto é o check da ligação, e o manifesto é lido aqui, logo depois do
+# banner e ANTES de qualquer outra etapa (ndk-build, docs, fuzz). A versão
+# anterior deste bloco vivia na linha ~455, depois de dozens de etapas — o texto
+# prometia "roda antes de tudo" e o gate fazia o contrário; era mentira de
+# comentário, que é a pior espécie de mentira.
+#
+# A regra "o que o gate executa" mora em tools/gate_tests.list, e não num
+# padrão de nome de arquivo dentro deste script. Os dois laços que existiam
+# aqui (test/*_test.sh e a lista nomeada de device) deixavam a regra implícita:
+# quem acrescentasse um teste tinha que acertar o padrão sem saber que ele
+# existia, e teste que ninguém executa é opinião sobre o código que envelhece
+# calada. O manifesto é lido linha a linha e a ordem das linhas é a ordem de
+# execução — a primeira delas é o check da ligação, que reprova qualquer
+# arquivo de teste no disco sem destino declarado.
+#
+# FAIL é FAIL: teste ligado que quebra conserta o teste (ou o código), nunca
+# sai da lista. Desligar é decisão escrita em skip, com motivo, e o check
+# imprime a lista de exceções a cada execução.
+GATE_LIST="$ROOT/tools/gate_tests.list"
+if [ -f "$GATE_LIST" ]; then
+    # O terceiro campo (motivo) é lido e descartado aqui de propósito: quem
+    # julga o motivo é o check da ligação, e ele roda antes desta linha.
+    while IFS=$'\t' read -r gate_path gate_mode _gate_reason; do
+        case "${gate_path:-}" in
+            ""|\#*) continue ;;
+        esac
+        [ "${gate_mode:-run}" = "run" ] || continue
+        gate_file="$ROOT/$gate_path"
+        if [ ! -f "$gate_file" ]; then
+            record "manifesto: $gate_path (ausente)" FAIL 0 1
+            echo "tools/gate_tests.list cita $gate_path, que nao existe no disco" >&2
+            continue
+        fi
+        # TIMEOUT_DEVICE_SIM (não o dos testes): pega TRAVA, não lentidão —
+        # ver o comentário na definição da variável.
+        case "$gate_path" in
+            test/device/*) gate_timeout=$TIMEOUT_DEVICE_SIM ;;
+            *)              gate_timeout=$TIMEOUT_GATE_TESTS ;;
+        esac
+        case "$gate_file" in
+            *.py) run_step "teste $gate_path" "$gate_timeout" python3 "$gate_file" "$ROOT" ;;
+            *)    run_step "teste $gate_path" "$gate_timeout" bash "$gate_file" ;;
+        esac
+    done < "$GATE_LIST"
+else
+    record "manifesto de testes do gate" FAIL 0 1
+    echo "tools/gate_tests.list ausente: nenhum teste pode ser ligado sem ele" >&2
+fi
 
 if [ -x "$NDK_BUILD" ]; then
     run_ndk "ndk-build loader" "$ROOT"
@@ -387,8 +443,13 @@ fi
   # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
   # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
   # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
-  # linha ali seria conferida. A fixture e o que prova.
-  if [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+  # linha ali seria conferida. A fixture e o que prova. O config_leak_check
+  # roda a fixture e falha se o config LOCAL do repo real mudar no caminho
+  # (user.name=t parou aqui uma vez; nunca mais).
+  if [ -f "$ROOT/test/config_leak_check.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/config_leak_check.sh"
+  elif [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
       run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
           bash "$ROOT/test/docs_hash_gate_fixture.sh"
   else
@@ -396,6 +457,21 @@ fi
       echo "test/docs_hash_gate_fixture.sh ausente: a cobertura do CHANGELOG fica so estrutural" >&2
   fi
 
+
+# A forma do merge conta, e conferida. Um merge feito com `git commit-tree` a
+# partir da arvore de uma branch, em vez de `git merge --no-ff`, tem UM PAI SO
+# e nao aparece no historico como merge — foi assim que 72e0dd1 carregou a
+# arvore de 016640a sem trazer a branch, e o gate inteiro passou. O check
+# cobra assunto, dois pais, e hash citado na v0.5.0 que e ancestral de HEAD.
+if [ -f "$ROOT/tools/merge_subject_check.sh" ]; then
+    run_step "git: assunto, dois pais e citacao de hash dos merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/merge_subject_check.sh"
+else
+    record "git: assunto, dois pais e citacao de hash dos merges (check ausente)" FAIL 0 1
+    echo "tools/merge_subject_check.sh ausente: um merge de 1 pai com arvore de branch passa" >&2
+fi
+run_step "git: merge-subject-lint (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/merge_subject_check_test.sh"
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
@@ -447,20 +523,6 @@ else
     echo "ShellCheck could not be downloaded or verified" >&2
 fi
 
-while IFS= read -r test_script; do
-    run_step "shell test ${test_script#"$ROOT"/}" "$TIMEOUT_TEST" bash "$test_script"
-done < <(find "$ROOT/test" -maxdepth 1 -type f -name '*_test.sh' -print | sort)
-
-for device_script in restore-sim.sh quoting-check.sh device-round2-host-test.sh; do
-    path="$ROOT/test/device/$device_script"
-    if [ -f "$path" ]; then
-        # TIMEOUT_DEVICE_SIM (não TIMEOUT_TEST): pega TRAVA, não lentidão —
-        # ver o comentário na definição da variável.
-        run_step "device test test/device/$device_script" "$TIMEOUT_DEVICE_SIM" bash "$path"
-    else
-        record "device test test/device/$device_script (not present)" SKIP 0 0
-    fi
-done
 
 if [ -f "$ROOT/manager/build.sh" ]; then
     if [ -x "$ROOT/manager/run_tests.sh" ]; then
