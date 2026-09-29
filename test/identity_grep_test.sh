@@ -32,7 +32,9 @@ while IFS= read -r hit; do
     esac
     # proibido: strstr com nome de PACOTE (ponto no literal) — mas só em
     # linha de CÓDIGO, não em comentário de documentação (que explica o bug)
-    stripped=$(echo "$content" | sed 's/^[[:space:]]*//' )
+    # SC2001: expansão de parâmetro em vez de sed — ${content%%[![:space:]]*}
+    # deixa só o whitespace inicial, e o # remove esse prefixo.
+    stripped=${content#"${content%%[![:space:]]*}"}
     case "$stripped" in
         "//"*|"#"*|"*"*) ok=1 ;;  # comentário
     esac

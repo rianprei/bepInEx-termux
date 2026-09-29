@@ -48,6 +48,9 @@ test/sepolicy_rule_test.sh	run
 test/device/device-round2-host-test.sh	run
 test/device/quoting-check.sh	run
 test/device/restore-sim.sh	run
+test/identity_grep_test.sh	run
+test/old_mods_path_check.sh	run
+test/device/mods-reloc-test.sh	wired
 #
 # ── já executados por etapa nomeada do verify_all.sh ──
 #
