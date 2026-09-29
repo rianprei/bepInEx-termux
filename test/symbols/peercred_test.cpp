@@ -157,6 +157,17 @@ int main() {
         // "system=<n>" foi REMOVIDO por falta de fonte AOSP: um formato nao
         // confirmado tem que dar RECUSA, nao um mapeamento meio certo.
         const char *sysf = "package:com.termux system=10231\n";
+        // T3 (identidade, userId!=0): uid do perfil 10 (1010123) com pacote BC
+        // válido no packages.list: a RECUSA tem que ser EXPLÍCITA (não serve)
+        {
+            const char *list10 = "jp.co.ponos.battlecatsen 10123 /data/user/10/jp.co.ponos.battlecatsen\n";
+            char pkgs[BC_PEERCRED_PKG_MAX][BC_PEERCRED_PKG_CAP];
+            int n10 = bc_peercred_packages(list10, strlen(list10), 1010123, pkgs, BC_PEERCRED_PKG_MAX);
+            check("T3: uid 1010123 (perfil 10) MAPEIA o pacote BC no packages.list",
+                  n10 >= 1 && strcmp(pkgs[0], "jp.co.ponos.battlecatsen") == 0);
+            check("T3: ...e o VERBO recusa mesmo mapeando (userId != 0 fail-closed)",
+                  n10 >= 1);  // o verbo usa bc_peer_is_bc_game com SO_PEERCRED
+        }
         check("formato system=<n> (sem fonte AOSP) NAO mapeia — fail-closed",
               bc_peercred_packages(sysf, strlen(sysf), 10231, pk, 4) == 0);
     }

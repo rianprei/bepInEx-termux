@@ -1738,8 +1738,23 @@ int main() {
     {
         check("BC vence tudo (pasta de mods e allowlist presentes)",
               bc_decide_path("jp.co.ponos.battlecatsen", true, true) == BC_PATH_BC);
-        check("BC casa por substring (suffixo de processo auxiliar)",
+        check("BC casa por igualdade exata + ':' de subprocesso",
               bc_decide_path("jp.co.ponos.battlecatsen:aux", false, false) == BC_PATH_BC);
+        // T1 (identidade, F1/X1): os lookalikes do relatório do kimi — nenhum
+        // pode mais ser BC. O antigo strstr aceitava TODOS estes.
+        check("T1: prefixo (com.evil.) RECUSADO",
+              bc_path_is_bc("com.evil.jp.co.ponos.battlecatsen") == false);
+        check("T1: sufixo (.evil) RECUSADO",
+              bc_path_is_bc("jp.co.ponos.battlecatsen.evil") == false);
+        check("T1: embutido (x...y) RECUSADO",
+              bc_path_is_bc("x.jp.co.ponos.battlecatsen.y") == false);
+        check("T1: sufixo com x extra RECUSADO",
+              bc_path_is_bc("com.attacker.jp.co.ponos.battlecatsenx") == false);
+        check("T1: NULL RECUSADO", bc_path_is_bc(nullptr) == false);
+        check("T1: vazio RECUSADO", bc_path_is_bc("") == false);
+        check("T1: nome exato ACEITO", bc_path_is_bc("jp.co.ponos.battlecatsen") == true);
+        check("T1: nome exato + ':svc' ACEITO (subprocesso)",
+              bc_path_is_bc("jp.co.ponos.battlecatsen:remote") == true);
         check("F1: pasta de mods basta, sem allowlist",
               bc_decide_path("com.xd.tabs.google", true, false) == BC_PATH_PKG_MODS);
         check("F1: pasta de mods ganha da allowlist (zero-config)",

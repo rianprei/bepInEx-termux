@@ -1176,19 +1176,35 @@ static void handle_path_request(int fd, const char *pkg_arg) {
 // GATE (o mesmo modelo de ameaça dos outros verbos): o chamador tem de SER o
 // jogo Battle Cats. SO_PEERCRED -> /data/system/packages.list -> a lista de
 // pacotes do appId do chamador; serve se (e só se) algum deles é o pacote do
-// BC (bc_path_is_bc aceita o nome base com sufixos de processo). Um mod
-// dentro de OUTRO jogo pedindo a árvore BC leva EACCES — a árvore BC não é
-// "mods de quem pede", é do jogo que a populate (push_mod).
+// BC (bc_path_is_bc é IGUALDADE EXATA com BC_BC_PKG; "pkg:svc" de subprocesso
+// aceito, lookalike NÃO). Um mod dentro de OUTRO jogo pedindo a árvore BC
+// leva EACCES — a árvore BC não é "mods de quem pede", é do jogo que a
+// populate (push_mod).
 // ============================================================================
 static bool bc_peer_is_bc_game(int client_fd) {
     char (*caller)[BC_PEERCRED_PKG_CAP] =
         (char (*)[BC_PEERCRED_PKG_CAP])alloca(sizeof(*caller) * BC_PEERCRED_PKG_MAX);
+    // userId != 0 (perfil 10/outro): RECUSADO fail-closed — a árvore de mods
+    // é por pacote, sem dimensão de usuário (multiuser-audit F2); enquanto
+    // não houver árvore por (userId, pacote), servir do perfil 0 é o oposto
+    // de isolamento. O canal REQ já recusa na ABERTURA (bc_req_session.h);
+    // aqui é a defesa dupla: o VERBO também recusa.
+    struct ucred uid_check;
+    socklen_t uid_len = sizeof(uid_check);
+    memset(&uid_check, 0, sizeof(uid_check));
+    if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &uid_check, &uid_len) != 0 ||
+        uid_check.uid / 100000 != 0) {
+        LOGE("verbos BC recusados: userId != 0 (uid %d) — perfis de usuário "
+             "ainda sem suporte (fail-closed)", (int)uid_check.uid);
+        return false;
+    }
     int n = bc_peer_is_caller(client_fd, caller, BC_PEERCRED_PKG_MAX);
     if (n <= 0) {
         // bc_peer_is_caller já logou o motivo (fail-closed)
         return false;
     }
     for (int i = 0; i < n; i++) {
+        // Matcher REAL: igualdade exata com BC_BC_PKG (ou BC_BC_PKG:svc)
         if (bc_path_is_bc(caller[i])) return true;
     }
     LOGE("verbos BC recusados: o chamador (appId %s) nao e o jogo BC", caller[0]);

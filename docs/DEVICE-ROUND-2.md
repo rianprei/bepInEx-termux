@@ -58,10 +58,10 @@ podem ser observados pelo usuário.
 ### 7. `uni/mods-reloc` — árvore root-only e entrega por FD (Enforcing)
 
 > **Não executar antes do merge da `uni/mods-reloc`.** Este passo substitui a
-> seção "Dependência bloqueada" que estava aqui. **Não roda com o
-> `device_test.sh` atual**: ele tira snapshot de `/data/local/tmp/mods/<pkg>` e
-> não prova nada sobre o destino novo. Use o roteiro abaixo, que é só de
-> leitura e de uma escrita controlada.
+> seção "Dependência bloqueada" que estava aqui. O `device_test.sh` desta
+> branch já snapshota a árvore NOVA (`/data/adb/bepinex/mods/<pkg>` — a
+> migração entrou no kit), mas o passo 7 cobre o que o kit não cobre: leitura
+> e uma escrita controlada na árvore root-only em Enforcing.
 
 O que este passo prova, e o que ele **não** prova:
 

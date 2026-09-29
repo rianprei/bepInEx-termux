@@ -53,6 +53,7 @@
 #include "../../jni/bc_req_client.h"
 #include "../../jni/bc_req_dispatch.h"
 #include "../../jni/bc_loader.h"
+#include "../../jni/bc_path_decide.h"  // bc_path_is_bc REAL: o fake não replica o matcher
 
 namespace {
 
@@ -193,9 +194,11 @@ void t_list(int fd, const char *pkg) {
 // espelhando BC_MODS_DIR=/data/adb/bepinex/bc_mods e BC_MODS_ROOT/<conf>.
 static const char kBCPkg[] = "jp.co.ponos.battlecatsen";
 
+// T2 (identidade): o fake chama o matcher REAL de bc_path_decide.h — a
+// versão anterior replicava o strstr e o teste ficava 100% verde mesmo com
+// a produção corrigida (ou quebrada): o teste validava o defeito.
 static bool t_caller_is_bc(void) {
-    return g_caller != nullptr &&
-           strstr(g_caller, "jp.co.ponos.battlecatsen") != nullptr;  // bc_path_is_bc
+    return g_caller != nullptr && bc_path_is_bc(g_caller);
 }
 
 // "BO": gate = o chamador É o jogo BC (bc_peer_is_bc_game na produção).
@@ -502,7 +505,47 @@ int main() {
               n < 0 && enoent);
     }
 
-    // 8. CROSS-GATE: o jogo GENÉRICO (pkg.teste) não recebe NADA da árvore
+    // 8. LOOKALIKE (F1/X1): pacote que CONTÉM o nome do BC mas não É o BC
+    // (os 4 do relatório do kimi) — o matcher REAL recusa, e o canal não
+    // entrega NADA da árvore BC. Se voltar strstr, o 'com.evil...' passa e
+    // ESTE check falha nomeando o pacote impostor.
+    {
+        static const char *const fakes[] = {
+            "com.evil.jp.co.ponos.battlecatsen",
+            "com.attacker.jp.co.ponos.battlecatsenx",
+            "x.jp.co.ponos.battlecatsen.y",
+            "jp.co.ponos.battlecatsen.evil",
+        };
+        for (int k = 0; k < 4; k++) {
+            int sp_fake[2];
+            if (socketpair(AF_UNIX, SOCK_STREAM, 0, sp_fake) != 0) { perror("sp_fake"); return 1; }
+            if (write(sp_fake[0], BC_REQ_HELLO, strlen(BC_REQ_HELLO)) !=
+                (ssize_t)strlen(BC_REQ_HELLO)) return 1;
+            struct serve_arg sa_fake = { sp_fake[1], &h, fakes[k] };
+            pthread_t th_fake;
+            if (pthread_create(&th_fake, NULL, serve_loop, &sa_fake) != 0) return 1;
+            usleep(50 * 1000);  // deixa o hello ser lido
+            int fd = bc_req_ask_bc_so(sp_fake[0], &io, "mod_a.so", why, sizeof(why));
+            printf("    lookalike %s -> BO %s\n", fakes[k], fd < 0 ? "PASS" : "FAIL");
+            check("lookalike RECUSADO no BO (matcher real, não strstr)", fd < 0);
+            close(sp_fake[0]);
+            pthread_join(th_fake, NULL);
+        }
+    }
+
+    // T6 (identidade): o matcher REAL não aceita nenhum lookalike MESMO
+    // com o resto do protocolo válido. O fakes[] são os 4 do kimi; o
+    // BC_BC_PKG e BC_BC_PKG:svc são os únicos ACEITOS.
+    {
+        check("T6: BC exato é BC", bc_path_is_bc("jp.co.ponos.battlecatsen"));
+        check("T6: BC:remote é BC (subprocesso)",
+              bc_path_is_bc("jp.co.ponos.battlecatsen:remote"));
+        check("T6: com.evil... NÃO é BC", !bc_path_is_bc("com.evil.jp.co.ponos.battlecatsen"));
+        check("T6: NULL NÃO é BC", !bc_path_is_bc(nullptr));
+        check("T6: vazio NÃO é BC", !bc_path_is_bc(""));
+    }
+
+    // 9. CROSS-GATE: o jogo GENÉRICO (pkg.teste) não recebe NADA da árvore
     // BC — nem lista, nem mod. E o jogo BC pedindo mod de OUTRO pkg pelo
     // "SO" também leva recusa (o bc_peer_ok_for_pkg da produção).
     {

@@ -29,10 +29,12 @@ cd "$ROOT"
 #                                    história do que foi lançado.
 #   RootInjectionTableTest.java   — o caminho é DADO de ataque (fixture de
 #                                    injeção no su), não destino de instalação.
-#   test/device/restore-sim.sh    — simula o device_test.sh LEGADO (o alvo do
-#                                    sim é o script que ainda tira snapshot
-#                                    da árvore antiga; o roteiro novo é o
-#                                    passo 7 do DEVICE-ROUND-2).
+#   test/device/restore-sim.sh    — o sim RODA o device_test.sh REAL com
+#                                    adb/su falsos: o alvo do teste é o
+#                                    backup/restore do KIT, e o kit é que
+#                                    referencia os caminhos de snapshot. O sim
+#                                    não pode mudar o alvo sem deixar de ser
+#                                    um teste do kit de verdade.
 #   test/fuzz/* + seed_corpus.py  — corpus de fuzz: strings de JSON são
 #                                    ENTRADA aleatória do validador, não
 #                                    instrução; qualquer path serve.
