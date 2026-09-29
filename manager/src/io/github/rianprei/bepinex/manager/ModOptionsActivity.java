@@ -69,7 +69,7 @@ public class ModOptionsActivity extends Activity implements UiLiveness.ActivityL
 
     private void loadOptions() {
         new Thread(() -> {
-            String confPath = "/data/local/tmp/mods/" + mPkg + "/" + mModId + ".conf";
+            String confPath = SuHelper.modsDir(mPkg) + mModId + ".conf";
             mExistingConfContent = SuHelper.readTextFile(confPath);
             if (mExistingConfContent == null) mExistingConfContent = "";
             Map<String, String> currentValues = ConfManager.parse(mExistingConfContent);
@@ -169,7 +169,7 @@ public class ModOptionsActivity extends Activity implements UiLiveness.ActivityL
         String updatedContent = ConfManager.update(mExistingConfContent, newValues);
 
         new Thread(() -> {
-            String confPath = "/data/local/tmp/mods/" + mPkg + "/" + mModId + ".conf";
+            String confPath = SuHelper.modsDir(mPkg) + mModId + ".conf";
             boolean ok = SuHelper.writeTextFile(confPath, updatedContent);
             mMainHandler.post(() -> {
                 if (!UiLiveness.alive(this)) return;

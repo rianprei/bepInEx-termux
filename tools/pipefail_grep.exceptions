@@ -1,0 +1,49 @@
+# tools/pipefail_grep.exceptions — sitios que mantem "| grep -q" num script com
+# `set -o pipefail`, com o motivo de cada um. Formato: "<arquivo> <linha>".
+#
+# A lista e impressa a cada execucao do gate. Desligar o lint aqui e um ato
+# escrito: quem exceptiona escreve o porque, e o porque aparece no log.
+#
+# ---------------------------------------------------------------------------
+# REGRA PRATICA. A here-string (grep -q PADRAO <<<"$var") resolve o caso comum
+# sem mudar a semantica: ela entrega o conteudo ao grep antes de ele rodar, e o
+# grep fica sendo o unico processo do pipeline.
+#
+# PARA PRODUTOR EXTERNO, a forma correta e materializar a saida numa variavel e
+# so entao comparar. A razao esta medida, nao neste comentario:
+#
+#   set -o pipefail; seq 1 300000 | grep -q '^1$'; echo $?
+#     -> 141, em 200 de 200 execucoes, COM o elemento presente (o "1" e a
+#        primeira linha). O grep -q acha na hora, fecha o pipe, e o seq ainda
+#        tem 300 mil linhas para escrever: leva SIGPIPE e o pipefail devolve o
+#        141 dele como status do pipeline.
+#
+# Essa razao e do produtor EXTERNO. Com um builtin (printf '%s' "$grande" |
+# grep -q) a corrida nao se reproduz nesta maquina — o que explica por que
+# tanto `echo "$x" | grep -q` sobreviveu tanto tempo sem quebrar. Ela existe
+# mesmo assim, porque nao da para depender de um detalhe de implementacao do
+# builtin, e porque o mesmo texto num script com produtor externo quebra 100%
+# das vezes.
+# ---------------------------------------------------------------------------
+
+# tools/verify_all.sh: `head -n 1 "$script"` escreve exatamente UMA linha. Uma
+# linha nao passa do buffer do pipe (64 KiB), entao o head termina e sai com 0
+# antes de o grep poder sair: nao ha produtor com bytes pendentes, logo nao ha
+# SIGPIPE. Race impossivel por construcao, nao por sorte. Corrigir exigiria ler
+# o arquivo duas vezes para trocar um pipe que ja e seguro.
+tools/verify_all.sh 538
+
+# mods/kungfux/deploy.sh e mods/mechabun/deploy.sh: sites do freebuff, em
+# uni/deploy-requer-3, que ja estao sendo corrigidos la. Este branch NAO toca
+# nos dois deploy.sh para nao colidir com aquele trabalho; a excecao e
+# temporaria e some quando o deploy-requer-3 entrar.
+mods/kungfux/deploy.sh 58
+mods/mechabun/deploy.sh 58
+
+# test/pipefail_grep_test.sh: ESTE ARQUIVO E A DEMONSTRACAO DO DEFEITO, e por
+# isso ele contem as duas formas de proposito. As linhas sao o que prova
+# que (a) o nome de pacote como REGEX aceita um decoy e (b) a corrida do
+# pipefail existe e e de 100%. Nao sao esquecimento: sao o instrumento. Um
+# teste que so exercitasse a forma corrigida passaria mesmo se o defeito
+# voltasse.
+test/pipefail_grep_test.sh *

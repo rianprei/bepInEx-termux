@@ -55,14 +55,50 @@ O helper de soak coleta evidências; não automatiza a ação de jogar nem prova
 que um efeito visual ocorreu. O efeito de `field` e os controles de tela só
 podem ser observados pelo usuário.
 
-### Dependência bloqueada — `uni/mods-reloc` do Kilo
+### 7. `uni/mods-reloc` — árvore root-only e entrega por FD (Enforcing)
 
-**Não executar nem marcar PASS nesta rodada.** Aguarda o merge da
-`uni/mods-reloc` e a atualização do kit de snapshot/restore. A verificação
-esperada é no modo **Enforcing**: mods no destino novo `/data/adb/bepinex`,
-descritores de arquivo (`fd`) corretos no processo do jogo e restore conferido.
-O `device_test.sh` atual ainda tira snapshot do caminho antigo
-`/data/local/tmp/mods/<pkg>`; usá-lo para este passo não provaria restore nem
-cobriria o destino novo. Depois que a dependência entrar, o kit deverá testar
-o fluxo relocado e reportar path/FD, denials `permissive=0` e restore. Se o
-aparelho não conseguir ficar em Enforcing, registrar **SKIP**, nunca PASS.
+> **Não executar antes do merge da `uni/mods-reloc`.** Este passo substitui a
+> seção "Dependência bloqueada" que estava aqui. O `device_test.sh` desta
+> branch já snapshota a árvore NOVA (`/data/adb/bepinex/mods/<pkg>` — a
+> migração entrou no kit), mas o passo 7 cobre o que o kit não cobre: leitura
+> e uma escrita controlada na árvore root-only em Enforcing.
+
+O que este passo prova, e o que ele **não** prova:
+
+| # | Ação | O que prova | PASS | FAIL |
+|---|---|---|---|---|
+| 7a | `adb shell getenforce` | O aparelho está em Enforcing. | `Enforcing`. | `Permissive` = **FAIL**, e nenhum outro passo vale. Enforcing é o que torna a política SELinux uma barreira de verdade — a maioria dos aparelhos de teste roda em Permissive, e foi por isso que o `dlopen` por caminho "funcionava". | 
+| 7b | `adb shell ls /data/adb/bepinex` | O **shell** (uid 2000) não alcança a árvore. | não lista nada. | Se o shell ler, a raiz não está root-only e o resto é teatro. |
+| 7c | `adb shell su -c "ls -laZ /data/adb/bepinex/mods/<pkg>"` | A árvore existe, é do root, e tem o rótulo novo. | `root root` + `u:object_r:bepinex_mod_file:s0`. | Dono/grupo diferente, ou contexto ausente. |
+| 7d | `adb shell su -c "mv /data/adb/bepinex/mods /data/adb/bepinex/mods.x; ln -s /sdcard /data/adb/bepinex/mods; ls -la /data/adb/bepinex"` | O root **não** segue o link que o shell plantou. | `bc_mods` (ou o link) recusado/ausente, e `/data/adb/bepinex-migrate.log` com a linha `e link simbolico — NAO migrado`. | O link entra em vigor: a escrita do root passou a ser controlada pelo shell, que é exatamente o ataque que a mudança fecha. **Limpe** com `su -c "rm -f /data/adb/bepinex/mods; mv /data/adb/bepinex/mods.x /data/adb/bepinex/mods"`. |
+| 7e | Instale um mod pelo Manager, abra o jogo, espere 30 s | O jogo carrega o mod **sem** abrir caminho, e o log foi para o lugar novo. | `/data/data/<pkg>/files/bepinex/log.txt` mostra o mod carregado. | Mod não carrega com o companion parado:companion mudo tem que virar "mod não carrega" + log, **não** jogo travado. Confira com `adb logcat` que não há trava. |
+| 7f | Verifique o local do log | O log foi para o state dir do próprio app, não para `/data/local/tmp`. | `su -c "ls /data/data/<pkg>/files/bepinex/"` mostra `bc_poc_LogOutput.log`; `ls /data/local/tmp/bc_poc_LogOutput.log` **não** existe. | Log no lugar antigo = a escrita do jogo ainda depende do diretório 0777 que a mudança removeu. |
+| 7g | `adb shell su -c "cat /proc/<pid>/maps" \| grep bepinex` | O `.so` do mod está mapeado, e o caminho mapeado é o **novo**. | a linha do `.so` aponta para `/data/adb/bepinex/...`. | Mapeado de `/data/local/tmp/...` = o jogo ainda abriu o caminho velho. |
+| 7h | Mate o jogo duas vezes em 20 s | O crashguard escreve na árvore nova e a próxima partida não carrega mod. | `/data/adb/bepinex/mods/<pkg>/disabled_by_crashguard` existe, e o log do jogo diz que o mod foi barrado. | Sem marcador: o crashguard não acompanha a árvore nova. |
+| 7i | `adb shell su -c "rm -rf /data/adb/bepinex/mods/<pkg>/disabled_by_crashguard"`, abra o jogo | O mod volta. | Carrega de novo. | Não volta: estado preso. |
+| 7j | `adb logcat -d \| grep "avc: denied"` | Nenhum AVC do pacote neste caminho. | Nenhum `avc: denied` com `permissive=0` para `<pkg>` ou para `/data/adb/bepinex`. | Qualquer denial = **FAIL**; a sepolicy está incompleta. |
+
+**SKIP, nunca PASS**, em dois casos: o aparelho não consegue ficar em
+`Enforcing` (passo 7a), ou o `nmagisk`/instalação não_apply com sucesso.
+
+**7k. Canal de pedidos do jogo no @bc_companion (SELinux, item novo).** O
+jogo agora CONECTA ao `@bc_companion` pós-specialize como `untrusted_app`
+(canal REQ: lista/FD dos mods e confs, ver `jni/bc_req_channel.h`). Não há
+regra `connectto`/`unix_stream_socket` no `module/sepolicy.rule` DE PROPÓSITO:
+o Termux já conecta ao mesmo socket há rodadas de device inteiras
+(`termux-console/bepinex-console` é o caminho do console) e Termux é o MESMO
+domínio SELinux (`untrusted_app`) de qualquer jogo da Play Store — a permissão
+vem da policy base do Magisk para o socket do daemon, não do módulo;
+acrescentar regra com label chutado seria teatro com risco de label errada.
+O que coletar se algo negar: `adb logcat -d | grep "avc: denied"` filtrando
+`untrusted_app` + `unix_stream_socket`/`connectto` no launch do jogo com
+mods — o rótulo REAL do socket do daemon aparece no próprio AVC, e é com
+esse rótulo que a regra certa se escreve, nunca com palpite. O 7e cobre o
+resto do canal: se os mods carregam pelo FD, o connectto passou.
+
+**Ordem de reparo quando algo falha**, porque pular etapa esconde a causa:
+se 7b/7c falham, a árvore não foi criada pelo `post-fs-data.sh` (veja
+`/data/adb/bepinex-migrate.log`); se 7c passa e 7e falha, o problema é o
+transporte (FD ou timeout), não a árvore; se 7d falha, o `O_NOFOLLOW` sumiu do
+`companion.cpp`.
+

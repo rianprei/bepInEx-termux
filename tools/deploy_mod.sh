@@ -3,7 +3,8 @@
 # ndk-build → adb push (staging em /data/local/tmp) → su cp/chmod/chcon →
 # force-stop (o loader carrega o mod no próximo boot do processo).
 #
-# Contratos: C1 (/data/local/tmp/mods/<pkg>/, dir 755, arquivo 644, escrito
+# Contratos: C1 (/data/adb/bepinex/mods/<pkg>/ — árvore root-only, o trânsito
+# por /data/local/tmp é só trampolim do adb; dir 755, arquivo 644, escrito
 # via su) e F1c/SELinux — arquivo copiado DEPOIS do boot não ganha o rótulo
 # bepinex_mod_file sozinho; sem o chcon, em Enforcing o jogo não lê.
 # Só o .so: .conf/.json são com o Manager (F5). Nada toca arquivos do jogo.
@@ -49,7 +50,10 @@ so_ship="$(mktemp -d)/mod.so"
 symbols_ship "$so" "$so_ship"
 so="$so_ship"
 
-mods=/data/local/tmp/mods
+mods=/data/adb/bepinex/mods   # arvore root-only; ver post-fs-data.sh
+# O adb NAO le /data/adb (root:root 0700), entao o arquivo e
+# empurrado para /data/local/tmp e movido com su. O /data/local/tmp aqui e
+# TRANSITO: o mod mora na arvore nova.
 stage=/data/local/tmp/.deploy.$id.$$
 # ENTREGA VIA STDIN (padrão do device_test.sh): `adb shell su -c "A && B"`
 # re-divide os args no device — o su roda só "A" como root e o resto roda como

@@ -23,8 +23,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class Dll2PatchTest {
-    private static int failures;
-
     private Dll2PatchTest() {}
 
     public static void run() throws Exception {
@@ -40,7 +38,6 @@ public final class Dll2PatchTest {
         testTableIndexGuard(reader);
         testDetectorIntegration(dll);
         testFuzz(dll);
-        if (failures != 0) throw new AssertionError("Dll2PatchTest falhou com " + failures + " erros");
         System.out.println("  [OK] Dll2PatchTest: todos os testes passaram");
     }
 
@@ -415,9 +412,6 @@ public final class Dll2PatchTest {
     }
 
     private static void check(String name, boolean condition) {
-        if (!condition) {
-            failures++;
-            System.out.println("  [FAIL] " + name);
-        }
+        TestRunner.check(name, condition);
     }
 }

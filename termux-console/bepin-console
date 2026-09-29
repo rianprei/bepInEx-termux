@@ -15,7 +15,11 @@
 # testado (termux_client.py) — o stream roda em paralelo, em background, na mesma
 # janela.
 
-CLIENT=~/battlecats-mods/zygisk-bc-poc/termux_client.py
+# O cliente mora NO MÓDULO junto deste script (staging do build_module.sh):
+# versionado, reproduzível de um clone, root:root. O caminho antigo apontava
+# para um diretório pessoal fora do repo (~/battlecats-mods/...).
+MODULE_DIR=${0%/*}
+CLIENT="$MODULE_DIR/termux_client.py"
 
 python3 "$CLIENT" stream &
 STREAM_PID=$!

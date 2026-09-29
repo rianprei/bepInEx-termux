@@ -1,6 +1,6 @@
 # u_frida — scripts Frida `.js` como mod (F11, runtime-only)
 
-Na pasta do jogo (`/data/local/tmp/mods/<pkg>/`) ficam `meu_mod.js`,
+Na pasta do jogo (`/data/adb/bepinex/mods/<pkg>/`) ficam `meu_mod.js`,
 `frida-gadget.bin` e `frida-gadget.config` (modo `script-directory`
 apontando pra pasta). Este `u_frida.so` SÓ verifica os três e dá `dlopen` no
 binário depois de aguardar até 10s pelo boot IL2CPP completo. O gadget carrega

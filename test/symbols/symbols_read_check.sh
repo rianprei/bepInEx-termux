@@ -117,11 +117,11 @@ cp "$SO" "$WORK/instavel.so"
 fake="$(mk_readelf mexe)"
 out="$(SYMBOLS_READELF="$fake" symbols_add "$WORK/instavel.so" "$WORK/sym-mexe" \
     "lib-instavel" 2>&1 || true)"
-printf '%s' "$out" | grep -q 'nao consegui ler as secoes' || {
+grep -q 'nao consegui ler as secoes' <<<"$out" || {
     printf '%s\n' "$out" >&2
     die "(4) arquivo que muda na leitura nao virou 'nao consegui ler'"
 }
-printf '%s' "$out" | grep -q 'voltou a stripar' &&
+grep -q 'voltou a stripar' <<<"$out" &&
     die "(4) arquivo instavel virou 'voltou a stripar': mesma mentira de (3)"
 ok "(4) arquivo reescrito durante a leitura: 'nao consegui ler' apos 3 tentativas"
 

@@ -1,6 +1,6 @@
 # u_patch — motor declarativo (F4)
 
-Lê todo `*.bpatch` (+ `<id>.conf`) de `/data/local/tmp/mods/<pkg>/` e aplica
+Lê todo `*.bpatch` (+ `<id>.conf`) de `/data/adb/bepinex/mods/<pkg>/` (pai root-only; o conteúdo chega pelo socket do companion) e aplica
 as regras C4 em runtime. Regra que não resolve vira log, nunca crash.
 
 ```

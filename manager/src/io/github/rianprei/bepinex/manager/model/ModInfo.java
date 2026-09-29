@@ -1,6 +1,6 @@
 package io.github.rianprei.bepinex.manager.model;
 
-// Informacoes de um mod instalado em /data/local/tmp/mods/<pkg>/ (Contrato C1).
+// Informacoes de um mod instalado em /data/adb/bepinex/mods/<pkg>/ (Contrato C1).
 public class ModInfo {
     public String id;
     public String name;

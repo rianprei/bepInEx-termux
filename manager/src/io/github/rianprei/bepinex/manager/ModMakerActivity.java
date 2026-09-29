@@ -190,7 +190,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                 ScanFlow.run(name -> getAssets().open(name), new ScanFlow.Device() {
                     public boolean ensureModDir() { return SuHelper.ensureModDir(mPkg); }
                     public boolean install(String local, String ignored) {
-                        return SuHelper.installFile(local, "/data/local/tmp/mods/" + mPkg + "/u_dump.so", "755");
+                        return SuHelper.installFile(local, SuHelper.modsDir(mPkg) + "u_dump.so", "755");
                     }
                     public boolean deleteDump() { return SuHelper.deleteDump(mPkg); }
                     public boolean restartGame() { return SuHelper.restartGame(mPkg, activityComponent); }
@@ -198,7 +198,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
                         return SuHelper.readDump(mPkg) != null;
                     }
                     public boolean removeScanner() {
-                        return SuHelper.deleteFile("/data/local/tmp/mods/" + mPkg + "/u_dump.so");
+                        return SuHelper.deleteFile(SuHelper.modsDir(mPkg) + "u_dump.so");
                     }
                     public void sleep(long millis) throws InterruptedException { Thread.sleep(millis); }
                 }, tmpSo);
@@ -598,7 +598,7 @@ public class ModMakerActivity extends Activity implements UiLiveness.ActivityLik
         String manifestJson = ManifestParser.toJson(manifest);
 
         new Thread(() -> {
-            String dir = "/data/local/tmp/mods/" + mPkg + "/";
+            String dir = SuHelper.modsDir(mPkg);
             SuHelper.ensureModDir(mPkg);
 
             SuHelper.writeTextFile(dir + modId + ModContentDetector.RULES_EXT, patchContent);

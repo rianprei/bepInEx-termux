@@ -36,7 +36,7 @@ static inline bool uf_is_js_mod(const char *name) {
     return strcmp(name + n - 3, ".js") == 0;
 }
 
-// Pacote usável pra montar caminho (/data/local/tmp/mods/<pkg>,
+// Pacote usavel pra montar caminho (BC_GENERIC_MODS_DIR/<pkg>,
 // /data/data/<pkg>/...): charset de nome de pacote Android [A-Za-z0-9._],
 // sem '/' nem "..", não começa com '.', não é zygote* (processo ainda não
 // especializado). Mesma regra do tools/deploy_frida.sh.

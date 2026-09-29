@@ -21,7 +21,7 @@ public class SuHelperTest {
     }
 
     private static void check(String what, boolean cond) {
-        if (!cond) throw new AssertionError("falhou: " + what);
+        TestRunner.check(what, cond);
     }
 
     private static void checkRejeita(String what, Runnable r) {
@@ -63,7 +63,7 @@ public class SuHelperTest {
         checkRejeita("nome com aspas", () -> SuHelper.requireFileName("a'.so"));
         // O que os helpers devolvem em vez de estourar: os de boolean
         // devolvem false e nada chega no su.
-        check("deleteFile hostil nao executa", !SuHelper.deleteFile("/data/local/tmp/mods/com.foo/a; id"));
+        check("deleteFile hostil nao executa", !SuHelper.deleteFile("/data/adb/bepinex/mods/com.foo/a; id"));
         check("toggleMod hostil nao executa", !SuHelper.toggleMod("com.foo", "a b.so", false));
         check("deleteMod hostil nao executa", !SuHelper.deleteMod("com.foo", ".."));
         check("ensureModDir com pkg hostil nao executa", !SuHelper.ensureModDir("a'; reboot #"));
@@ -81,11 +81,11 @@ public class SuHelperTest {
         checkRejeita("chmod nulo", () -> SuHelper.requireChmodMode(null));
         // copyFile/installFile devolvem false em vez de estourar.
         check("installFile com chmod hostil nao executa",
-                !SuHelper.installFile("/tmp/a", "/data/local/tmp/mods/com.foo/a.so", "777; id"));
+                !SuHelper.installFile("/tmp/a", "/data/adb/bepinex/mods/com.foo/a.so", "777; id"));
         check("copyFile com src hostil nao executa",
-                !SuHelper.copyFile("/tmp/a; id", "/data/local/tmp/mods/com.foo/a.so", "644"));
+                !SuHelper.copyFile("/tmp/a; id", "/data/adb/bepinex/mods/com.foo/a.so", "644"));
         check("copyFile com dest hostil nao executa",
-                !SuHelper.copyFile("/tmp/a", "/data/local/tmp/mods/com.foo/a.so && id", "644"));
+                !SuHelper.copyFile("/tmp/a", "/data/adb/bepinex/mods/com.foo/a.so && id", "644"));
     }
 
     private static void testCaminhoHostilRecusado() {
@@ -97,11 +97,11 @@ public class SuHelperTest {
         checkRejeita("caminho gigante", () -> SuHelper.requirePath("/data/" + "x".repeat(600), "test"));
         checkRejeita("caminho nulo", () -> SuHelper.requirePath(null, "test"));
         check("readTextFile hostil devolve null",
-                SuHelper.readTextFile("/data/local/tmp/mods/com.foo/a; id") == null);
+                SuHelper.readTextFile("/data/adb/bepinex/mods/com.foo/a; id") == null);
         check("listFiles hostil devolve lista vazia",
-                SuHelper.listFiles("/data/local/tmp/mods/$(id)").isEmpty());
+                SuHelper.listFiles("/data/adb/bepinex/mods/$(id)").isEmpty());
         check("writeTextFile hostil nao executa",
-                !SuHelper.writeTextFile("/data/local/tmp/mods/com.foo/a.conf; id", "x=1"));
+                !SuHelper.writeTextFile("/data/adb/bepinex/mods/com.foo/a.conf; id", "x=1"));
     }
 
     private static void testActivityComponentValidation() {
@@ -223,7 +223,7 @@ public class SuHelperTest {
     private static void testValidosAceitos() {
         // O caminho feliz nao pode quebrar: pacote, nome e modo validos
         // continuam aceitos e montando o path certo.
-        check("pkg real aceito", "/data/local/tmp/mods/com.mixtilabs.monsterstrike2/".equals(
+        check("pkg real aceito", "/data/adb/bepinex/mods/com.mixtilabs.monsterstrike2/".equals(
                 SuHelper.modsDir("com.mixtilabs.monsterstrike2")));
         SuHelper.requirePkg("com.mixtilabs.monsterstrike2");
         SuHelper.requireFileName("meu_mod.so");
@@ -232,7 +232,7 @@ public class SuHelperTest {
         SuHelper.requireChmodMode("0644");
         SuHelper.requireChmodMode("755");
         SuHelper.requirePath("/data/data/com.foo/files/bepinex/log.txt", "log");
-        check("modsFile monta o caminho", "/data/local/tmp/mods/com.foo/meu.bpatch".equals(
+        check("modsFile monta o caminho", "/data/adb/bepinex/mods/com.foo/meu.bpatch".equals(
                 SuHelper.modsFile("com.foo", "meu.bpatch")));
         check("stateFile monta o caminho", "/data/data/com.foo/files/bepinex/crashguard".equals(
                 SuHelper.stateFile("com.foo", "crashguard")));

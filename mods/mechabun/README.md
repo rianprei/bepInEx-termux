@@ -10,7 +10,7 @@ não como produto final.
 
 ## Como o mod funciona, em partes
 
-**Parte 1 — Carregamento.** `.so` vai pra `/data/local/tmp/bc_mods/`. O
+**Parte 1 — Carregamento.** `.so` vai pra `/data/adb/bepinex/bc_mods/`. O
 framework `zygisk-bc-poc` injeta no processo do jogo via zygisk, `dlopen`
 o `.so`, chama `bc_mod_register(api)`. Essa função resolve a assinatura
 AOB do loader de unit CSV (`resolve_pattern`) e instala um hook nela via
@@ -32,7 +32,7 @@ Detalhe campo-a-campo na tabela "Índices reais" abaixo.
 
 **Parte 3 — Ícones (D16.1).** Um segundo hook, em `fopen`, intercepta os
 paths `uni426_s00.png` (ícone de deploy) e `udi426_s.png` (ícone de
-upgrade) e devolve arquivo de `/data/local/tmp/bc_mods/mechabun_assets/`
+upgrade) e devolve arquivo de `/data/adb/bepinex/bc_mods/mechabun_assets/`
 em vez do original — imagens geradas a partir da arte fã-feita do
 usuário (`gen_icons.py`).
 
@@ -274,7 +274,7 @@ Trocou a arte, roda de novo.
 
 **Entrega pro jogo — hook implementado, instalação MANUAL**: o mod
 agora tem hook de `fopen` que redireciona `uni426_s00.png`/
-`udi426_s.png` pra `/data/local/tmp/bc_mods/mechabun_assets/` (mesmo
+`udi426_s.png` pra `/data/adb/bepinex/bc_mods/mechabun_assets/` (mesmo
 diretório onde os `.so` de mod já são instalados pelo loader). O hook
 só redireciona o path — **nada copia os PNGs pra lá sozinho**. Passo
 manual obrigatório (um comando mkdir + um comando de cópia, NÃO
@@ -433,7 +433,7 @@ layout `std::string` de `libc++` — risco muito menor que hookar
 `TextureCache::loadAsync`. Implementado em `mechabun_mod.cpp`:
 `resolve_symbol("fopen")` + `install_hook`, filtro por substring
 simples no `path` (`uni426_s00.png`/`udi426_s.png`), redireciona pra
-`/data/local/tmp/bc_mods/mechabun_assets/` (path real onde os `.so`
+`/data/adb/bepinex/bc_mods/mechabun_assets/` (path real onde os `.so`
 de mod já são instalados, confirmado no README principal do
 framework); se não bater, chama `fopen` original sem modificação —
 hook opcional, não derruba o mod principal (hook de stats) se
@@ -630,7 +630,7 @@ ndk-build -B -j4 -C mods/mechabun
 
 Produz `mods/mechabun/libs/arm64-v8a/libmechabun.so`. Deploy via
 `push_mod` do companion (protocolo já existente do loader) pra
-`/data/local/tmp/bc_mods/` — **não precisa reboot**: o companion
+`/data/adb/bepinex/bc_mods/` — **não precisa reboot**: o companion
 sinaliza `persist.bc_poc.reload_mods` (property cross-process,
 `jni/companion.cpp:724`), o loader recarrega os mods em runtime.
 

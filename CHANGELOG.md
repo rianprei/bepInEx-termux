@@ -6,6 +6,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
+- `1d84933` — uni/companion-followups-5 — o mods-reloc inteiro (árvore por (userId,pkg), entrega de .so por descritor, log no diretório de estado do app), S2/S3/O2 com teste de caminho real e exceção tipada no old_mods_path_check
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
 cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
@@ -15,6 +16,13 @@ todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
+- `975ac87` — chore(version): VERSION v0.4.1 401 -> v0.5.0 500, BC_LOADER_VERSION acompanhado, e o check novo que amarra VERSION/loader/CHANGELOG
+- `43d1335` — uni/deploy-requer-3 — python do Termux vira requisito checado: root por `su -c id` (nunca `adb root`), preflight de `TERMUX_PY` no contexto do envio, os 10 sítios `| grep -q` sob pipefail materializados em `case`, e `test/deploy_python_check.sh` declarado `run` no manifesto
+- `20a4ee2` — uni/deploy-requer — deploy exige python do Termux e root via `su` antes de enviar, com os 10 sítios pipefail materializados e o teste no manifesto
+- `bd39831` — uni/version-0.5.0 — bump para v0.5.0 (500): VERSION, loader, CHANGELOG alinhados; check novo de consistência amarra tudo
+- `b4dfe16` — uni/pipefail-grep — pipefail-grep lint cobre todos os `set -o pipefail` / `set -euo pipefail` / `set -uo pipefail` / `shopt -so pipefail`; contagem 1 por sítio; teste de comportamento com produtor externo 100% reproduzível; exceções declaradas com motivo; gate PASS SKIP=0
+- `74fa673` — uni/test-runner-accum-2 — contrato do TestRunner JVM validado no gate: resumo com checks/falhas, baseline derivado de manager/test_checks_baseline (deriva por igualdade, não apodrece), e o runner REAL rodado com um teste que falha de propósito (exit != 0, acúmulo conferido); os dois testes declarados em tools/gate_tests.list
+- `5333113` — uni/device-round3 — roteiro de verificação da rodada 3 no aparelho (recusas ARM32 com âncora de arquivo:linha conferida pelo gate); a âncora do u_patch corrigida para a faixa 792-793
 
 - `02c501a` — uni/modtypes — detector de tipo de mod testado com corpus real e textos honestos
 - `672eed2` — uni/install-path — instalar mod funciona mesmo quando o seletor do sistema falha
@@ -49,6 +57,13 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `03eac87` — uni/termux-client4 — contrato de saída do cliente
 - `557d205` — uni/fuzz-upatch — vocabulário fechado do check de contagem, in_list sem corrida e alvo upatch_encoder
 - `dfacc5a` — uni/release-notes-2 — CHANGELOG v0.5.0 acompanha os merges da base; merge coberto se alguma linha cita o merge ou qualquer commit introduzido por ele (linha cita o 1º commit da branch)
+- `c242d5f` — uni/mods-reloc — árvore de mods em /data/adb/bepinex (root-only), entrega de .so por descritor (SCM_RIGHTS + android_dlopen_ext), canal REQ com SO_PEERCRED por pacote e sessão limitada (gate de abertura: pacote servível + userId 0; teto global/por-uid), verbos BO/BL/BT para a árvore do Battle Cats, PATH pré-specialize pro loader decidir caminho, conf/allowlist por conteúdo, migração sem seguir symlink e sepolicy enxuta
+- `0f8bed3` — uni/companion-followups-2 — igualdade EXATA com BC_BC_PKG no gate BC (F1/X1: lookalike com.evil.jp.co.ponos.battlecatsen lia a árvore root-only com strstr), userId≠0 fail-closed nos verbos BC, T1-T4/T6, identity_grep no gate, e os followups (push_mod estrito com half-close, console no módulo com check de dono)
+- `864f555` — uni/merge-subject-lint-3 — o teste do lint lia o ESPERADO_AUTHOR do script copiado, e nao o do repo: media o valor que o teste escolhia, entao os 8 cenarios passavam com o bug da deducao pelo piso de volta
+- `96f8550` — uni/config-leak-4 — o check anti-vazamento tambem vigia HEAD, refs e arvore: sem o cd "$TREE" a fixture nao so escreve config, ela COMPRA no repo de verdade (medido: HEAD 3124554 -> 562534e "lado"), e um check que so olha config passa por cima disso
+- `ccd8a11` — uni/config-leak — fixture do hash-gate com git config preso ao repo temporário (-C) + check que falha se o config local do repo mudar (linha cita o 1º commit da branch)
+- `2b0dd51` — merge da base atual (c233647, audit3-hardening) na branch config-leak
+- `2ff69a1` — merge da base 72e0dd1 (gate-wiring: manifesto tools/gate_tests.list) na branch config-leak
 
 - `aef88a7` — uni/caso-refs — só código de harness define Caso N; docs só citam; cabeçalho comum fora de test/ não define
 ### Pendente (não mergeado, sem hash de merge)
@@ -56,8 +71,6 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `1d44fe9` — uni/audit3-hardening — S1 linha inteira do maps com teto de 1 MB (lê a linha toda, trunca acima do teto sem alocar sem limite), S2 il2cpp_str_eq com len conferido contra strlen (len negativo ou divergente recusa sem iterar), S3 O_NOFOLLOW nos três open de bc_elf_file com ELOOP propagado, mais os testes
 - `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
-- mods-reloc — mods em diretório root-only com entrega por descritor
-- deploy-requer — python do Termux como requisito checado antes de qualquer envio
 
 ### Detalhe por área (prosa da seção anterior)
 
@@ -74,6 +87,26 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - [HOST] O carregador aceita scripts `.js` do Frida apenas em modo script; o instalador e a checagem do binário do gadget têm testes de host. A execução no celular continua experimental e não foi validada. (`023e4c9`, `744bb6d`)
 - A extensão dos arquivos de regras do motor declarativo passou de `.patch` para `.bpatch`, para não colidir com o arquivo de diff do git e confundir quem olha a pasta de mods. Nada muda para quem usa o Manager: ele reconhece o conteúdo do arquivo, não o nome, então um arquivo de regras com a extensão antiga ou sem extensão continua sendo identificado e instalado como `<id>.bpatch`. O formato ainda não saiu em release, então não há arquivo antigo para migrar. A mudança foi verificada em testes de host e no gate, não em aparelho. (`6589f2f`)
 
+
+- **A árvore de mods mudou de lugar, e o log do jogo junto.** Os arquivos de
+  mod foram de `/data/local/tmp/mods/` para `/data/adb/bepinex/mods/`: o
+  diretório antigo tem um pai que o root não controla (`/data/local/tmp` é
+  0777, `/data/local` é 0771 shell:shell), então o shell e qualquer appuid do
+  aparelho podiam trocar o diretório por um link simbólico antes de o root
+  tocar nele. `/data/adb` é root:root 0700. Como o processo do jogo não tem
+  acesso a `/data/adb`, ele passou a **não abrir caminho nenhum**: o companion
+  (root) abre o `.so` e entrega o descritor pelo socket, e o jogo carrega com
+  `android_dlopen_ext(..., ANDROID_DLEXT_USE_LIBRARY_FD)`. A lista de mods e o
+  `.conf`/allowlist vão pelo mesmo socket. Um mod instalado no lugar antigo é
+  migrado uma vez no boot; entrada que não é arquivo regular ou diretório real
+  (link, fifo) fica onde está e é registrada em `/data/adb/bepinex-migrate.log`.
+  O **log do jogo e o snapshot de patches** foram para o diretório de estado do
+  próprio app, `/data/data/<pacote>/files/bepinex/`, derivado do
+  `app_data_dir` que o zygote entrega (assim funciona em multiusuário, sem
+  `/data/data/<pacote>` montado à mão). Se você lia o log em
+  `/data/local/tmp/bc_poc_LogOutput.log`, o novo lugar é
+  `/data/data/<pacote>/files/bepinex/bc_poc_LogOutput.log`; o Manager lê de lá
+  via `su`.
 
 ### Correções
 - [HOST] Os mods passaram a compartilhar o mesmo caminho de log; a espera pelo pacote e as mensagens de timeout foram corrigidas para refletir o comportamento real. Os testes de host cobrem o helper de log, e o gate compila os componentes; não é uma nova validação em aparelho. (`df40b73`, `638b05f`, `09bcd74`)

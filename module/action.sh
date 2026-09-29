@@ -11,11 +11,19 @@ MODDIR=${0%/*}
 # Standalone mode usa os applets do busybox; pm/am/getenforce são do system.
 PATH="$PATH:/system/bin"
 
-MODS=/data/local/tmp/mods
+MODS=/data/adb/bepinex/mods   # raiz root-only (ver post-fs-data.sh)
 MANAGER=io.github.rianprei.bepinex.manager
 
 # --- Manager instalado: abre ele e sai ----------------------------------------
-if pm list packages 2>/dev/null | grep -q "^package:$MANAGER$"; then
+# -Fxq, e nao -q com ^...$: sem o -F o nome do pacote vira REGEX e o ponto casa
+# com qualquer caractere. Com MANAGER=com.getermux.x, "^package:com.getermux.x$"
+# tambem casa com "package:comXgetermuxYx" — um pacote decoy passa por Manager.
+# -F e string literal, -x exige a linha inteira, -q nao imprime.
+# O pipe fica: este script roda em BusyBox ash (#!/system/bin/sh), que nao tem
+# here-string (<<<) e nao tem pipefail — sem pipefail o 141 de um produtor
+# morrendo por SIGPIPE e descartado, e o status do pipeline e o do grep. Trocar
+# o pipe aqui trocaria um bug real por um bug de portabilidade.
+if pm list packages 2>/dev/null | grep -Fxq "package:$MANAGER"; then
     echo "Abrindo bepInEx Manager..."
     # Sem component: MAIN/LAUNCHER + -p resolvem a activity de launcher, e a
     # saida do am fica visível no log do botão (se falhar, o usuário vê por quê).

@@ -317,7 +317,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
 
     private void loadMods() {
         new Thread(() -> {
-            List<String> files = SuHelper.listFiles("/data/local/tmp/mods/" + mPkg);
+            List<String> files = SuHelper.listFiles(SuHelper.modsDir(mPkg));
             Map<String, ModInfo> map = new LinkedHashMap<>();
 
             // Crashguard (F1d): leitura antes da lista, para o aviso aparecer
@@ -373,7 +373,7 @@ public class GameDetailActivity extends Activity implements UiLiveness.ActivityL
                 if (f.endsWith(".json")) jsonNames.add(f);
             }
             Map<String, String> jsonBundle = ModInventory.parseBundle(
-                    SuHelper.readTextFiles("/data/local/tmp/mods/" + mPkg, jsonNames),
+                    SuHelper.readTextFiles(SuHelper.modsDir(mPkg), jsonNames),
                     SuHelper.BUNDLE_SEP);
 
             for (Map.Entry<String, ModInfo> entry : map.entrySet()) {

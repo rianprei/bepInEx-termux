@@ -3,9 +3,12 @@
 Mata o processo 2s depois de carregar, de propósito. Existe para provar a
 garantia G1 ("mod nunca derruba o jogo pra sempre") no device:
 
-1. Gere o `.so` stripado (o do build sai com símbolos) e envie ao aparelho (na raiz do repo):
+1. Gere o `.so` stripado (o do build sai com símbolos — entrega nunca leva
+   símbolo) e coloque na árvore de mods, que é root-only (o `adb push` direto
+   lá falha como shell; o trampolim é o /data/local/tmp):
    `. tools/symbols.sh && symbols_ship mods/t_crash/libs/arm64-v8a/libt_crash.so /tmp/t_crash.so`
-   `adb push /tmp/t_crash.so /data/local/tmp/mods/<pkg>/t_crash.so`
+   `adb push /tmp/t_crash.so /data/local/tmp/t_crash.so`
+   `adb shell su -c 'cp /data/local/tmp/t_crash.so /data/adb/bepinex/mods/<pkg>/t_crash.so'`
 2. abra o jogo 3x (reinicie o app entre as tentativas, não o celular)
 3. 1ª e 2ª: morre 2s depois de subir. 3ª: sobe limpo, **sem mod**, e o
    logcat/log.txt mostra

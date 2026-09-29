@@ -43,11 +43,21 @@ test/push_mod_emit_test.sh	run
 test/release_key_test.sh	run
 test/symbols/symbols_read_check.sh	run
 test/sepolicy_rule_test.sh	run
+# Contrato do TestRunner JVM: o resumo tem de vir com checks e falhas, e o
+# baseline da suíte completa é conferido por IGUALDADE contra
+# manager/test_checks_baseline (deriva do real, não apodrece).
+test/manager_runner_contract_test.sh	run
+# O runner REAL acumulando: compila e roda o TestRunner de produção com um
+# teste que falha de propósito e exige status != 0 + a contagem acumulada.
+test/manager_runner_real_fail_test.sh	run
 #
 # ── simulações de device (antes num laço nomeado) ──
 test/device/device-round2-host-test.sh	run
 test/device/quoting-check.sh	run
 test/device/restore-sim.sh	run
+test/identity_grep_test.sh	run
+test/old_mods_path_check.sh	run
+test/device/mods-reloc-test.sh	wired
 #
 # ── já executados por etapa nomeada do verify_all.sh ──
 #
@@ -58,6 +68,7 @@ test/device/restore-sim.sh	run
 # execução do gate, que é o que esta lista existe para evitar.
 test/case_refs_test.py	wired
 test/release_notes_check.sh	wired
+test/config_leak_check.sh	wired
 test/fuzz/check_no_stale_counts.py	wired
 test/fuzz/stale_counts_vocab_test.py	wired
 test/arm32_hook_guard_check.py	wired
@@ -76,8 +87,12 @@ test/symbols/symbolize_test.sh	wired
 test/tabs_offline_block_test.sh	run
 test/tabs_patch_test.sh	run
 test/termux_client_test.py	wired
+test/pipefail_grep_test.sh	wired	o lint pega a forma com corrida; este pega a CORRIDA de verdade (produtor externo, 100%) e a decoy de substring-identity
+test/version_consistency_check.sh	run
+test/deploy_python_check.sh	run
 #
 # ── exceções: NÃO rodam no gate, com o motivo ──
 test/arm32_dobby_qemu_smoke.sh	skip	exige zig, qemu-arm e cmake no host e baixa o Dobby da rede por curl; o gate nao tem rede, e FAIL aqui seria vermelho por falta de ferramenta de outra maquina, nao por defeito do codigo
 test/fuzz/sabotage_check.sh	skip	verificacao de verificacao: injeta OOB de proposito em cada parser para provar que o sanitizer pega, entao o script nao pode passar; e verificacao pontual, nao passo de gate (o proprio cabecalho do arquivo diz isso)
 test/fuzz/seed_corpus.py	skip	gerador de corpus para as rodadas longas de 10 min que o README de test/fuzz manda rodar a mao; nao e teste e nao tem o que pasar
+test/merge_subject_check_test.sh	run

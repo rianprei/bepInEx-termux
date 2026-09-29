@@ -42,9 +42,9 @@ estiver disponível. Confirmar no log após o reboot:
 adb shell su -c "grep -E 'módulo carregado|mods/<pkg>/ presente|instalação concluída' /data/data/$PKG/files/bepinex/log.txt"
 ```
 
-Fontes: `módulo carregado — %s` (`jni/main.cpp:1894`),
-`mods/<pkg>/ presente — carga direta, sem allowlist e sem companion` (`jni/main.cpp:1943`),
-`instalação concluída — state: %s` (`jni/main.cpp:1501`). Restaurar desinstalando o módulo pelo Magisk e
+Fontes: `módulo carregado — %s` (`jni/main.cpp:2176`),
+`mods/<pkg>/ presente — carga por FD no canal REQ (postAppSpecialize)` (`jni/main.cpp:2292`),
+`instalação concluída — state: %s` (`jni/main.cpp:1714`). Restaurar desinstalando o módulo pelo Magisk e
 recolocando a cópia de `/data/local/tmp/round-backup/$PKG`.
 
 ## Permissive e Enforcing
@@ -134,7 +134,7 @@ adb shell su -c "test -f /data/adb/modules/bc-poc/module.prop && cat /data/adb/m
 adb shell su -c "magisk --path 2>/dev/null || true"
 ```
 
-Esperado no runtime: `módulo carregado — %s` (`jni/main.cpp:1894`).
+Esperado no runtime: `módulo carregado — %s` (`jni/main.cpp:2176`).
 Confirmar o Manager no launcher e abrir SA2. Para
 KernelSU, instalar o mesmo zip pelo app KernelSU + ZygiskNext e repetir o
 reboot. Restaurar removendo o módulo pelo app correspondente e reiniciando.

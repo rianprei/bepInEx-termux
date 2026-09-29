@@ -1,45 +1,106 @@
 #!/system/bin/sh
-# F1c — post-fs-data: cria a pasta de mods e aplica o tipo SELinux novo.
+# F1c — post-fs-data: cria a arvore de mods no /data/adb (pai root-only) e
+# migra o que estiver na arvore antiga.
 #
 # ORDEM DE BOOT (importante, e documentada no KernelSU Module guide,
 # https://kernelsu.org/guide/module.html ): o sepolicy.rule do modulo e aplicado
-# ANTES dos scripts post-fs-data.sh do modulo, entao o tipo bepinex_mod_file ja
-# existe quando este chcon roda. Se o chcon falhar com "invalid context", e o
-# sepolicy.rule que nao carregou (magiskpolicy --print-rules | grep bepinex).
-#
-# Magisk/KernelSU executam este script no BusyBox ash standalone mode
+# ANTES dos scripts post-fs-data.sh do modulo. Magisk/KernelSU executam este
+# script no BusyBox ash standalone mode
 # (https://topjohnwu.github.io/Magisk/guides.html), entao chcon/mkdir sao os
 # applets do proprio busybox.
-
-MODS=/data/local/tmp/mods
-BC_MODS=/data/local/tmp/bc_mods
-ALLOWLIST=/data/local/tmp/bc_generic_allowlist.conf
-
-# Contrato C1: dono root, pasta 755. Sem isso o app (uid proprio) não consegue
-# nem stat() o diretório.
-mkdir -p "$MODS" "$BC_MODS"
-chmod 755 "$MODS" "$BC_MODS"
-chown 0:0 "$MODS" "$BC_MODS"
-
-# Tipo novo em vez de shell_data_file: o app ganha acesso so aos .so de mod, e
-# qualquer outro arquivo que o root largue em /data/local/tmp continua
-# inacessivel pro jogo (ver module/sepolicy.rule).
 #
-# bc_mods entra pelo mesmo motivo (não quebrar o caminho Battle Cats): o loader
-# faz dlopen de /data/local/tmp/bc_mods/*.so e lê os .conf de la, também de
-# shell_data_file. Como a regra é por TIPO e não por caminho, rotular a arvore
-# resolve sem nenhuma regra nova.
-chcon -R u:object_r:bepinex_mod_file:s0 "$BC_MODS"
+# POR QUE /data/adb/bepinex E NAO /data/local/bepinex (revisao de seguranca do
+# freebuff, severidade ALTA):
+#   /data/local/tmp  — AOSP cria 0771 shell:shell e o proprio companion fazia
+#                      chmod 0771->0777 (companion.cpp:1082, agora REMOVIDO).
+#                      Qualquer appuid — inclusive o jogo — escreve nele. O
+#                      AOSP ainda comenta "/data/local/tmp should always be
+#                      empty": nao e area de estado de ninguem.
+#   /data/local      — AOSP cria 0771 shell:shell tambem (init.rc), entao o
+#                      shell ainda escreve. Nao serve.
+#   /data/adb        — Magisk/KernelSU, root:root 0700. O SO ROOT altera.
+# E o jogo deixa de precisar de acesso nenhum nessa arvore: o companion (root)
+# abre o .so e entrega o FD pelo socket (SCM_RIGHTS), e o jogo abre com
+# android_dlopen_ext(..., ANDROID_DLEXT_USE_LIBRARY_FD). Conf e allowlist vao
+# por conteudo no mesmo socket. Ver jni/bc_mods_fd.h.
 
-# Allowlist legada (experimento Cocos): arquivo opcional, então só rotula se já
-# existir — sem isso o zygote nem access() nele consegue e o Cocos morre em
-# Enforcing. Criado depois do boot pelo Manager/adb? Precisa de chcon de novo
-# (o mesmo que o Manager faz ao instalar mod).
-[ -f "$ALLOWLIST" ] && chcon u:object_r:bepinex_mod_file:s0 "$ALLOWLIST"
+MODS_ROOT=/data/adb/bepinex
+BC_MODS="$MODS_ROOT/bc_mods"
+WHY=/data/adb/bepinex-migrate.log
 
-chcon -R u:object_r:bepinex_mod_file:s0 "$MODS" || {
-    # Nesse ponto do boot o 'log' do toybox pode não existir ainda, e /cache
-    # ainda não está montado. /data/adb já está, e o usuário vai ver o arquivo.
-    echo "chcon falhou em $MODS: o sepolicy.rule nao aplicou?" >>/data/adb/bc-poc.log
-    log -p t -t bepinex "chcon falhou em $MODS" 2>/dev/null
+# ---------------------------------------------------------------------------
+# 1) Cria a arvore nova.
+#
+# 0755 e nao 0700 de proposito: o companion roda como root e o jogo nao entra
+# por caminho nenhum, mas o `ls` do usuario via `su` e o Manager (que tambem
+# usa su) precisam listar. O que barra o resto e o SELinux + o dono root do
+# PAI (/data/adb 0700), nao o modo desta pasta.
+# ---------------------------------------------------------------------------
+mkdir -p "$MODS_ROOT" "$BC_MODS" "$MODS_ROOT/mods" 2>/dev/null
+chown 0:0 "$MODS_ROOT" "$BC_MODS" "$MODS_ROOT/mods" 2>/dev/null
+chmod 755 "$MODS_ROOT" "$BC_MODS" "$MODS_ROOT/mods" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# 2) MIGRA a arvore antiga, uma vez, sem seguir link simbolico.
+#
+# A logica esta em module/migrate-mods-tree.sh, que e SOURCED aqui e tambem
+# roda sozinho no teste de host (test/device/mods-reloc-test.sh). Foi feito
+# assim para o teste nao depender de android: a garantia critica ("um link no
+# lugar do diretorio NAO e seguido") e shell puro.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2034  # BEPINEX_ROOT e lido pelo script sourced abaixo,
+# que o shellcheck nao atravessa. A allowlist tambem nao aparece aqui porque o
+# chcon recursivo de _bep_chcon_safe cobre tudo que esta sob $MODS_ROOT.
+BEPINEX_ROOT="$MODS_ROOT"
+# shellcheck source=module/migrate-mods-tree.sh
+# shellcheck disable=SC2034,SC1091
+. /data/adb/modules/bepinex-termux/module/migrate-mods-tree.sh 2>/dev/null || \
+    . "$(dirname "$0")/migrate-mods-tree.sh" 2>/dev/null || true
+
+if command -v bep_migrate_tree >/dev/null 2>&1; then
+    bep_migrate_tree /data/local/tmp "$MODS_ROOT" "$WHY" mods bc_mods
+else
+    echo "bepinex-migrate: migrate-mods-tree.sh nao carregou; arvore antiga intacta" >>"$WHY"
+fi
+
+# ---------------------------------------------------------------------------
+# 3) Rotula. Sem recursao em link simbolico: `chcon -R` segue link, e um link
+#    apontando pra fora receberia o rotulo do tipo do mod. Cada entrada e
+#    rotulada por lstat: so arquivo regular e diretorio real entram.
+# ---------------------------------------------------------------------------
+_bep_chcon_safe() {
+    _c_target="$1"
+    [ -e "$_c_target" ] || return 1
+    # O primeiro caractere de `ls -ld` e o tipo do INODE (lstat, nao stat) —
+    # e o que o migrador usa tambem. Shellcheck reclama de SC2012 porque o nome
+    # pode ter caractere estranho, e o nome vem da arvore root-only, entao
+    # isso e aceitavel aqui; a alternativa (find -printf) nao existe no busybox
+    # do Magisk, que e onde este script roda.
+    # shellcheck disable=SC2012
+    _c_type=$(ls -ld "$_c_target" 2>/dev/null | cut -c1)
+    case "$_c_type" in
+        l*)
+            echo "bepinex: $_c_target e link — nao rotulado" >>"$WHY"
+            return 1
+            ;;
+        d)
+            chcon u:object_r:bepinex_mod_file:s0 "$_c_target" >>"$WHY" 2>&1 || return 1
+            for _c_child in "$_c_target"/* "$_c_target"/.[!.]* "$_c_target"/..?*; do
+                [ -e "$_c_child" ] || [ -L "$_c_child" ] || continue
+                _bep_chcon_safe "$_c_child"
+            done
+            return 0
+            ;;
+        *)
+            chcon u:object_r:bepinex_mod_file:s0 "$_c_target" >>"$WHY" 2>&1
+            return $?
+            ;;
+    esac
+}
+
+_bep_chcon_safe "$MODS_ROOT" || {
+    # Nesse ponto do boot o 'log' do toybox pode nao existir ainda, e /cache ainda
+    # nao esta montado. /data/adb ja esta, e o usuario vai ver o arquivo.
+    echo "chcon falhou em $MODS_ROOT: o sepolicy.rule nao aplicou?" >>"$WHY"
+    log -p t -t bepinex "chcon falhou em $MODS_ROOT" 2>/dev/null
 }

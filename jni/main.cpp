@@ -19,6 +19,7 @@
 #include <android/api-level.h>
 #include <stdint.h>
 #include <dlfcn.h>
+#include <android/dlext.h>  // android_dlopen_ext + ANDROID_DLEXT_USE_LIBRARY_FD (API 21+, PUBLICO)
 #include <link.h>
 #include <string.h>
 #include <unistd.h>
@@ -38,6 +39,210 @@
 #include "zygisk.hpp"
 #include "dobby.h"
 #include "offsetsdb.h"   // GERADO por bc_offset_check.py --emit-header (ver context/battlecats-offset-db-schema.md §8)
+#include "bc_mods_fd.h" // entrega do .so por FD (SCM_RIGHTS), do companion
+#include "bc_req_channel.h" // papel REQ/STREAM na 1a linha do socket
+#include "bc_req_client.h" // pedidos ao companion: cliente REAL (extr. de cá p/ o teste e2e)
+#include "bc_stream_guard.h" // caminho quente do socket compartilhado (try_lock)
+
+// Declaracoes antecipadas: as implementacoes ficam mais abaixo (depois do
+// registro de hooks), e sao usadas por codigo que vem antes delas.
+static inline const char *bc_app_state_dir(char *out, size_t cap);
+static int bc_mod_fd_request(const char *path, char *why, size_t whycap);
+static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap);
+static void *bc_dlopen_fd(const char *path, int flags, int fd, char *why, size_t whycap);
+static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
+static const char *bc_app_state_dir_impl(char *out, size_t cap);
+
+static inline const char *bc_app_state_dir(char *out, size_t cap) {
+    return bc_app_state_dir_impl(out, cap);
+}
+
+// O PACOTE do jogo, para os pedidos ao companion. O protocolo NAO aceita
+// caminho: o companion recebe (pkg, nome), valida os dois e monta o caminho a
+// partir da raiz fixa. Sem isso o cliente mandava caminho e o root abria o que o
+// cliente pedisse (achado de seguranca em c47f5e5).
+// 160 = BC_PROCESS_PACKAGE_CAP, declarado com o literal porque bc_process.h e
+// incluido depois deste ponto.
+static char g_game_pkg[160] = {0};
+
+// O CANAL DE PEDIDOS: um SEGUNDO connectCompanion(), aberto no specialize.
+// g_stream_fd e o socket de STREAMING, e o companion so faz broadcast nele
+// (stream_socket_reader) — nenhum mod_fd/mod_txt/mod_list era despachado por
+// la, entao todo pedido dava timeout de 5s e nenhum mod carregava. Ver
+// jni/zygisk.hpp:211: a API so funciona no pre[XXX]Specialize, entao a conexao
+// tem que ser aberta AQUI e mantida; "abrir por pedido" e impossivel.
+static int g_req_fd = -1;
+
+// ============================================================================
+// O socket do companion e COMPARTILHADO
+// ============================================================================
+// g_stream_fd carrega DUAS coisas: o streaming de eventos pro Termux
+// (stream_send_prefixed) e os pedidos do loader (lista e FD do .so). Sao as
+// duas escritas/leituras no MESMO socket.
+//
+// Sem serializar, duas threads se misturam: a linha de evento que o streaming
+// manda aparece no meio da resposta do pedido, o recvmsg le dado alheio, e o
+// SO_RCVTIMEO que o pedido armou vaza para o streaming (que passa a fechar
+// conexao depois de 5s) e para o proximo pedido. Nenhum dos dois e visivel no
+// log: o mod simplesmente nao carrega.
+//
+// Um mutex em volta de (request + resposta) E da escrita do streaming resolve:
+// enquanto um pedido esta em curso, o streaming nao escreve; enquanto o
+// streaming escreve, nenhum pedido comeca. Nao ha starve relevante: o
+// streaming usa MSG_DONTWAIT e nao bloqueia, e o pedido tem timeout.
+//
+// Alternativa seria um connectCompanion() por pedido (conexao exclusiva), que
+// elimina a classe inteira sem mutex — mas paga um handshake por pedido e um
+// socket novo por carga de mod. O mutex e o mais simples que e correto.
+// O send() cru, isolado em uma funcao para poder ser injetado no
+// bc_stream_try_send: e o que permite testar o caminho quente no host, sem
+// socket e sem hook.
+static int stream_send_raw(void *ctx, const void *data, size_t len) {
+    struct stream_ctx { int fd; };
+    int fd = ((struct stream_ctx *)ctx)->fd;
+    ssize_t r = send(fd, data, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        // canal morto (EPIPE/ECONNRESET etc.) — desliga streaming, não spamma.
+        g_stream_fd.store(-1, std::memory_order_relaxed);
+        return -1;
+    }
+    // EAGAIN/EWOULDBLOCK = buffer cheio → linha descartada. OK, não bloqueia.
+    return (r >= 0) ? 0 : -1;
+}
+
+static pthread_mutex_t g_companion_io = PTHREAD_MUTEX_INITIALIZER;
+// Quantos eventos de streaming o trylock descartou por um pedido em curso.
+static std::atomic<unsigned> g_stream_dropped{0};
+
+// ============================================================================
+// Entrega por FD: o companion (root) abre, o JOGO recebe o descritor
+// ============================================================================
+// O processo do jogo nao tem acesso a /data/adb/bepinex (root:root 0700) e
+// nao deve ter. Quem abre o .so e o companion, como root; o que CRUZA a
+// fronteira e o FD, pelo socket que ja existia (g_stream_fd).
+//
+// android_dlopen_ext + ANDROID_DLEXT_USE_LIBRARY_FD e API PUBLICA do NDK desde
+// API 21 (<android/dlext.h>) — nao e preciso dlsym nem declarar struct a mao.
+//
+// TIMEOUT OBRIGATORIO DOS DOIS LADOS: um companion que nao responde (daemon
+// morto, EADDRINUSE, socket que nao subiu) tem que virar "mod nao carrega" com
+// log, NUNCA o jogo travado num recvmsg. E um companion que responde com um
+// .so corrompido tambem: o dlopen volta e o log explica qual arquivo.
+
+// O socket de PEDIDOS (mod_fd/mod_txt/mod_list), aberto no postAppSpecialize
+// como conexão ao @bc_companion com o SO_PEERCRED REAL do app (ver
+// bc_req_channel.h). Socket dedicado: o mutex g_companion_io serializa
+// request+resposta entre as threads de carga/reload que compartilham o canal.
+static inline int bc_req_socket(void) {
+    return g_req_fd;
+}
+
+// ---------------------------------------------------------------------------
+// Os TRÊS pedidos são o cliente REAL de bc_req_client.h — o MESMO código que
+// o teste e2e usa no socketpair. Extraídos de cá (WIP 5dcc38f) porque as
+// cópias locais tinham três defeitos que só o e2e revelaria: fd/txt enviavam
+// pelo socket de STREAMING (bc_fd_socket — o do broadcast), list destravava
+// um mutex que nunca travou (UB), e text não travava nada. O pacote não vem
+// do chamador: é o g_game_pkg do preAppSpecialize — o companion valida
+// (pkg,nome) e o SO_PEERCRED da conexão amarra o pedido ao app real.
+// ---------------------------------------------------------------------------
+
+// FD do .so `name` (na pasta do próprio jogo), pronto pro android_dlopen_ext.
+static int bc_mod_fd_request(const char *path, char *why, size_t whycap) {
+    return bc_req_ask_so(bc_req_socket(), &g_companion_io, g_game_pkg, path, why, whycap);
+}
+
+// Lista de .so da pasta do próprio jogo (o `dir` é o pacote — a arvore e
+// root-only, quem enumera e o companion).
+static int bc_mod_list_request(const char *dir, char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_list(bc_req_socket(), &g_companion_io, dir, out, cap, why, whycap);
+}
+
+// FD de um .so da árvore BATTLE CATS ("BO"): layout flat, gate = o chamador
+// é o próprio jogo BC (bc_peer_is_bc_game no companion). O jogo não pode
+// opendir/dlopen por caminho na árvore root-only — quem abre é o root.
+static int bc_mod_bc_fd_request(const char *name, char *why, size_t whycap) {
+    return bc_req_ask_bc_so(bc_req_socket(), &g_companion_io, name, why, whycap);
+}
+
+// Lista de .so da árvore BATTLE CATS ("BL").
+static int bc_mod_bc_list_request(char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_bc_list(bc_req_socket(), &g_companion_io, out, cap, why, whycap);
+}
+
+// Conteudo de um conf da RAIZ da árvore ("BT") — nome da lista fixa do
+// companion (bc_mods.conf / bc_generic_allowlist.conf): o jogo pede um
+// CONFIG conhecido, nunca um caminho.
+static int bc_mod_bc_conf_request(const char *name, char *out, size_t cap, char *why, size_t whycap) {
+    return bc_req_ask_bc_conf(bc_req_socket(), &g_companion_io, name, out, cap, why, whycap);
+}
+
+// dlopen POR FD, com android_dlopen_ext. Se o companion nao der o fd, o mod
+// nao carrega — e o motivo vai para o log. Nao ha fallback para dlopen por
+// caminho: o caminho nao e mais acessivel ao jogo, e um fallback seria
+// justamente a reabertura que a revisao fechou.
+static void *bc_dlopen_via_fd(const char *path, int flags, char *why, size_t whycap) {
+    // Risco (B) — DEADLOCK: o dlopen roda o CONSTRUTOR do mod, e o construtor
+    // pode disparar um hook que chama stream_send_prefixed — na MESMA thread. Se
+    // o mutex estivesse tomado aqui, o relock seria de um mutex nao-recursivo
+    // pela MESMA thread: trava direta.
+    //
+    // Por isso bc_mod_fd_request() FECHA o mutex antes de devolver, e o
+    // android_dlopen_ext() abaixo roda SEM o mutex. O lock e da transacao
+    // request+resposta, e nao do "carregar o mod".
+    // (O caminho do streaming usa trylock, entao mesmo assim nao esperaria —
+    // mas "mesmo assim" e uma defesa, e nao o desenho.)
+    int fd = bc_mod_fd_request(path, why, whycap);
+    if (fd < 0) return nullptr;
+    // dlopen FORA da transação do pedido (o construtor do mod pode disparar
+    // hooks que tocam no mesmo mutex — ver o comentário do deadlock acima).
+    return bc_dlopen_fd(path, flags, fd, why, whycap);
+}
+
+// A cauda: android_dlopen_ext por descritor. O fd já foi obtido (verbo
+// "SO" p/ mods de pacote, "BO" p/ a árvore BC) e é NOSSO — o dlopen faz
+// dup() dele e o SO fecha a cópia; o close() abaixo fecha o original.
+static void *bc_dlopen_fd(const char *path, int flags, int fd, char *why, size_t whycap) {
+    android_dlextinfo info;
+    memset(&info, 0, sizeof(info));
+    info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
+    info.library_fd = fd;
+    void *h = android_dlopen_ext(path, flags, &info);
+    close(fd);
+    if (h == nullptr && why[0] == '\0') {
+        snprintf(why, whycap, "android_dlopen_ext falhou: %s", dlerror());
+    }
+    return h;
+}
+
+
+// ============================================================================
+// Onde o JOGO escreve: o state dir do PROPRIO app (revisao de seguranca)
+// ============================================================================
+// A arvore de mods foi para /data/adb/bepinex (root:root 0700) e o jogo nao
+// escreve — nem deve. Mas o log e o snapshot sao ESCRITOS pelo jogo, entao
+// precisam de um lugar que o app consiga escrever.
+//
+// O caminho vem de args->app_data_dir, que o zygote entrega no preAppSpecialize,
+// e NAO de "/data/data/<pkg>" montado a mao: app_data_dir ja e o caminho real
+// do usuario, entao isso funciona em multiusuario/work profile sem codigo
+// extra. Montar /data/data/<pkg> na mao quebraria em /data/user/10/<pkg>, que
+// e o perfil de trabalho.
+//
+// src/gen e src=/data (o padrao do Android) sao equivalentes; o app ve o
+// caminho em que foi montado.
+static char g_app_data_dir[256] = {0};
+
+
+static const char *bc_app_state_dir_impl(char *out, size_t cap) {
+    const char *base = g_app_data_dir[0] ? g_app_data_dir : "/data/data";
+    snprintf(out, cap, "%s/files/bepinex", base);
+    return out;
+}
+
+
+
+#include "bc_loader.h"    // BC_MODS_ROOT: a arvore root-only
 #include "bc_mods_conf.h" // config runtime de hooks (companion escreve, módulo lê)
 #include "bc_hook_logic.h" // dispatcher Prefix/Postfix + lógica unpatch/repatch (single source of truth, testado no harness)
 #include "bc_mod_api.h"   // contrato de API exposto aos mods .so dinâmicos
@@ -59,7 +264,7 @@ using zygisk::AppSpecializeArgs;
 using zygisk::Option;
 
 #define LOG_TAG "BCPOC"
-#define BC_LOADER_VERSION "v0.4.1"
+#define BC_LOADER_VERSION "v0.5.0"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
@@ -75,7 +280,6 @@ static std::atomic<int>  g_sdk{0};           // runtime Android SDK level (JNI)
 static std::atomic<bool> g_build_id_resolved{false}; // PT_NOTE build-id == BC_BUILD_ID (fail-closed pra base+offset)
 // (g_mod_enabled removido — throttle agora é g_throttle_every:int do config)
 static std::atomic<int>  g_frame_counter{0};   // frame counter pro throttle
-static std::atomic<int> g_stream_fd{-1};                  // fd do socket pro companion (STREAMING de eventos)
 // Métrica de overhead do dispatcher (clock_gettime MONOTONIC)
 static std::atomic<uint64_t> g_hook_overhead_ns{0};      // nanos totais no dispatcher
 static std::atomic<uint64_t> g_hook_overhead_count{0};   // nº de medições
@@ -141,28 +345,23 @@ static bool hook_enabled(const char *shortname) {
 // Lê e parseia o bc_mods.conf pra um array destino (parse puro, sem aplicar).
 // Retorna false se o arquivo não existe (destino fica com defaults puros).
 static bool read_mods_config_into(struct bc_mod_entry *dst, int cap) {
-    int fd = open(BC_MODS_CONF_PATH, O_RDONLY | O_CLOEXEC);
-    if (fd >= 0) {
-        char buf[2048];
-        ssize_t total = 0;
-        while (total < (ssize_t)sizeof(buf) - 1) {
-            ssize_t r = read(fd, buf + total, sizeof(buf) - 1 - (size_t)total);
-            if (r < 0) {
-                if (errno == EINTR) continue;
-                total = -1;
-                break;
-            }
-            if (r == 0) break;
-            total += r;
-        }
-        close(fd);
-        if (total < 0) total = 0;
-        buf[total] = '\0';
+    // POR CONTEUDO, nao por caminho: a arvore e root-only (/data/adb) e o
+    // jogo nao tem nem search nela. Quem abre e o companion (root).
+    //
+    // Este era o ultimo open() de caminho da arvore no jogo, e a varredura do
+    // teste de SCM_RIGHTS achou — o check procurava o nome de uma funcao e nao
+    // a CONSTANTE do caminho, entao passou quando a leitura voltou.
+    char buf[2048];
+    char why[160] = {0};
+    // bc_mods.conf mora na RAIZ da árvore (BC_MODS_CONF_FILE) — o "TX" monta
+    // <arvore>/mods/<pkg>/<nome>, que não é onde ele está. Verbo "BT": nome
+    // da LISTA FIXA, conteúdo servido pelo root.
+    if (bc_mod_bc_conf_request("bc_mods.conf", buf, sizeof(buf), why, sizeof(why)) >= 0) {
         // v2: parse tipado com defaults preenchidos (present=false)
         bc_mods_parse(buf, BC_SCHEMA, BC_SCHEMA_N, dst, cap);
         return true;
     }
-    // arquivo ausente = defaults puros (tudo ON, throttle off)
+    // sem companion ou sem conf = defaults puros (tudo ON, throttle off)
     bc_mods_parse(nullptr, BC_SCHEMA, BC_SCHEMA_N, dst, cap);
     return false;
 }
@@ -404,7 +603,10 @@ struct HookPlan {
 
 // --- Fakes (log-only, re-forward completo) ---
 
-// STREAMING de eventos pro companion (socket @bc_companion, comando "stream").
+// STREAMING de eventos pro companion (o socket do connectCompanion(),
+// lido pelo stream_socket_reader do daemon — o jogo NÃO conecta no
+// @bc_companion para isto; aquele socket abstract serve o canal de pedidos
+// REQ e os clientes Termux).
 // Estratégia: publica aqui as MESMAS linhas que o hook loga no logcat, mas
 // via socket pro companion, que faz broadcast aos clientes Termux conectados
 // em modo streaming (tail -f do LogOutput.log). O game process e o daemon
@@ -437,7 +639,13 @@ struct HookPlan {
 // do BepInEx, opção não-default) — processo Android pode ser morto pelo
 // OOM killer sem aviso, ao contrário do processo desktop; perder as
 // últimas linhas antes de um crash seria pior aqui do que no PC.
-#define BC_POC_LOG_PATH "/data/local/tmp/bc_poc_LogOutput.log"
+// O log do JOGO vai para o state dir do proprio app (bc_app_state_dir), e nao
+// para /data/local/tmp: aquele diretorio e 0777 e foi o que a revisao de
+// seguracao apontou — o jogo nao tem por que escrever num lugar que qualquer
+// appuid do aparelho controla.
+#define BC_POC_LOG_NAME "bc_poc_LogOutput.log"
+// Montado em runtime: o caminho so existe depois do preAppSpecialize, quando
+// o zygote entregou o app_data_dir. Ver bc_app_state_dir().
 #define BC_POC_LOG_FILE_LIMIT 5
 static FILE *g_log_file = nullptr;
 // pthread_once, não bool simples: stream_send_prefixed é chamado de várias
@@ -460,9 +668,13 @@ static void log_file_open() {
     char path[64];
     for (int i = 0; i < BC_POC_LOG_FILE_LIMIT; i++) {
         if (i == 0) {
-            snprintf(path, sizeof(path), "%s", BC_POC_LOG_PATH);
+            char state[320];
+            bc_app_state_dir(state, sizeof(state));
+            snprintf(path, sizeof(path), "%s/%s", state, BC_POC_LOG_NAME);
         } else {
-            snprintf(path, sizeof(path), "/data/local/tmp/bc_poc_LogOutput.%d.log", i);
+            char state[320];
+            bc_app_state_dir(state, sizeof(state));
+            snprintf(path, sizeof(path), "%s/bc_poc_LogOutput.%d.log", state, i);
         }
         g_log_file = fopen(path, "w");
         if (g_log_file != nullptr) return;
@@ -512,16 +724,32 @@ static void stream_send_prefixed(const char *level, const char *source,
     if (len < 0) return;
     if (len > (int)sizeof(line) - 1) len = (int)sizeof(line) - 1;
     log_file_write(line, len);  // grava SEMPRE, mesmo sem cliente stream conectado
+    // Risco (A): esta funcao roda na THREAD DO JOGO (um hook disparou). Com
+    // pthread_mutex_lock ela ficaria ate 5s esperando um pedido em curso — e
+    // 5s de jogo travado, que e pior que o mod nao carregar. Entao aqui e
+    // TRYLOCK: ocupado = o evento desta linha se perde e conta, e o jogo segue.
+    // Perder uma linha de log num instante de 5s e um preco justo; travar o
+    // jogo nao e.
+    //
+    // O motivo continua sendo o mesmo: enquanto um pedido do loader esta lendo
+    // a resposta, uma linha de evento aqui seria lida como se fosse a
+    // resposta.
     int fd = g_stream_fd.load(std::memory_order_relaxed);
     if (fd < 0) return;
-    // MSG_DONTWAIT: não bloqueia o jogo. MSG_NOSIGNAL: evita SIGPIPE
-    // (matar o jogo) se o companion morreu/fechou o socket por baixo.
-    ssize_t r = send(fd, line, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-        // canal morto (EPIPE/ECONNRESET etc.) — desliga streaming, não spamma.
-        g_stream_fd.store(-1, std::memory_order_relaxed);
+    struct stream_ctx { int fd; } ctx = { fd };
+    if (bc_stream_try_send(&g_companion_io, &g_stream_dropped, stream_send_raw, &ctx,
+                           line, (size_t)len) != 0) {
+        // Mandou. O canal morto (EPIPE/ECONNRESET) e detectado por
+        // stream_send_raw, que ja desligou o socket.
+        return;
     }
-    // EAGAIN/EWOULDBLOCK = buffer cheio → linha descartada. OK, não bloqueia.
+    // Perdeu a linha: um pedido do loader esta em curso, ou o socket morreu.
+    // NUNCA espera — esta e a thread do jogo. Loga uma vez a cada 64 (a linha
+    // que registraria o descarte precisa do mesmo socket).
+    unsigned d = g_stream_dropped.load(std::memory_order_relaxed);
+    if (d % 64 == 0)
+        LOGI("streaming: %u evento(s) descartado(s) — pedido do companion em curso",
+             d);
 }
 
 // Unifica no MESMO pipeline (stream+disco) o log NATIVO do próprio processo
@@ -1189,30 +1417,37 @@ static void load_dynamic_mods() {
     // (sem limite de slot avisado, HOOK_MAX_CALLBACKS=4 por hook), causando
     // dispatch duplicado (ex.: hook de stats aplicando 2x por frame) e,
     // após reloads repetidos, falha silenciosa ao esgotar os 4 slots.
-    DIR *dir = opendir(BC_MODS_DIR);
-    if (dir == nullptr) {
-        // achado real (revisão OpenCode, pós-v0.3.5): opendir pode falhar por
-        // motivo TRANSIENTE (EMFILE, permissão temporária, I/O) sem que os
-        // mods no disco tenham mudado — se o reset de g_hook_callbacks
-        // acontecesse aqui em cima (como na v0.3.5), um mod já ativo perderia
-        // os hooks numa falha passageira, sem re-registro nenhum depois.
-        // Reset fica mais abaixo, só quando a função REALMENTE vai
-        // reconstruir a partir do que achou no disco.
-        LOGI("mod loader: %s ausente ou sem acesso — sem mods dinâmicos (normal se não usa)",
-             BC_MODS_DIR);
-        return;
-    }
-
+    // A árvore é root-only desde a relocação: o jogo NÃO pode opendir nem
+    // dlopen por caminho em BC_MODS_DIR (era o buraco que fechava o caminho
+    // BC inteiro — o opendir dava EACCES e NENHUM mod dinâmico carregava).
+    // A LISTA vem pelo canal de pedidos (verbo "BL"), gateado pelo
+    // companion: só o próprio jogo BC recebe a lista dos mods dele.
+    //
+    // Falha do pedido (companion morto, canal fechado) = sem mods + log —
+    // mesma semântica do opendir antigo: nada reconstruído, nada resetado.
     char names[64][256];
     int n_names = 0;
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != nullptr && n_names < 64) {
-        if (!bc_loader_is_mod_filename(ent->d_name)) continue;
-        strncpy(names[n_names], ent->d_name, sizeof(names[n_names]) - 1);
-        names[n_names][sizeof(names[n_names]) - 1] = '\0';
-        n_names++;
+    {
+        char list[4096] = {0};
+        char why[192] = {0};
+        int got = bc_mod_bc_list_request(list, sizeof(list), why, sizeof(why));
+        if (got < 0) {
+            LOGI("mod loader: lista de %s indisponível (%s) — sem mods dinâmicos",
+                 BC_MODS_DIR, why);
+            return;
+        }
+        const char *cursor = list;
+        while (n_names < 64) {
+            const char *e = strchr(cursor, '\n');
+            if (e == NULL) break;
+            size_t l = (size_t)(e - cursor);
+            if (l == 0 || l >= sizeof(names[0])) { cursor = e + 1; continue; }
+            memcpy(names[n_names], cursor, l);
+            names[n_names][l] = '\0';
+            n_names++;
+            cursor = e + 1;
+        }
     }
-    closedir(dir);
 
     if (n_names == 0) {
         LOGI("mod loader: %s sem .so — nada pra carregar", BC_MODS_DIR);
@@ -1239,7 +1474,11 @@ static void load_dynamic_mods() {
     if (n_names > BC_MOD_GRAPH_MAX_MODS) n_names = BC_MOD_GRAPH_MAX_MODS;
 
     bc_loader_ops ops = {};
-    ops.dlopen = [](const char *path, int flags) -> void * { return dlopen(path, flags); };
+    // ops.dlopen ficou vazio DE PROPÓSITO: a carga BC abre pelo FD do verbo
+    // "BO" direto (bc_dlopen_fd com o mfd já em mão — o "BO" já custou, não
+    // se pede o mesmo FD duas vezes). Um ops.dlopen aqui voltaria a pedir
+    // pelo caminho-genérico, que não é onde a árvore BC mora. ops.dlsym/
+    // dlclose/run_entry seguem usados pelas fases 2/3.
     ops.dlsym = [](void *h, const char *sym) -> void * { return dlsym(h, sym); };
     ops.dlclose = [](void *h) -> int { return dlclose(h); };
     ops.run_entry = mod_entry_runner;
@@ -1258,24 +1497,44 @@ static void load_dynamic_mods() {
     for (int i = 0; i < n_names; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", BC_MODS_DIR, names[i]);
-        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(path);
+        // FD pelo verbo "BO" ANTES do probe: o probe lê o ARQUIVO, e o jogo
+        // não abre caminho na árvore root-only. /proc/self/fd/N reabre o
+        // mesmo arquivo a partir do descritor que o companion mandou — o
+        // preflight continua lendo bytes de verdade, sem ganhar acesso de
+        // caminho.
+        char fwhy[192] = {0};
+        int mfd = bc_mod_bc_fd_request(names[i], fwhy, sizeof(fwhy));
+        if (mfd < 0) {
+            LOGW("mod loader: %s — sem FD do companion (%s), descartado sem abrir",
+                 names[i], fwhy);
+            failed++;
+            continue;
+        }
+        char probe_path[64];
+        snprintf(probe_path, sizeof(probe_path), "/proc/self/fd/%d", mfd);
+        bc_elf_file_probe probe = bc_elf_file_has_bc_mod_register(probe_path);
         if (probe.result == BC_ELF_FILE_ERROR) {
             LOGW("mod loader: %s — erro lendo ELF (%s), descartado sem abrir",
                  names[i], strerror(probe.error_number));
+            close(mfd);
             failed++;
             continue;
         }
         if (probe.result == BC_ELF_FILE_NO_SYMBOL) {
             LOGW("mod loader: %s — sem bc_mod_register: nao e mod do Battle Cats, "
-                 "descartado sem abrir; mods autonomos vao em /data/local/tmp/mods/<pacote>/",
+                 "descartado sem abrir; mods autonomos vao em /data/adb/bepinex/mods/<pacote>/",
                  names[i]);
+            close(mfd);
             failed++;
             continue;
         }
-        void *h = ops.dlopen(path, 2 /*RTLD_NOW*/);
+        // dlopen pelo MESMO fd do probe (o "BO" já custou; não pedir dois).
+        // path segue como NOME da biblioteca (log/dlerror), não é aberto.
+        char dwhy[192] = {0};
+        void *h = bc_dlopen_fd(path, 2 /*RTLD_NOW*/, mfd, dwhy, sizeof(dwhy));
         if (h == nullptr) {
-            LOGW("mod loader: %s — dlopen falhou (corrompido/ABI incompatível?), pulando",
-                 names[i]);
+            LOGW("mod loader: %s — dlopen por fd falhou (%s), pulando",
+                 names[i], dwhy);
             failed++;
             continue;
         }
@@ -1628,27 +1887,24 @@ static void generic_hook_log_cb(const char *symbol, uint64_t call_count) {
     publish_log("Info", "[generico] %s chamado (%llu)", symbol, (unsigned long long)call_count);
 }
 
-// Mods por pacote no caminho genérico: dlopen de todo .so em
-// /data/local/tmp/mods/<pkg>/. Diferente de BC_MODS_DIR, aqui não tem
-// bc_mod_register/grafo — o mod é autônomo (constructor sobe a própria
-// thread, espera a lib do jogo e instala o que precisa). Roda antes da
-// detecção de engine porque jogo Unity/IL2CPP não expõe Java_* (a detecção
-// cairia em dormant e o mod nunca carregaria).
+// Mods por pacote no caminho generico: a LISTA vem do companion e o .so vem
+// por FD (ver load_generic_pkg_mods). Diferente de BC_MODS_DIR, aqui nao tem
+// bc_mod_register/grafo — o mod e autonomo (constructor sobe a propria thread,
+// espera a lib do jogo e instala o que precisa). Roda antes da deteccao de
+// engine porque jogo Unity/IL2CPP nao expoe Java_* (a deteccao cairia em
+// dormant e o mod nunca carregaria).
+//
+// Esta funcao so monta o CAMINHO, para o log dizer onde o mod esta instalado:
+// o jogo nao o abre (a arvore e root-only) nem o enumera (a lista vem pelo
+// socket).
 static bool pkg_mods_dir(const char *pkg, char *dir, size_t size) {
-    int n = snprintf(dir, size, "/data/local/tmp/mods/%s", pkg);
+    int n = snprintf(dir, size, "%s/%s", BC_GENERIC_MODS_DIR, pkg);
     return n > 0 && (size_t)n < size;
 }
 
-// Pacote com pasta de mods própria = mods autônomos cuidam de tudo: sem
-// companion (o companion abre o console do Termux por cima do jogo) e sem o
-// hook de log genérico do experimento Cocos2d-x (crashava o Swamp Attack 2
-// 3s depois de abrir).
-static bool has_pkg_mods_dir(const char *pkg) {
-    char dir[320];
-    if (!pkg_mods_dir(pkg, dir, sizeof(dir))) return false;
-    struct stat st;
-    return stat(dir, &st) == 0 && S_ISDIR(st.st_mode);
-}
+// (has_pkg_mods_dir foi removido: desde a árvore root-only o stat do jogo dá
+// EACCES — sempre falso. Os fatos vêm do companion, pelo verbo PATH; a decisão
+// continua em bc_decide_path.)
 
 // Caminho decidido no preAppSpecialize (bc_decide_path) e lido pela thread de
 // carga — o pthread_create já é barreira de memória, não precisa de atomic.
@@ -1827,12 +2083,25 @@ static int load_generic_pkg_mods(const char *pkg) {
         LOGE("%s: caminho da pasta de mods longo demais; mods recusados", pkg);
         return 0;
     }
-    // Ordem alfabética (igual BC_MODS_DIR): readdir sozinho não garante
-    // ordem, e mod que depende de outro precisa de carga determinística.
-    struct dirent **ents = nullptr;
-    int n = scandir(dir, &ents, nullptr, alphasort);
+    // A LISTA vem do companion, e nao de scandir(): a arvore e root-only e o
+    // jogo nao tem (nem deve ter) search nela. O companion enumera com
+    // lstat, ja filtra .so e ja ordena — determinismo de carga preservado.
+    char list[4096] = {0};
+    char why[192] = {0};
+    char rel[320];
+    snprintf(rel, sizeof(rel), "%s", strrchr(dir, '/') ? strrchr(dir, '/') + 1 : dir);
+    int n = bc_mod_list_request(rel, list, sizeof(list), why, sizeof(why));
     if (n < 0) {
-        LOGI("%s: %s ausente — sem mods por pacote", pkg, dir);
+        // A tag do contrato C1 e o nome do proprio pacote (o log ainda nao
+        // tem nome de mod: nao veio nenhum).
+        char tag[64];
+        snprintf(tag, sizeof(tag), "%s", pkg);
+        LOGI("%s: lista de %s indisponivel (%s) — sem mods por pacote", pkg, dir, why);
+        pkg_log_line(pkg, tag, "lista de mods indisponivel: %s", why);
+        return 0;
+    }
+    if (n == 0) {
+        LOGI("%s: %s vazia — sem mods por pacote", pkg, dir);
         return 0;
     }
     // Contrato C1: o mod descobre o próprio pacote por getenv("BEPINEX_PKG"),
@@ -1844,8 +2113,19 @@ static int load_generic_pkg_mods(const char *pkg) {
     // nenhum mod deste jogo entra (e o aviso vai pro log C1).
     if (crashguard_gate(pkg, "crashguard")) return 0;
     int loaded = 0;
-    for (int i = 0; i < n; i++) {
-        const char *name = ents[i]->d_name;
+    // A lista vem em "nome\n" repetido. O cursor avanca de um nome para o
+    // seguinte; n e o total que o companion informou.
+    const char *cursor = list;
+    for (int i = 0; i < n && cursor != NULL && *cursor != '\0'; i++) {
+        const char *eol = strchr(cursor, '\n');
+        if (eol == NULL) break;
+        char nome[256];
+        size_t nl = (size_t)(eol - cursor);
+        if (nl >= sizeof(nome)) { cursor = eol + 1; continue; }
+        memcpy(nome, cursor, nl);
+        nome[nl] = '\0';
+        cursor = eol + 1;
+        const char *name = nome;
         if (bc_loader_is_mod_filename(name)) {
             // Tag do contrato C1 = nome do mod sem o ".so" (o filtro acima
             // garante que o nome termina com .so).
@@ -1855,7 +2135,6 @@ static int load_generic_pkg_mods(const char *pkg) {
             int path_len = snprintf(path, sizeof(path), "%s/%s", dir, name);
             if (path_len <= 0 || (size_t)path_len >= sizeof(path)) {
                 LOGE("%s: caminho do mod %s longo demais; recusado", pkg, name);
-                free(ents[i]);
                 continue;
             }
             char soname[128];
@@ -1867,16 +2146,17 @@ static int load_generic_pkg_mods(const char *pkg) {
                      "o gadget so entra pelo u_frida como frida-gadget.bin",
                      pkg, name, soname);
                 pkg_log_line(pkg, tag, "parece o frida-gadget (soname %s): recusado", soname);
-                free(ents[i]);
                 continue;
             }
-            void *h = dlopen(path, RTLD_NOW);
+            // POR FD, como o outro caminho de carga. A arvore e root-only e o
+            // jogo nao a abre: o companion abre e entrega o descritor. Sem
+            // companion, o mod nao carrega e o motivo vai para o log — nunca
+            // dlopen por caminho, que seria a reabertura que a revisao fechou.
+            char why[192] = {0};
+            void *h = bc_dlopen_via_fd(path, RTLD_NOW, why, sizeof(why));
             if (h == nullptr) {
-                // dlerror() consome o erro do thread-local: guarda uma vez só,
-                // senão a segunda leitura devolve NULL e o %s quebra.
-                const char *err = dlerror();
-                LOGW("%s: dlopen %s falhou: %s", pkg, name, err ? err : "(null)");
-                pkg_log_line(pkg, tag, "dlopen falhou: %s", err ? err : "(null)");
+                LOGW("%s: mod %s nao carregou: %s", pkg, name, why);
+                pkg_log_line(pkg, tag, "mod nao carregou: %s", why);
             } else {
                 LOGI("%s: mod %s carregado", pkg, name);
                 publish_log("Info", "%s: mod %s carregado", pkg, name);
@@ -1884,9 +2164,7 @@ static int load_generic_pkg_mods(const char *pkg) {
                 loaded++;
             }
         }
-        free(ents[i]);
     }
-    free(ents);
     return loaded;
 }
 
@@ -1963,8 +2241,14 @@ public:
             (int)args->uid,
             args->is_child_zygote != nullptr && *args->is_child_zygote != JNI_FALSE,
             nice_name, app_data_dir, pkg_copy, sizeof(pkg_copy));
-        if (app_data_dir != nullptr)
+        // O pacote do jogo, para os pedidos ao companion (ver g_game_pkg).
+        snprintf(g_game_pkg, sizeof(g_game_pkg), "%s", pkg_copy);
+        if (app_data_dir != nullptr) {
+            // Copia antes de soltar a string do JNI: o log e o snapshot sao
+            // escritos DEPOIS do specialize, quando ja nao da para ler dali.
+            snprintf(g_app_data_dir, sizeof(g_app_data_dir), "%s", app_data_dir);
             env->ReleaseStringUTFChars(args->app_data_dir, app_data_dir);
+        }
         if (process_status != BC_PROCESS_READY) {
             LOGI("processo %s ignorado: %s", nice_name, bc_process_status_name(process_status));
             env->ReleaseStringUTFChars(args->nice_name, nice_name);
@@ -1982,7 +2266,7 @@ public:
         }
 #endif
         if (!be_bc) {
-            // F1 (zero-config): a pasta /data/local/tmp/mods/<pkg>/ basta pra
+            // F1 (zero-config): a pasta /data/adb/bepinex/mods/<pkg>/ basta pra
             // entrar no caminho de mods autônomos — nada de allowlist, nada de
             // varredura de engine. A allowlist sobrou só pro experimento
             // Cocos2d-x legado (pacote na lista E sem pasta), e mesmo aí
@@ -1996,13 +2280,42 @@ public:
             // estágio). Só marca o candidato pela allowlist; a detecção de
             // verdade (com poll+timeout, já que não sabemos o nome da lib
             // como no caminho Battle Cats) acontece em postAppSpecialize.
-            // F1 (zero-config): 1 stat decide. A allowlist só é lida quando
-            // não há pasta — ela continua servindo ao experimento Cocos2d-x
-            // legado, não é mais pré-requisito de nada. Decisão pura em
-            // bc_path_decide.h (testada no harness), I/O fica aqui.
-            bool dir_exists = has_pkg_mods_dir(pkg_copy);
-            g_path_kind = bc_decide_path(pkg_copy, dir_exists,
-                                         !dir_exists && bc_generic_allowlist_contains(pkg_copy));
+            // F1 (zero-config). A DECISÃO é pura em bc_path_decide.h (testada
+            // no harness) — mas os DOIS FATOS que ela precisa vivem na árvore
+            // root-only (existe mods/<pkg>? está na allowlist?), e o stat do
+            // jogo dá EACCES ali desde a mudança de árvore: o has_pkg_mods_dir
+            // local morreu com ela. Quem enxerga os fatos é o companion (root),
+            // pelo verbo PATH — o loader pergunta PRÉ-specialize (neste ponto
+            // ele ainda é uid 0, filho do zygote, e passa no gate de UID do
+            // @bc_companion) e a DECISÃO continua aqui, na função pura.
+            //
+            // O connectCompanion() abaixo precisa vir ANTES do PATH: é ele que
+            // faz o companion_handler subir e o daemon fazer o bind do
+            // @bc_companion — sem isso o PATH não tem a quem conectar.
+            bool dir_exists = false;
+            bool na_allowlist = false;
+            {
+                int companion_fd = api->connectCompanion();
+                if (companion_fd >= 0) {
+                    g_stream_fd.store(companion_fd, std::memory_order_relaxed);
+                } else {
+                    LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
+                }
+                char why[160] = {0};
+                int pfd = bc_req_connect(BC_COMPANION_SOCKET_NAME, NULL, 10,
+                                         why, sizeof(why));
+                if (pfd >= 0) {
+                    if (bc_req_ask_path(pfd, pkg_copy, &dir_exists, &na_allowlist,
+                                        why, sizeof(why)) < 0) {
+                        LOGI("%s: PATH indisponível (%s) — segue sem allowlist", pkg_copy, why);
+                    }
+                    close(pfd);
+                } else {
+                    LOGI("%s: companion ainda não atende @%s (%s) — segue sem allowlist",
+                         pkg_copy, BC_COMPANION_SOCKET_NAME, why);
+                }
+            }
+            g_path_kind = bc_decide_path(pkg_copy, dir_exists, na_allowlist);
             be_generic_candidate = g_path_kind != BC_PATH_NONE;
             if (be_generic_candidate) {
                 if (!bc_process_copy_package(pkg_copy, strlen(pkg_copy),
@@ -2014,21 +2327,19 @@ public:
                 }
                 // BUG REAL achado por revisão (hermes): sem isso, publish_log()
                 // chamado pelo hook genérico (generic_hook_log_cb) nunca tem
-                // g_stream_fd setado — o log só ia pro disco/logcat, nunca pro
-                // Termux, porque só o caminho be_bc chamava connectCompanion().
-                // Mesma restrição de SELinux do caminho BC: só funciona aqui,
-                // em preAppSpecialize.
+
+
+// g_stream_fd setado acima (ANTES do PATH — o daemon precisa existir pra
+                // o @bc_companion aceitar a pergunta): o streaming serve o
+                // caminho Cocos e agora também o de mods/<pkg> — sem custo
+                // (era o motivo de o caminho por pasta abrir NENHUM socket, e
+                // isso deixava o daemon sem subir, matando o canal de pedidos
+                // do jogo na raiz).
                 if (g_path_kind == BC_PATH_PKG_MODS) {
-                    LOGI("%s: mods/<pkg>/ presente — carga direta, sem allowlist e sem companion",
+                    LOGI("%s: mods/<pkg>/ presente — carga por FD no canal REQ (postAppSpecialize)",
                          pkg_copy);
                 } else {
                     LOGI("%s na allowlist — detecção de engine adiada pra postAppSpecialize", pkg_copy);
-                    int companion_fd = api->connectCompanion();
-                    if (companion_fd >= 0) {
-                        g_stream_fd.store(companion_fd, std::memory_order_relaxed);
-                    } else {
-                        LOGE("connectCompanion() falhou (caminho genérico) — companion não vai subir");
-                    }
                 }
             } else {
                 api->setOption(Option::DLCLOSE_MODULE_LIBRARY);
@@ -2045,6 +2356,12 @@ public:
         // Sem essa chamada, companion_handler() nunca roda e o socket
         // @bc_companion pro Termux nunca existe.
         int companion_fd = api->connectCompanion();
+        // (O canal de pedidos NÃO é mais um 2º connectCompanion: é a conexão
+        // do jogo ao @bc_companion aberta no postAppSpecialize, com o
+        // SO_PEERCRED REAL do app — ver bc_req_channel.h. Aqui pré-specialize
+        // o peer seria o uid 0 do zygote, e o gate por pacote recusaria o
+        // próprio jogo; e a 2ª conexão zygisk viraria um 2º daemon que morre
+        // no bind EADDRINUSE levando o canal junto.)
         if (companion_fd >= 0) {
             LOGI("companion conectado (fd=%d) — socket @bc_companion deve estar ativo", companion_fd);
             // NÃO é leak: este fd é o canal STREAMING de eventos pro companion
@@ -2062,6 +2379,24 @@ public:
     }
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
+        // CANAL DE PEDIDOS (aberto AQUI, pós-specialize, de propósito): o
+        // SO_PEERCRED da conexão precisa ver o uid REAL do app para o gate
+        // por pacote funcionar (companion: SO_PEERCRED -> packages.list ->
+        // "só os mods do chamador"). No connectCompanion pré-specialize o
+        // peer congelaria como uid 0 do zygote e o próprio jogo seria
+        // recusado (fail-closed). Sem canal: nenhum mod carrega por FD —
+        // logado alto, nunca crash.
+        if (be_generic_candidate || be_bc) {
+            char why[160] = {0};
+            int req_fd = bc_req_connect(BC_COMPANION_SOCKET_NAME, BC_REQ_HELLO, 20,
+                                        why, sizeof(why));
+            if (req_fd >= 0) {
+                g_req_fd = req_fd;
+                LOGI("canal de pedidos aberto (fd=%d)", req_fd);
+            } else {
+                LOGE("canal de pedidos falhou (%s) — mods não carregam por FD", why);
+            }
+        }
         if (be_generic_candidate) {
             // Detecção de verdade acontece AQUI (postAppSpecialize), não em
             // preAppSpecialize — achado freebuff acima. Ainda assim as libs

@@ -78,6 +78,13 @@ def emit(sock_addr, path, name, size, timeout=SOCKET_TIMEOUT):
         # passar do limite de um send()", mas e exatamente o que o sendall ja
         # faz — o pedacinho era redundancia, nao protecao.
         sock.sendall(data)
+        # CONTRATO DO TRANSPORTE (companion-followups #1): depois do payload o
+        # emissor FECHA o lado de escrita. O EOF é a prova de que não sobrou
+        # byte — sem isso o companion recusa com "emissor nao fechou o lado de
+        # escrita" depois do SO_RCVTIMEO dele, em vez de aceitar calado um
+        # buffer com resto envenenando o próximo comando. recv segue
+        # funcionando: o shutdown só fecha a direção de escrita.
+        sock.shutdown(socket.SHUT_WR)
         reply = sock.recv(256)
     except (OSError, UnicodeEncodeError) as exc:
         raise EmitError(f"falha no socket: {exc}")

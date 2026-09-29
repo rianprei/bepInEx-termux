@@ -177,13 +177,13 @@ check "NDK_ROOT nao esta vazio no ponto de uso (dentro do ndk-build)" \
 check "o NDK_ROOT observado existe de verdade" \
     "$([ -x "$ndkroot_v/ndk-build" ] && echo 0 || echo 1)"
 check "o objcopy vem do NDK_ROOT observado" \
-    "$(printf '%s' "$objcopy_v" | grep -qF "$ndkroot_v/" && echo 0 || echo 1)"
+    "$(grep -qF "$ndkroot_v/" <<<"$objcopy_v" && echo 0 || echo 1)"
 check "a raiz do NDK observada entra no prefix-map" \
-    "$(printf '%s' "$flags_v" | grep -qF -- "-ffile-prefix-map=$ndkroot_v=" && echo 0 || echo 1)"
+    "$(grep -qF -- "-ffile-prefix-map=$ndkroot_v=" <<<"$flags_v" && echo 0 || echo 1)"
 # O glob do $HOME e a regressao exata. Se ele voltar, o prefix-map da raiz do
 # NDK pode sumir e o build-id volta a depender de onde o NDK esta.
 check "nenhuma flag depende de \$HOME (o glob do achado)" \
-    "$(printf '%s' "$flags_v" | grep -qF 'HOME' && echo 1 || echo 0)"
+    "$(grep -qF 'HOME' <<<"$flags_v" && echo 1 || echo 0)"
 
 [ "$fail" -eq 0 ] || die "o build depende de ONDE o NDK esta (ver acima)"
 echo "ndk-path: OK (NDK em 2 caminhos, mesmos bytes)"

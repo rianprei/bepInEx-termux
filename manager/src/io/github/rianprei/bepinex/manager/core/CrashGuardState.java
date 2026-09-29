@@ -19,7 +19,7 @@ import java.util.Locale;
 // aparecer mesmo com o jogo ja funcionando.
 //
 // O marcador nasce em /data/data/<pkg>/files/bepinex/ (o jogo nao escreve
-// em /data/local/tmp). mods/<pkg>/disabled_by_crashguard tambem e
+// em /data/adb/bepinex). mods/<pkg>/disabled_by_crashguard tambem e
 // verificado, para pegar marcador escrito por outra versao do loader.
 public final class CrashGuardState {
 
@@ -53,7 +53,7 @@ public final class CrashGuardState {
     }
 
     public static String modsMarkerPath(String pkg) {
-        return String.format(Locale.ROOT, "/data/local/tmp/mods/%s/disabled_by_crashguard", pkg);
+        return String.format(Locale.ROOT, "/data/adb/bepinex/mods/%s/disabled_by_crashguard", pkg);
     }
 
     // "<contador> <ts>" -> State. Ausente, vazio ou corrompido = contador

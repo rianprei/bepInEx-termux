@@ -31,10 +31,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
-# O caminho que o bepin-console procura. TEM que ser o mesmo string do
-# CLIENT=... em termux-console/bepin-console:18; se um mudar, o outro tem que
-# mudar junto (o teste confere).
-REL_DEST="battlecats-mods/zygisk-bc-poc/termux_client.py"
+# O console agora mora NO MÓDULO (companion lança de lá, com check de
+# dono/modo; o home pessoal saiu da cadeia). O bepin-console acha o cliente
+# BESIDE SI MESMO: MODULE_DIR=${0%/*}; CLIENT="$MODULE_DIR/termux_client.py".
+# Este instalador espelha o MESMO layout do stage do módulo
+# (build_module.sh: termux-console/bepin-console + termux_client.py) — no
+# aparelho quem stages é o zip do módulo; fora dele, este script reproduz a
+# mesma árvore para o teste de host exercitar o cliente de verdade.
+REL_DEST="termux-console/termux_client.py"
 
 # O emissor e ARTEFATO DO MESMO INSTALL, nao um extra opcional (achado do
 # hermes): o cliente importava uma copia propria da logica de push_mod, que
@@ -43,7 +47,7 @@ REL_DEST="battlecats-mods/zygisk-bc-poc/termux_client.py"
 # que nao roda. Os dois vao juntos, lado a lado, porque o cliente importa o
 # emissor do SEU proprio diretorio (sys.path com o dir do arquivo), que e o
 # mesmo caminho onde o console procura o cliente.
-REL_DEST_EMIT="battlecats-mods/zygisk-bc-poc/push_mod_emit.py"
+REL_DEST_EMIT="termux-console/push_mod_emit.py"
 SRC="$REPO/tools/termux_client.py"
 SRC_EMIT="$REPO/tools/push_mod_emit.py"
 

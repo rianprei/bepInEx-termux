@@ -79,7 +79,7 @@ run_ndk() {
     fi
     end=$(date +%s)
     elapsed=$((end - start))
-    if [ "$status" -eq 0 ] && grep -E 'warning:' "$output" | grep -q .; then
+    if [ "$status" -eq 0 ] && grep -E 'warning:' <<<"$output" >/dev/null; then
         status=1
         echo "non-benign compiler warning:" >&2
     fi
@@ -293,10 +293,11 @@ run_step "harness case IDs unique and citations exist" "$TIMEOUT_TEST" \
     python3 "$ROOT/tools/check_case_refs.py" "$ROOT"
 
 DOC_REF_COUNT="$TMP/docs-reference-count"
-# UX-REFERENCE citations must each carry one exact source anchor. The anchor
-# must occur once in its target file, inside the cited range, and on code rather
-# than package/import/comment/license lines. This proves the quote can be found,
-# not that it semantically supports the prose; that remains a review judgment.
+# UX-REFERENCE and DEVICE-ROUND-3 citations must each carry one exact source
+# anchor. The anchor must occur once in its target file, inside the cited range,
+# and on code rather than package/import/comment/license lines. This proves the
+# quote can be found, not that it semantically supports the prose; that remains
+# a review judgment.
 run_step "docs: referencias arquivo:linha" "$TIMEOUT_TEST" bash -c '
     python3 - "$1" "$2" <<"PY"
 import re
@@ -323,9 +324,12 @@ for doc_name in files:
         refs = list(ref_re.finditer(line))
         if not refs:
             continue
-        is_ux_reference = doc_name == "docs/UX-REFERENCE.md"
-        anchors = anchor_re.findall(line) if is_ux_reference else []
-        if is_ux_reference and len(anchors) != len(refs):
+        requires_anchors = doc_name in {
+            "docs/UX-REFERENCE.md",
+            "docs/DEVICE-ROUND-3.md",
+        }
+        anchors = anchor_re.findall(line) if requires_anchors else []
+        if requires_anchors and len(anchors) != len(refs):
             errors.append(
                 f"{doc_name}:{line_no}: cada citação exige uma âncora explícita "
                 "no formato (anchor: `texto`)"
@@ -349,7 +353,7 @@ for doc_name in files:
                 continue
             targets.append((target, target_lines, start, end))
             checked += 1
-            if is_ux_reference and ref_index < len(anchors):
+            if requires_anchors and ref_index < len(anchors):
                 anchor = anchors[ref_index]
                 occurrence_count = sum(source_line.count(anchor) for source_line in target_lines)
                 occurrences = [
@@ -403,7 +407,7 @@ for doc_name in files:
         for literal in literals:
             if len(literal) < 4 or "/" in literal and Path(literal).suffix:
                 continue
-            if not is_ux_reference and targets and not any(
+            if not requires_anchors and targets and not any(
                 literal in "\n".join(lines) for _, lines, _, _ in targets
             ):
                 errors.append(f"{doc_name}:{line_no}: literal nao encontrado na evidencia citada: {literal!r}")
@@ -443,8 +447,13 @@ fi
   # A fixture roda o gate de verdade num repo temporario. Sem ela, o nome
   # CHANGELOG.md na lista de cobertura do gate e so estrutural: nenhuma linha
   # do CHANGELOG do repo se declara mesclada com hash, entao nada prova que uma
-  # linha ali seria conferida. A fixture e o que prova.
-  if [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
+  # linha ali seria conferida. A fixture e o que prova. O config_leak_check
+  # roda a fixture e falha se o config LOCAL do repo real mudar no caminho
+  # (user.name=t parou aqui uma vez; nunca mais).
+  if [ -f "$ROOT/test/config_leak_check.sh" ]; then
+      run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
+          bash "$ROOT/test/config_leak_check.sh"
+  elif [ -f "$ROOT/test/docs_hash_gate_fixture.sh" ]; then
       run_step "docs: fixture do hash-gate" "$TIMEOUT_TEST" \
           bash "$ROOT/test/docs_hash_gate_fixture.sh"
   else
@@ -452,6 +461,51 @@ fi
       echo "test/docs_hash_gate_fixture.sh ausente: a cobertura do CHANGELOG fica so estrutural" >&2
   fi
 
+
+# Nenhum "| grep -q" sobrevive num script que usa `set -o pipefail`. Com
+# pipefail, `produtor | grep -q` devolve o 141 do produtor (SIGPIPE, porque o
+# grep -q sai assim que acha) mesmo com o elemento presente — medido em
+# 100 de 100 execucoes com um produtor externo. A forma materializada nunca
+# falha. O lint cobre o repo inteiro e a lista de excecao, com motivo, sai
+# impressa a cada execucao. Ver tools/pipefail_grep.exceptions.
+if [ -f "$ROOT/tools/pipefail_grep_check.sh" ]; then
+    run_step "scripts: nenhum pipe com grep -q sob pipefail" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/pipefail_grep_check.sh"
+else
+    record "scripts: pipe com grep -q sob pipefail (check ausente)" FAIL 0 1
+    echo "tools/pipefail_grep_check.sh ausente: a corrida do pipefail nao e conferida" >&2
+fi
+
+run_step "scripts: pipefail-grep (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/pipefail_grep_test.sh"
+
+# A forma do merge conta, e conferida. Um merge feito com `git commit-tree` a
+# partir da arvore de uma branch, em vez de `git merge --no-ff`, tem UM PAI SO
+# e nao aparece no historico como merge — foi assim que 72e0dd1 carregou a
+# arvore de 016640a sem trazer a branch, e o gate inteiro passou. O check
+# cobra assunto, dois pais, e hash citado na v0.5.0 que e ancestral de HEAD.
+if [ -f "$ROOT/tools/merge_subject_check.sh" ]; then
+    run_step "git: assunto, dois pais e citacao de hash dos merges" "$TIMEOUT_TEST" \
+        bash "$ROOT/tools/merge_subject_check.sh"
+else
+    record "git: assunto, dois pais e citacao de hash dos merges (check ausente)" FAIL 0 1
+    echo "tools/merge_subject_check.sh ausente: um merge de 1 pai com arvore de branch passa" >&2
+fi
+run_step "git: merge-subject-lint (comportamento, nao so o lint)" "$TIMEOUT_TEST" \
+    bash "$ROOT/test/merge_subject_check_test.sh"
+
+# A versao do projeto tem UMA fonte (VERSION na raiz) e o APK deriva dela. O
+# que nao deriva e o BC_LOADER_VERSION em jni/main.cpp, que e copia digitada a
+# mao: o VERSION sobe, o APK sobe, e o loader continua anunciando a versao
+# velha no device. Este check amarra as duas, e tambem o scheme do
+# versionCode (2o componente *100 + 3o, de v0.4.0=400 e v0.4.1=401).
+if [ -f "$ROOT/test/version_consistency_check.sh" ]; then
+    run_step "versao: VERSION, loader e CHANGELOG concordam" "$TIMEOUT_TEST" \
+        bash "$ROOT/test/version_consistency_check.sh"
+else
+    record "versao: VERSION/loader/CHANGELOG concordam (check ausente)" FAIL 0 1
+    echo "test/version_consistency_check.sh ausente: a versao do loader pode divergir" >&2
+fi
 
 run_step "sepolicy grammar" "$TIMEOUT_TEST" bash -c '
     cd "$1"
@@ -477,6 +531,10 @@ fi
 
 while IFS= read -r script; do
     rel=${script#"$ROOT"/}
+    # Excecao declarada em tools/pipefail_grep.exceptions: `head -n 1` escreve
+    # UMA linha, que nao passa do buffer do pipe, entao o grep nunca mata o head
+    # por SIGPIPE. Nao ha corrida aqui — a regra e estrita de proposito, e este
+    # sitio e uma excecao COM MOTIVO, nao um esquecimento.
     if head -n 1 "$script" | grep -q bash; then
         run_step "bash -n $rel" "$TIMEOUT_TEST" bash -n "$script"
     else
@@ -711,6 +769,51 @@ else
     echo "VERSION or jni/main.cpp version define missing" >&2
 fi
 
+# --- mods-reloc: a arvore de mods em /data/adb/bepinex --------------------
+#
+# A garantia critica e "um link simbolico no lugar do diretorio NAO e seguido".
+# Sem esta etapa a regressao seria SILENCIOSA: o gate passaria e o root
+# voltaria a mover conteudo apontado de fora para dentro da arvore privileged
+# — que e o ataque que a revisao de seguranca pegou.
+if [ -f "$ROOT/test/device/mods-reloc-test.sh" ]; then
+    run_step "migracao da arvore de mods (sem seguir link)" "$TIMEOUT_TEST" \
+        sh "$ROOT/test/device/mods-reloc-test.sh"
+else
+    record "migracao da arvore de mods (teste ausente)" FAIL 0 1
+    echo "test/device/mods-reloc-test.sh ausente: a migracao pode voltar a seguir link simbolico"
+fi
+
+# A entrega do .so por FD: o companion (root) abre e o jogo recebe o
+# DESCRITOR, sem abrir caminho nenhum (SCM_RIGHTS + android_dlopen_ext). O
+# teste usa socketpair de verdade — o SCM_RIGHTS atravessa o kernel — e cobre
+# o O_NOFOLLOW (link recusado) e o errno na resposta de erro.
+if [ -f "$ROOT/test/symbols/scm_rights_test.cpp" ]; then
+    run_step "entrega de mod por FD (SCM_RIGHTS)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        out="$2/scm_rights_test"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" \
+            "$1/test/symbols/scm_rights_test.cpp" -o "$out" || exit 1
+        "$out"
+    ' bash "$ROOT" "$TMP"
+else
+    record "entrega de mod por FD (teste ausente)" FAIL 0 1
+    echo "test/symbols/scm_rights_test.cpp ausente: o fd do mod nao e testado"
+fi
+
+# O caminho quente do socket compartilhado: a thread do JOGO nao pode esperar
+# o pedido do companion (ate 5s = 5s de jogo travado). O teste tem alarm(2),
+# entao a regressao "trylock virou lock" FALHA em vez de pendurar o gate.
+if [ -f "$ROOT/test/symbols/stream_guard_test.cpp" ]; then
+    run_step "streaming do companion nao espera (trylock)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" -pthread \
+            "$1/test/symbols/stream_guard_test.cpp" -o "$2/stream_guard_test" || exit 1
+        "$2/stream_guard_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "streaming do companion nao espera (teste ausente)" FAIL 0 1
+    echo "test/symbols/stream_guard_test.cpp ausente: o caminho quente pode voltar a esperar"
+
 # O TOMBSTONE e entrada de outra pessoa: um crash report que o usuario manda
 # nunca pode virar comando na maquina de quem symboliza (revisao do OpenCode em
 # 668cc9f: o awk montava uma command line com o token .so e rodava com
@@ -722,7 +825,6 @@ else
     record "symbolize: tombstone nunca vira comando (teste ausente)" FAIL 0 1
     echo "test/symbols/symbolize_injection_test.sh ausente: o tombstone pode executar comando"
 fi
-
 # Guarda de arquitetura dos hooks: em ARM32, todo mod que usa DobbyHook tem que
 # recusar COM LOG antes de alcancar o hook, porque o hook so foi validado em
 # aparelho AArch64 (revisao de 5edfb41: sa2ammo e sa2content chamavam
@@ -732,7 +834,61 @@ if [ -f "$ROOT/test/arm32_hook_guard_check.py" ]; then
         python3 "$ROOT/test/arm32_hook_guard_check.py" "$ROOT"
 else
     record "hooks ARM32 recusam 32-bit (check ausente)" FAIL 0 1
-    echo "test/arm32_hook_guard_check.py ausente: um hook pode rodar em 32-bit sem validacao"
+
+fi
+fi
+
+# O companion NAO pode abrir nada fora da arvore de mods, por mais que o cliente
+# peça (achado crítico: o protocolo aceitava caminho e conferia só prefixo
+# textual, então ".." passava e o root devolvia o FD de um arquivo arbitrário).
+if [ -f "$ROOT/test/symbols/mods_fd_escape_test.cpp" ]; then
+    run_step "companion nao abre fora da arvore" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" \
+            "$1/test/symbols/mods_fd_escape_test.cpp" -o "$2/mods_fd_escape_test" || exit 1
+        "$2/mods_fd_escape_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "companion nao abre fora da arvore (teste ausente)" FAIL 0 1
+    echo "test/symbols/mods_fd_escape_test.cpp ausente: o companion pode abrir caminho arbitrario"
+fi
+
+# O companion so serve o pacote DE QUEM conectou no socket (SO_PEERCRED).
+# Sem isso, um jogo A pede os mods do jogo B e o companion entrega: o formato do
+# pacote e valido, mas nada amarra o pedido ao chamador — e o canal e o mesmo
+# que o codigo do mod dentro do processo usa.
+if [ -f "$ROOT/test/symbols/peercred_test.cpp" ]; then
+    run_step "companion so serve o dono do pedido" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -I "$1/jni" \
+            "$1/test/symbols/peercred_test.cpp" -o "$2/peercred_test" || exit 1
+        "$2/peercred_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "companion so serve o dono do pedido (teste ausente)" FAIL 0 1
+    echo "test/symbols/peercred_test.cpp ausente: um jogo pode pedir os mods de outro"
+fi
+
+# O FIO do canal de pedidos. STEP esta VERMELHO DE PROPÓSITO nesta branch: e o
+# bloqueio que a revisão do OpenCode achou (os pedidos iam pelo socket de
+# streaming, cujo leitor só faz broadcast, então nenhum mod carregava em runtime).
+# O teste e2e liga o cliente REAL ao despacho REAL num socketpair; enquanto o
+# despacho não atender, ele falha — e o gate vermelho é o aviso.
+#
+# Não remover nem relaxar o teste para o gate ficar verde: um gate verde aqui
+# seria a mesma classe de erro do achado (teste que só passa quando alguém olha).
+if [ -f "$ROOT/test/symbols/req_channel_test.cpp" ]; then
+    run_step "canal de pedidos: cliente REAL <-> despacho REAL (e2e)" "$TIMEOUT_TEST" bash -c '
+        cxx="${CXX:-g++}"
+        "$cxx" -std=c++17 -Wall -Wextra -Werror -D_GNU_SOURCE -I "$1/jni" -pthread \
+            "$1/test/symbols/req_channel_test.cpp" -o "$2/req_channel_test" || exit 1
+        root="$2/mods-root"
+        mkdir -p "$root"
+        BC_TEST_MODS_ROOT="$root" "$2/req_channel_test"
+    ' bash "$ROOT" "$TMP"
+else
+    record "canal de pedidos e2e (teste ausente)" FAIL 0 1
+    echo "test/symbols/req_channel_test.cpp ausente: o fio dos pedidos nao e testado"
 fi
 
 # O cliente do REPL do Termux (achado A4 do wiring-audit): 11 dos 12 verbos do
