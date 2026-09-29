@@ -65,7 +65,6 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
-- deploy-requer — python do Termux como requisito checado antes de qualquer envio
 
 ### Detalhe por área (prosa da seção anterior)
 
