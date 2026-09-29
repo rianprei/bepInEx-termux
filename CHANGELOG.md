@@ -6,7 +6,6 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 
 ## v0.5.0 — 2026-09-28
 
-- `975ac87` — chore(version): VERSION v0.4.1 401 -> v0.5.0 500, BC_LOADER_VERSION acompanhado, e check novo que amarra os três
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha
 cita M OU QUALQUER commit introduzido por M (`git rev-list M^1..M`): o
@@ -16,6 +15,9 @@ todo merge first-parent desde o sync tem linha, que nenhum item do
 Pendente já entrou na base e que toda linha de merge tem descrição.
 
 ### Merges desta release
+- `975ac87` — chore(version): VERSION v0.4.1 401 -> v0.5.0 500, BC_LOADER_VERSION acompanhado, e o check novo que amarra VERSION/loader/CHANGELOG
+- `43d1335` — uni/deploy-requer-3 — python do Termux vira requisito checado: root por `su -c id` (nunca `adb root`), preflight de `TERMUX_PY` no contexto do envio, os 10 sítios `| grep -q` sob pipefail materializados em `case`, e `test/deploy_python_check.sh` declarado `run` no manifesto
+- `20a4ee2` — uni/deploy-requer — deploy exige python do Termux e root via `su` antes de enviar, com os 10 sítios pipefail materializados e o teste no manifesto
 - `bd39831` — uni/version-0.5.0 — bump para v0.5.0 (500): VERSION, loader, CHANGELOG alinhados; check novo de consistência amarra tudo
 - `b4dfe16` — uni/pipefail-grep — pipefail-grep lint cobre todos os `set -o pipefail` / `set -euo pipefail` / `set -uo pipefail` / `shopt -so pipefail`; contagem 1 por sítio; teste de comportamento com produtor externo 100% reproduzível; exceções declaradas com motivo; gate PASS SKIP=0
 - `74fa673` — uni/test-runner-accum-2 — contrato do TestRunner JVM validado no gate: resumo com checks/falhas, baseline derivado de manager/test_checks_baseline (deriva por igualdade, não apodrece), e o runner REAL rodado com um teste que falha de propósito (exit != 0, acúmulo conferido); os dois testes declarados em tools/gate_tests.list
@@ -66,7 +68,6 @@ Pendente já entrou na base e que toda linha de merge tem descrição.
 - `6f2b689` — uni/gate-wiring — o manifesto de testes do gate: nenhum teste existe sem destino declarado (roda, já roda com prova, ou é exceção com motivo), o check da ligação é a PRIMEIRA etapa, e o teste do check prova que a mensagem de reprovação cita um caminho que existe
 
 - mods-reloc — mods em diretório root-only com entrega por descritor
-- deploy-requer — python do Termux como requisito checado antes de qualquer envio
 
 ### Detalhe por área (prosa da seção anterior)
 

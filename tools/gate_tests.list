@@ -84,6 +84,7 @@ test/symbols/symbolize_test.sh	wired
 test/termux_client_test.py	wired
 test/pipefail_grep_test.sh	wired	o lint pega a forma com corrida; este pega a CORRIDA de verdade (produtor externo, 100%) e a decoy de substring-identity
 test/version_consistency_check.sh	run
+test/deploy_python_check.sh	run
 #
 # ── exceções: NÃO rodam no gate, com o motivo ──
 test/arm32_dobby_qemu_smoke.sh	skip	exige zig, qemu-arm e cmake no host e baixa o Dobby da rede por curl; o gate nao tem rede, e FAIL aqui seria vermelho por falta de ferramenta de outra maquina, nao por defeito do codigo
