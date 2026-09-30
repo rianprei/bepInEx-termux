@@ -29,6 +29,7 @@
 #include "bc_mods_conf.h"
 #include "bc_mods_fd.h" // protocolo de entrega por FD (SCM_RIGHTS)
 #include "bc_req_channel.h" // papel do socket (REQ/STREAM) na 1a linha
+#include "bc_first_line.h" // a leitura da 1a linha: comprimento coerente com o buffer (bug do aparelho)
 #include "bc_req_dispatch.h" // despacho do pedido (nucleo puro, testado no host)
 #include "bc_peercred.h"  // amarra o pedido ao uid de quem conectou (SO_PEERCRED)
 #include "bc_loader.h"
@@ -256,28 +257,15 @@ bool is_authorized_uid(uid_t uid) {
 // ============================================================================
 
 // Lê um comando com boundary explícito: '\n' como delimitador de fim de
-// mensagem. Loop garante que comandos chegando em múltiplos chunks TCP não
-// sejam truncados — read() único corta mensagens > MTU e corrompe o strcmp.
-// Retorna -1 em erro, ou 0..len em sucesso.
+// mensagem. O CORPO é o núcleo puro bc_first_line.h — o MESMO código que o
+// teste de host exercita em socketpair (o bug do aparelho — "REQ\n" lido
+// como 4 bytes com NUL no lugar do '\n', papel UNKNOWN, canal REQ morto —
+// não era alcançável por teste nenhum com a lógica aqui dentro). O
+// companion só acrescenta o log do erro.
 static ssize_t read_command(int fd, char *buf, size_t cap) {
-    size_t used = 0;
-    while (used + 1 < cap) {
-        ssize_t n = read(fd, buf + used, 1);
-        if (n < 0) {
-            if (errno == EINTR) continue;   // repete em sinal
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break;  // timeout SO_RCVTIMEO
-            LOGE("read() failed: %s", strerror(errno));
-            return -1;
-        }
-        if (n == 0) break;                  // EOF (peer fechou)
-        char c = buf[used];
-        used++;
-        if (c == '\n') break;               // fim de mensagem
-    }
-    bool terminated = used > 0 && buf[used - 1] == '\n';
-    buf[used] = '\0';
-    if (terminated) buf[used - 1] = '\0';
-    return terminated ? (ssize_t)(used - 1) : (ssize_t)used;
+    ssize_t n = bc_read_first_line(fd, buf, cap);
+    if (n < 0) LOGE("read() failed: %s", strerror(errno));
+    return n;
 }
 
 // Envia resposta com verificação de retorno; loop cobre write() parcial em
