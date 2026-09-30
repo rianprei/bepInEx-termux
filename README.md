@@ -40,9 +40,35 @@ SELinux) e os scripts `tools/` fazem a instalação.
 
 ## Instalar em 3 passos
 
-1. **Instale o zip no Magisk.** Gere o zip com `tools/build_module.sh` (ou
-   pegue um pronto quando houver release) e abra ele pelo app do Magisk:
-   *Módulos → Instalar do armazenamento*.
+1. **Instale o zip pelo APP do Magisk, não pela CLI.** Gere o zip com
+   `tools/build_module.sh` (ou pegue um pronto quando houver release) e abra
+   ele pelo app: *Módulos → Instalar do armazenamento*.
+
+   > **Por que o app e não `adb shell su -c "magisk --install-module ..."`?**
+   >
+   > A CLI **extrai os arquivos e apaga o `customize.sh` sem executá-lo**
+   > (medido no POCO C75, 2026-09-29). Logo o `set_perm` do `customize.sh` —
+   > que é quem garante o `+x` — não roda, e **todo** arquivo do módulo fica
+   > `-rw-r--r--`. Sem `+x` no `post-fs-data.sh` o Magisk não o executa no
+   > boot, e aí a árvore `/data/adb/bepinex` não é criada, o migrador não roda
+   > e o `chcon` do tipo `bepinex_mod_file` não é aplicado. Só o flash pelo
+   > app/Recovery executa o `customize.sh` (a etapa existe em
+   > `util_functions.sh`: `unzip` do customize + `. $MODPATH/customize.sh`).
+   >
+   > **Se precisar instalar pela CLI** (flash de ROM, CI, aparelho sem tela),
+   > o primeiro boot vai falhar em silêncio. A recuperação é um `chmod` e mais
+   > um reboot:
+   >
+   > ```bash
+   > adb shell su -c "chmod 755 /data/adb/modules/bc-poc/*.sh \
+   >     /data/adb/modules/bc-poc/termux-console/bepin-console"
+   > adb shell su -c "chmod 644 /data/adb/modules/bc-poc/termux-console/termux_client.py"
+   > adb reboot
+   > ```
+   >
+   > Daí em diante o módulo se autorrepara: o próprio `post-fs-data.sh`
+   > (seção 0 do arquivo) refaz o `chmod` de tudo que ele precisa a cada boot.
+
 2. **Reinicie o celular.** Módulo Zygisk só carrega depois de um reboot de
    verdade.
 3. **Toque no botão "Ação"** do módulo (app Magisk/KernelSU). Ele faz
@@ -53,6 +79,25 @@ SELinux) e os scripts `tools/` fazem a instalação.
 
 Dá pra conferir a instalação pelo app do Magisk mesmo: módulo
 **bepInEx-termux** ativo, Zygisk ligado na tela inicial.
+
+### O que precisa ser executável (e por que o console entrou na lista)
+
+| arquivo | modo | quem executa |
+|---|---|---|
+| `post-fs-data.sh` | 0755 | o `magiskinit`, no boot, via `exec` |
+| `action.sh` | 0755 | botão "Ação" do app |
+| `migrate-mods-tree.sh` | 0755 | é *sourced* pelo `post-fs-data.sh` |
+| `termux-console/bepin-console` | 0755 | o **app Termux**, via Termux:API |
+| `termux-console/termux_client.py` | 0644 | `python3 <caminho>` — é dado, não executável |
+| `sepolicy.rule` | 0644 | dado, lido pelo Magisk |
+
+`bepin-console` **não tem extensão `.sh`**, e é por isso que um
+`chmod 755 *.sh` manual não o alcança — foi exatamente o que aconteceu no
+aparelho depois do hotfix. A lista acima é conferida pelo
+`test/module_perm_check.sh` no gate, nos dois sentidos (executável sem
+`set_perm` **e** `set_perm` órfão), e o próprio teste se sabota para provar
+que morde.
+
 
 ## Instalar um mod
 

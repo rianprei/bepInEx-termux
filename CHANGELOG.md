@@ -7,6 +7,7 @@ Primeira release pública: `v0.3.0` (casa com `BC_LOADER_VERSION` em
 ## v0.5.0 — 2026-09-28
 
 - `44151e5` — uni/tabs-notelemetry-2 — o estado do iptables é por binário e a regra é contada por família; o delivered-sha256 do APK entregue passa a ser conferido em formato e em valor; o rótulo que prometia mais que a asserção virou `texto:familias`
+- `b1036b5` — uni/module-perms — o `+x` do módulo deixa de depender do instalador: a CLI do Magisk (`magisk --install-module`) **extrai e apaga o `customize.sh` sem executá-lo** (medido: todos os `.sh` e o `bepin-console` ficaram `644`), logo o `set_perm` nunca rodava; o `post-fs-data.sh` agora faz o **autorreparo** no primeiro boot em que rodar. Junto, o **bug B3**: o `source` do migrador apontava para o caminho fixo de um id de módulo inexistente (`/data/adb/modules/bepinex-termux/`) com fallback por `$(dirname $0)` — inútil porque o `magiskinit` deixa `$0` vazio, então a migração rodava sem log e sem erro. `module/migrate-mods-tree.sh` volta para o zip. README documenta a instalação pelo app, a recuperação para CLI e o que precisa ser executável
 - `1d84933` — uni/companion-followups-5 — o mods-reloc inteiro (árvore por (userId,pkg), entrega de .so por descritor, log no diretório de estado do app), S2/S3/O2 com teste de caminho real e exceção tipada no old_mods_path_check
 Uma linha por merge que entrou na base desde o último sync do CHANGELOG
 (`575903b`), com hash e assunto. Um merge M está coberto se alguma linha

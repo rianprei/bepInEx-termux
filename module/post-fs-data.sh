@@ -29,6 +29,41 @@ BC_MODS="$MODS_ROOT/bc_mods"
 WHY=/data/adb/bepinex-migrate.log
 
 # ---------------------------------------------------------------------------
+# 0) REPARA O +x DO PROPRIO MODULO, antes de usar qualquer coisa.
+#
+# POR QUE ISTO AQUI E NAO SO NO customize.sh (medido no POCO C75, 2026-09-29,
+# v0.5.0 e depois na build de integracao c4621ad0):
+#
+#   - o zip carrega 0755 e o git mode e 100755, mas magisk --install-module
+#     (a CLI) EXTRAI tudo como 0644;
+#   - o customize.sh tem set_perm para cada executavel, mas a CLI DELETA o
+#     customize.sh sem executa-lo. So o flash pelo APP/Recovery roda a etapa
+#     (util_functions.sh:703 unzip + :712 '. $MODPATH/customize.sh'). Medido:
+#     apos instalar pela CLI, TODOS os .sh e o bepin-console ficaram 644.
+#   - sem +x no post-fs-data.sh o Magisk nao o executa no boot. O magiskinit
+#     faz exec (nao `sh arquivo`), logo nao ha como o proprio script corrigir
+#     o que impede ele mesmo de rodar.
+#
+# Entao a garantia nao pode depender do instalador. Este bloco e o autorreparo:
+# no primeiro boot em que o post-fs-data rodar (via app, recovery, ou chmod
+# manual), ele deixa o resto do modulo executavel e, a partir dai, um boot
+# normal restaura o modo sozinho. O efeito e idempotente e nao toca em nada
+# fora de $MODDIR.
+# ---------------------------------------------------------------------------
+_moddir="${MODDIR:-/data/adb/modules/bc-poc}"
+if [ -d "$_moddir" ]; then
+    for _f in post-fs-data.sh action.sh uninstall.sh customize.sh \
+              migrate-mods-tree.sh; do
+        [ -f "$_moddir/$_f" ] && chmod 755 "$_moddir/$_f" 2>/dev/null
+    done
+    [ -f "$_moddir/termux-console/bepin-console" ] && \
+        chmod 755 "$_moddir/termux-console/bepin-console" 2>/dev/null
+    [ -f "$_moddir/termux-console/termux_client.py" ] && \
+        chmod 644 "$_moddir/termux-console/termux_client.py" 2>/dev/null
+    [ -f "$_moddir/sepolicy.rule" ] && chmod 644 "$_moddir/sepolicy.rule" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
 # 1) Cria a arvore nova.
 #
 # 0755 e nao 0700 de proposito: o companion roda como root e o jogo nao entra
@@ -54,8 +89,39 @@ chmod 755 "$MODS_ROOT" "$BC_MODS" "$MODS_ROOT/mods" 2>/dev/null
 BEPINEX_ROOT="$MODS_ROOT"
 # shellcheck source=module/migrate-mods-tree.sh
 # shellcheck disable=SC2034,SC1091
-. /data/adb/modules/bepinex-termux/module/migrate-mods-tree.sh 2>/dev/null || \
-    . "$(dirname "$0")/migrate-mods-tree.sh" 2>/dev/null || true
+# ACHAR O MIGRADOR, sem depender do id do modulo. Medido no POCO C75
+# (2026-09-29, base 04b93b3): o Magisk roda este script como post-fs-data do
+# modulo, e $0 chega VAZIO nessa invocacao (o magiskinit executa o arquivo, nao
+# passa o caminho como argv[0]). Com o $0 vazio, `dirname "$0"` devolve '.', o
+# source procurou ./migrate-mods-tree.sh no cwd do magiskinit (/), nao achou, e
+# a bep_migrate_tree nunca foi definida — a migracao rodou sem o log e sem
+# erro visivel. Pior: o caminho fixo /data/adb/modules/bepinex-termux/ é de um
+# id de modulo que NAO existe (o id deste e' bc-poc), entao ele nunca acertava.
+#
+# A busca agora e' por candidata realista, na ordem do mais provavel: o diretorio do
+# proprio modulo (via MODDIR, que o Magisk exporta), dps o cwd, dps um
+# `find` limitado sob /data/adb/modules. O script DEVE funcionar mesmo sem
+# nenhum dos tres: nesse caso ele loga e segue com a arvore intacta, que e'
+# melhor do que migrar pela metade em silencio.
+_mig=""
+for _cand in "$MODDIR/migrate-mods-tree.sh" \
+             "$(dirname "${0:-/data/adb/modules/bc-poc}")/migrate-mods-tree.sh" \
+             ./migrate-mods-tree.sh; do
+    if [ -n "$_cand" ] && [ -f "$_cand" ]; then _mig="$_cand"; break; fi
+done
+if [ -z "$_mig" ]; then
+    _mig=$(find /data/adb/modules -maxdepth 2 -name migrate-mods-tree.sh 2>/dev/null | head -1)
+fi
+if [ -n "$_mig" ]; then
+    # shellcheck disable=SC1090  # o source e' DINAMICO por construcao: e'
+    # justamente o que o bug B3 conserta. O caminho nao pode ser constante,
+    # porque o id do modulo muda e o magiskinit deixa $0 vazio (medido no
+    # POCO C75, 2026-09-29). O shellcheck nao consegue seguir um source que so
+    # o runtime resolve — e o ponto e' que ele NAO e' constante.
+    . "$_mig"
+else
+    echo "bepinex-migrate: migrate-mods-tree.sh nao encontrado (MODDIR=${MODDIR:-vazio} cwd=$(pwd)); arvore antiga intacta" >>"$WHY"
+fi
 
 if command -v bep_migrate_tree >/dev/null 2>&1; then
     bep_migrate_tree /data/local/tmp "$MODS_ROOT" "$WHY" mods bc_mods

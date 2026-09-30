@@ -67,7 +67,7 @@ echo "${UPDATE_BINARY_SHA256}  ${ZIP_IN}" | sha256sum -c - >/dev/null || {
 tools/check_sepolicy_rule.sh
 BUILD_LOG="$OUT/build.log"
 # Nada de >/dev/null: qualquer warning de compilação é sinal de falha.
-if ! "$NDK/ndk-build" -B -j4 >"$BUILD_LOG" 2>&1; then
+if ! "$NDK/ndk-build" -B -j2 >"$BUILD_LOG" 2>&1; then
     cat "$BUILD_LOG" >&2
     echo "ERRO: ndk-build falhou (log em $BUILD_LOG)" >&2
     exit 1
@@ -103,8 +103,15 @@ for abi in arm64-v8a armeabi-v7a; do
     symbols_ship "$loader" "$STAGE/zygisk/$abi.so" "${SYMBOLS_DIR:-}" || exit 1
 done
 # O resto do módulo vem de module/ (fonte da verdade); o zip é gerado, não editado.
+# O migrador da árvore entra no zip. Sem ele, o post-fs-data faz
+#   . .../module/migrate-mods-tree.sh
+# e o source falha (o arquivo não está no módulo), a bep_migrate_tree nunca é
+# definida, e a migração /data/local/tmp -> /data/adb/bepinex não acontece —
+# medido no POCO C75, 2026-09-29, com a v0.5.0. O post-fs-data tem um caminho
+# de fallback, mas ele depende de `dirname "$0"`, que não resolve quando o
+# script é *sourced* pelo instalador do módulo.
 cp module/sepolicy.rule module/post-fs-data.sh module/customize.sh module/uninstall.sh \
-   module/action.sh "$STAGE/"
+   module/action.sh module/migrate-mods-tree.sh "$STAGE/"
 # Console do Termux + cliente: moram NO módulo (companion executa de lá, ver
 # BC_CONSOLE_PATH no companion.cpp e o check bc_root_script_ok). O cliente é o
 # tools/termux_client.py versionado — o mesmo que o gate testa.

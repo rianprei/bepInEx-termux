@@ -40,6 +40,9 @@ test/apk_align_test.sh	run
 test/frida_bridge_bundle_test.sh	run
 test/frida_bundle_extract_test.sh	run
 test/push_mod_emit_test.sh	run
+# +x de todo executavel do modulo: set_perm no customize.sh E autorreparo no
+# post-fs-data.sh (a CLI do Magisk apaga o customize.sh sem executar).
+test/module_perm_check.sh	run
 test/release_key_test.sh	run
 test/symbols/symbols_read_check.sh	run
 test/sepolicy_rule_test.sh	run
